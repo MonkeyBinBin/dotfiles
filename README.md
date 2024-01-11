@@ -84,6 +84,8 @@ brew install exa
 
 設定
 
+Add the settings inside `~/.zshrc`:
+
 ```bash
 alias ls=exa
 ```
@@ -98,6 +100,8 @@ brew install bat
 
 設定
 
+Add the settings inside `~/.zshrc`:
+
 ```bash
 alias cat=bat
 ```
@@ -105,6 +109,8 @@ alias cat=bat
 #### cdf
 
 設定
+
+Add the settings inside `~/.zshrc`:
 
 ```bash
 if type fzf > /dev/null; then
@@ -115,4 +121,34 @@ if type fzf > /dev/null; then
 
   alias cdf='fzf_cd'
 fi
+```
+
+## GitHub copilot cli
+
+### 安裝
+
+```bash
+brew install gh
+```
+
+### 登入 GitHub
+
+```bash
+gh auth login
+```
+
+### 安裝 GitHub copilot cli
+
+```bash
+gh extension install github/gh-copilot --force
+```
+
+### 設定 alias
+
+Add the settings inside `~/.zshrc`:
+
+```bash
+alias '??'='gh copilot suggest -t shell'
+alias 'git?'='gh copilot suggest -t git'
+alias 'explain'='gh copilot explain'
 ```
