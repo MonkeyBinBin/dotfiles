@@ -1,154 +1,51 @@
-# 個人 dotfiles 儲存庫
+# dotfiles Management with GNU Stow
 
-這是一個儲存庫，用於存放和管理個人 macOS 作業系統的 dotfiles。dotfiles 是在 Unix-like 系統中，用於個人化設定的隱藏文件或目錄。
+This repository contains my personal configuration files (dotfiles) managed using GNU Stow. The goal is to keep my configurations organized and easily deployable across different machines.
 
-## 內容
+## Prerequisites
 
-目前包含以下的設定文件：
+- GNU Stow: Make sure you have GNU Stow installed on your system. You can usually install it via your package manager.
 
-- tmux
+  ```bash
+  # For MacOS using Homebrew
+  brew install stow
+  # For Debian/Ubuntu
+  sudo apt-get install stow
+  ```
 
-## Oh my zsh 設定
+  ## Using a repository-level ignore file with GNU Stow
 
-### Plugins
+  This repository includes a `.stow-global-ignore` file with common ignore
+  patterns (regular expressions). GNU Stow itself accepts `--ignore=PATTERN`
+  arguments but doesn't read a dedicated ignore file automatically.
 
-#### git
+  To make stowing convenient this repo includes a small wrapper script at
+  `scripts/stow-wrap.sh` which:
 
-```bash
-plugins=(git)
-```
+  - Reads `.stow-global-ignore` (or `$HOME/.stow-global-ignore`) and converts
+    non-empty, non-comment lines into `--ignore=PATTERN` arguments for stow.
+  - Always uses the repository `config/` directory as stow's `-d` (target
+    directory). The script will exit with an error if `config/` is missing or
+    contains no package subdirectories.
 
-#### zsh-autosuggestions
+  Quick examples:
 
-1.  Clone this repository into `$ZSH_CUSTOM/plugins` (by default `~/.oh-my-zsh/custom/plugins`)
+  ```bash
+  # make the wrapper executable
+  chmod +x scripts/stow-wrap.sh
 
-```bash
-git clone https://github.com/zsh-users/zsh-autosuggestions ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-autosuggestions
-```
+  # Stow the 'tmux' package located at repo/config/tmux
+  ./scripts/stow-wrap.sh tmux
 
-2. Add the plugin to the list of plugins for Oh My Zsh to load (inside `~/.zshrc`):
+  # Dry-run: show the stow command without executing
+  ./scripts/stow-wrap.sh --dry-run tmux
 
-```bash
-plugins=(zsh-autosuggestions)
-```
+  # Debug: show ignore file, patterns and final command, then run
+  ./scripts/stow-wrap.sh --debug tmux
+  ```
 
-#### z
+  Notes:
 
-```bash
-plugins=(z)
-```
-
-#### fzf-zsh-plugin
-
-1. Clone this repository into `$ZSH_CUSTOM/plugins` (by default `~/.oh-my-zsh/custom/plugins`)
-
-```bash
-git clone --depth 1 https://github.com/unixorn/fzf-zsh-plugin.git ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/fzf-zsh-plugin
-```
-
-2. Add the plugin to the list of plugins for Oh My Zsh to load (inside `~/.zshrc`):
-
-```bash
-plugins=(fzf-zsh-plugin)
-```
-
-#### fig
-
-```bash
-plugins=(fig)
-```
-
-#### zsh-syntax-highlighting
-
-1. install zsh-syntax-highlighting
-
-```bash
-brew install zsh-syntax-highlighting
-```
-
-2. Add the plugin to the list of plugins for Oh My Zsh to load (inside `~/.zshrc`):
-
-```bash
-plugins=([plugins...] zsh-syntax-highlighting)
-```
-
-### Alias
-
-#### ls
-
-安裝 exa
-
-```bash
-brew install exa
-```
-
-設定
-
-Add the settings inside `~/.zshrc`:
-
-```bash
-alias ls=exa
-```
-
-#### cat
-
-安裝 bat
-
-```bash
-brew install bat
-```
-
-設定
-
-Add the settings inside `~/.zshrc`:
-
-```bash
-alias cat=bat
-```
-
-#### cdf
-
-設定
-
-Add the settings inside `~/.zshrc`:
-
-```bash
-if type fzf > /dev/null; then
-  fzf_cd() {
-    local dir
-    dir=$(find -L . -type d 2> /dev/null | fzf +m) && cd "$dir"
-  }
-
-  alias cdf='fzf_cd'
-fi
-```
-
-## GitHub copilot cli
-
-### 安裝
-
-```bash
-brew install gh
-```
-
-### 登入 GitHub
-
-```bash
-gh auth login
-```
-
-### 安裝 GitHub copilot cli
-
-```bash
-gh extension install github/gh-copilot --force
-```
-
-### 設定 alias
-
-Add the settings inside `~/.zshrc`:
-
-```bash
-alias '??'='gh copilot suggest -t shell'
-alias 'git?'='gh copilot suggest -t git'
-alias 'explain'='gh copilot explain'
-```
+  - Lines starting with `#` and empty lines in `.stow-global-ignore` are ignored.
+  - Patterns are regular expressions passed directly to stow's `--ignore`.
+  - The wrapper prints installation guidance if `stow` is not found.

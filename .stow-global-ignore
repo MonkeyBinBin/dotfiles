@@ -1,0 +1,13 @@
+^README\.md$
+^LICENSE$
+^\.git$
+^\.gitignore$
+^\.DS_Store$
+^\.stow-global-ignore$
+^\.vscode$
+^scripts$
+^node_modules$
+^\.env$
+^.*~$
+^.*\.swp$
+^config/.*/README\.md$
