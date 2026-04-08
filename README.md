@@ -97,8 +97,10 @@ for f in ~/.zshrc ~/.tmux.conf ~/.ripgreprc \
          ~/.gemini/GEMINI.md \
          ~/.copilot/instructions.md ~/.copilot/hooks.json \
          ~/.hammerspoon/init.lua ~/.local/bin/cmux-notify; do
+  # 用 cp -L 解引用 symlink，確保備份的是實體內容
   [ -e "$f" ] && mkdir -p ~/.dotfiles-backup/"$(dirname "${f#$HOME/}")" \
-    && mv "$f" ~/.dotfiles-backup/"${f#$HOME/}"
+    && cp -L "$f" ~/.dotfiles-backup/"${f#$HOME/}" \
+    && rm "$f"
 done
 
 # 部署所有套件
