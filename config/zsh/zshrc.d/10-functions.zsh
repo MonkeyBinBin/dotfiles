@@ -16,7 +16,7 @@
 # - Function files may assume they're sourced from an interactive context.
 
 [[ -n ${_DOTFILES_FUNCTIONS_LOADED:-} ]] && return
-export _DOTFILES_FUNCTIONS_LOADED=1
+_DOTFILES_FUNCTIONS_LOADED=1
 
 # Only define interactive helpers in interactive shells
 if [[ $- != *i* ]]; then

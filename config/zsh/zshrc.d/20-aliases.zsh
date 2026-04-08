@@ -17,7 +17,7 @@
 #   sourced.
 
 [[ -n ${_DOTFILES_ALIASES_LOADED:-} ]] && return
-export _DOTFILES_ALIASES_LOADED=1
+_DOTFILES_ALIASES_LOADED=1
 
 alias reload-zsh="source ~/.zshrc"
 
@@ -42,5 +42,5 @@ if typeset -f start_tmux >/dev/null 2>&1; then
 fi
 
 if command -v npm >/dev/null 2>&1; then
-  alias install-agent-cli="npm install -g @openai/codex @google/gemini-cli @github/copilot @anthropic-ai/claude-code"
+  alias install-agent-cli="npm install -g @openai/codex @google/gemini-cli @github/copilot"
 fi

@@ -7,7 +7,7 @@
 # 使用檔案存在檢查保護，在未安裝 Oh-My-Zsh 的環境中不會報錯。
 
 [[ -n ${_DOTFILES_OMZ_LOADED:-} ]] && return
-export _DOTFILES_OMZ_LOADED=1
+_DOTFILES_OMZ_LOADED=1
 
 export ZSH="${ZSH:-$HOME/.oh-my-zsh}"
 

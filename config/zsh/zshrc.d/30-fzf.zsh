@@ -7,13 +7,13 @@
 # 依賴 fzf、fd、bat、eza（皆為 conditional，缺少時會 graceful fallback）。
 
 [[ -n ${_DOTFILES_FZF_LOADED:-} ]] && return
-export _DOTFILES_FZF_LOADED=1
+_DOTFILES_FZF_LOADED=1
 
 # 僅在 interactive shell 中載入
 [[ $- != *i* ]] && return
 
-# 舊版 fzf 安裝方式的相容載入
-[ -f ~/.fzf.zsh ] && source ~/.fzf.zsh
+# 舊版 fzf 安裝方式的相容載入（已由下方 fzf --zsh 取代，僅在新版不可用時才 fallback）
+# [ -f ~/.fzf.zsh ] && source ~/.fzf.zsh
 
 # 新版 fzf shell 整合
 command -v fzf >/dev/null && eval "$(fzf --zsh)"

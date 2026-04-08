@@ -17,7 +17,7 @@
 #   config to avoid slowing non-interactive shells.
 
 [[ -n ${_DOTFILES_PATHS_LOADED:-} ]] && return
-export _DOTFILES_PATHS_LOADED=1
+_DOTFILES_PATHS_LOADED=1
 
 # 避免重複加入相同路徑
 for _dir in "$HOME/bin" "$HOME/.local/bin"; do

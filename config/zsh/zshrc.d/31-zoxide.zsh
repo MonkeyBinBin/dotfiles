@@ -6,8 +6,8 @@
 # 可透過 DISABLE_ZOXIDE=1 環境變數停用。
 
 [[ -n ${_DOTFILES_ZOXIDE_LOADED:-} ]] && return
-export _DOTFILES_ZOXIDE_LOADED=1
+_DOTFILES_ZOXIDE_LOADED=1
 
-if [[ -z "$DISABLE_ZOXIDE" ]] && command -v zoxide >/dev/null 2>&1; then
+if [[ -z "${DISABLE_ZOXIDE:-}" ]] && command -v zoxide >/dev/null 2>&1; then
   eval "$(zoxide init zsh)"
 fi

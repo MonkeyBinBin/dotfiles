@@ -16,7 +16,10 @@
 #   will return a non-zero exit code when tmux is unavailable.
 # - CLI options are documented in the `usage` function below.
 
-set -euo pipefail
+# 被 zsh source 時不能用 set -euo pipefail，否則 -u 會污染整個 shell
+if [[ -z "${ZSH_VERSION:-}" ]]; then
+  set -euo pipefail
+fi
 
 SCRIPT_NAME=$(basename "$0")
 
@@ -108,7 +111,6 @@ start_tmux() {
             minimal)
                 # Single window with a small bottom pane for quick tasks
                 tmux new-session -d -s "$SESSION_NAME" -n shell
-                tmux send-keys -t "$SESSION_NAME":shell "neofetch" C-m || true
                 tmux split-window -v -p 20 -t "$SESSION_NAME":shell
                 tmux select-pane -t 0
                 ;;
@@ -128,7 +130,7 @@ start_tmux() {
     tmux attach-session -t "$SESSION_NAME"
 }
 
-# If the script is sourced or executed directly, call the function
-if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+# 直接執行時才呼叫（僅 bash；zsh 下此檔案只作為 source 用途）
+if [ -n "${BASH_SOURCE+x}" ] && [ "${BASH_SOURCE[0]}" = "$0" ]; then
     start_tmux "$@"
 fi

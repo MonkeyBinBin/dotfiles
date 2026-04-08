@@ -4,19 +4,19 @@
 
 ## 套件總覽
 
-| 套件          | 說明                              | 安裝後的路徑                               |
-| ------------- | --------------------------------- | ------------------------------------------ |
-| `bin`         | 共用腳本（cmux-notify 等）        | `~/.local/bin/`                            |
-| `zsh`         | Zsh shell 設定                    | `~/.zshrc`、`~/zshrc.d/`                   |
-| `tmux`        | tmux 終端多工器設定               | `~/.tmux.conf`                             |
-| `ghostty`     | Ghostty 終端模擬器設定            | `~/.config/ghostty/config`                 |
-| `cmux`        | Cmux 終端機設定                   | `~/.config/cmux/`                          |
-| `claude`      | Claude Code 系統提示 + hooks 範本 | `~/.claude/CLAUDE.md`                      |
-| `codex`       | Codex CLI 系統提示 + hooks 設定   | `~/.codex/AGENTS.md`、`hooks.json`         |
-| `gemini`      | Gemini CLI 系統提示 + hooks 範本  | `~/.gemini/GEMINI.md`                      |
-| `copilot`     | Copilot CLI 系統提示 + hooks 設定 | `~/.copilot/instructions.md`、`hooks.json` |
-| `hammerspoon` | Hammerspoon macOS 自動化          | `~/.hammerspoon/`                          |
-| `ripgrep`     | ripgrep 搜尋工具設定              | `~/.ripgreprc`                             |
+| 套件          | 說明                              | 安裝後的路徑                                     |
+| ------------- | --------------------------------- | ------------------------------------------------ |
+| `bin`         | 共用腳本（cmux-notify 等）        | `~/.local/bin/`                                  |
+| `zsh`         | Zsh shell 設定                    | `~/.zshrc`、`~/zshrc.d/` → `config/zsh/zshrc.d/` |
+| `tmux`        | tmux 終端多工器設定               | `~/.tmux.conf`                                   |
+| `ghostty`     | Ghostty 終端模擬器設定            | `~/.config/ghostty/config`                       |
+| `cmux`        | Cmux 終端機設定                   | `~/.config/cmux/`                                |
+| `claude`      | Claude Code 系統提示 + hooks 範本 | `~/.claude/CLAUDE.md`                            |
+| `codex`       | Codex CLI 系統提示 + hooks 設定   | `~/.codex/AGENTS.md`、`hooks.json`               |
+| `gemini`      | Gemini CLI 系統提示 + hooks 範本  | `~/.gemini/GEMINI.md`                            |
+| `copilot`     | Copilot CLI 系統提示 + hooks 設定 | `~/.copilot/instructions.md`、`hooks.json`       |
+| `hammerspoon` | Hammerspoon macOS 自動化          | `~/.hammerspoon/`                                |
+| `ripgrep`     | ripgrep 搜尋工具設定              | `~/.ripgreprc`                                   |
 
 ---
 
@@ -35,10 +35,14 @@ brew install stow
 brew install eza bat htop fd fzf ripgrep zoxide jq
 
 # 開發工具（按需安裝）
-brew install tmux nvm pyenv
+brew install tmux pyenv
 ```
 
-### 2. 安裝 Oh-My-Zsh 與 plugins
+### 2. 安裝 nvm（Node Version Manager）
+
+依照官方安裝腳本安裝：https://github.com/nvm-sh/nvm?tab=readme-ov-file#install--update-script
+
+### 3. 安裝 Oh-My-Zsh 與 plugins
 
 ```bash
 # Oh-My-Zsh
@@ -58,19 +62,19 @@ git clone --depth=1 https://github.com/romkatv/powerlevel10k.git \
 
 > 其餘 plugins（`git`、`macos`、`sudo`、`extract`、`colored-man-pages`、`command-not-found`）為 Oh-My-Zsh 內建。
 
-### 3. 安裝 fzf-git 整合（選用）
+### 4. 安裝 fzf-git 整合（選用）
 
 ```bash
 git clone https://github.com/junegunn/fzf-git.sh.git ~/fzf-git.sh
 ```
 
-### 4. 安裝 Nerd Font
+### 5. 安裝 Nerd Font
 
 ```bash
 brew install --cask font-jetbrains-mono-nerd-font
 ```
 
-### 5. macOS 系統設定
+### 6. macOS 系統設定
 
 ```bash
 # 關閉長按字元選單，改為按住重複輸入（vim 操作必要）
@@ -79,7 +83,7 @@ defaults write -g ApplePressAndHoldEnabled -bool false
 
 > 需登出再登入或重新啟動 app 才會生效。
 
-### 6. Clone 並部署
+### 7. Clone 並部署
 
 ```bash
 git clone <此 repo 的 URL> ~/dotfiles
@@ -87,10 +91,14 @@ cd ~/dotfiles
 
 # 備份現有設定檔
 mkdir -p ~/.dotfiles-backup
-for f in ~/.zshrc ~/.tmux.conf ~/.config/ghostty/config \
-         ~/.claude/CLAUDE.md ~/.codex/AGENTS.md \
-         ~/.gemini/GEMINI.md ~/.copilot/instructions.md; do
-  [ -e "$f" ] && mv "$f" ~/.dotfiles-backup/
+for f in ~/.zshrc ~/.tmux.conf ~/.ripgreprc \
+         ~/.config/ghostty/config ~/.config/cmux/settings.json \
+         ~/.claude/CLAUDE.md ~/.codex/AGENTS.md ~/.codex/hooks.json \
+         ~/.gemini/GEMINI.md \
+         ~/.copilot/instructions.md ~/.copilot/hooks.json \
+         ~/.hammerspoon/init.lua ~/.local/bin/cmux-notify; do
+  [ -e "$f" ] && mkdir -p ~/.dotfiles-backup/"$(dirname "${f#$HOME/}")" \
+    && mv "$f" ~/.dotfiles-backup/"${f#$HOME/}"
 done
 
 # 部署所有套件
@@ -100,7 +108,7 @@ for pkg in bin zsh tmux ghostty cmux claude codex gemini copilot hammerspoon rip
 done
 ```
 
-### 7. 設定 Powerlevel10k
+### 8. 設定 Powerlevel10k
 
 ```bash
 p10k configure
@@ -108,7 +116,7 @@ p10k configure
 
 > `~/.p10k.zsh` 由 p10k 精靈產生，不納入版控。專案中的 `36-p10k-theme.zsh` 會自動覆寫 Gruvbox 色彩主題。
 
-### 8. 設定 AI CLI 工具的 cmux 通知
+### 9. 設定 AI CLI 工具的 cmux 通知
 
 Codex 和 Copilot 的 `hooks.json` 已由 stow 部署，按以下步驟完成設定：
 
@@ -123,17 +131,17 @@ Codex 和 Copilot 的 `hooks.json` 已由 stow 部署，按以下步驟完成設
 
 > Claude Code 和 Gemini CLI 的 `settings.json` 含機器專屬設定（plugins、MCP servers），無法直接由 stow 管理，因此提供 `.example` 範本供手動合併。
 
-### 9. 建立機器專屬設定（選用）
+### 10. 建立機器專屬設定（選用）
 
 ```bash
-cp ~/dotfiles/config/zsh/zshrc.d/90-local.zsh.example ~/zshrc.d/90-local.zsh
+cp ~/dotfiles/config/zsh/zshrc.d/90-local.zsh.example ~/dotfiles/config/zsh/zshrc.d/90-local.zsh
 ```
 
-編輯 `90-local.zsh` 加入機器專屬的 PATH、環境變數或 secrets 來源。此檔案已加入 `.gitignore`，不會被提交。
+編輯 `90-local.zsh` 加入機器專屬的 PATH、環境變數或 secrets 來源。`~/zshrc.d/` 是指向 `config/zsh/zshrc.d/` 的 symlink，因此直接在 dotfiles 內操作即可。此檔案已加入 `.gitignore`，不會被提交。
 
 > 敏感資訊（API key、token）建議放在 `~/.secrets`，並在 `90-local.zsh` 中 source 它。
 
-### 10. 驗證安裝
+### 11. 驗證安裝
 
 ```bash
 exec zsh
@@ -172,7 +180,7 @@ which fzf eza cmux-notify
     └── 90-local.zsh        ← 機器專屬設定（不納入版控）
 ```
 
-每個模組使用 guard 變數防止重複載入。
+每個模組使用 guard 變數（不 export）防止同一 shell 內重複載入，不會影響 tmux 等子 shell 的初始化。
 
 ## AI CLI 工具管理
 

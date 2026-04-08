@@ -5,7 +5,7 @@
 # 未安裝時不會報錯。適用於 interactive 與 non-interactive shell。
 
 [[ -n ${_DOTFILES_ENV_LOADED:-} ]] && return
-export _DOTFILES_ENV_LOADED=1
+_DOTFILES_ENV_LOADED=1
 
 # ── Powerline 顯示設定 ──
 POWERLINE_HIDE_HOST_NAME="true"
