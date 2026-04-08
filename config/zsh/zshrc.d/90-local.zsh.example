@@ -1,0 +1,19 @@
+#!/usr/bin/env zsh
+
+# zshrc.d/90-local.zsh
+# Purpose: 機器專屬設定（不納入版控）
+#
+# 複製此檔案為 90-local.zsh 並依需求修改。
+# 90-local.zsh 已加入 .gitignore，不會被提交。
+
+# ── 敏感資訊（建議使用獨立的 secrets 檔案）──
+# [[ -f ~/.secrets ]] && source ~/.secrets
+
+# ── 機器專屬 PATH ──
+# export PATH="/Applications/Blender.app/Contents/MacOS:$PATH"
+# export ANDROID_SDK_ROOT="$HOME/Library/Android/sdk"
+# export ANDROID_HOME="$HOME/Library/Android/sdk"
+# export PATH="$PATH:$ANDROID_SDK_ROOT/platform-tools/"
+
+# ── 機器專屬工具 ──
+# [[ -f "$HOME/.dart-cli-completion/zsh-config.zsh" ]] && . "$HOME/.dart-cli-completion/zsh-config.zsh"

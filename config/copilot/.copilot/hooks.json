@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionEnd": [
+      {
+        "type": "command",
+        "bash": "cmux-notify 'Copilot CLI'",
+        "timeoutSec": 5
+      }
+    ],
+    "errorOccurred": [
+      {
+        "type": "command",
+        "bash": "cmux-notify 'Copilot CLI'",
+        "timeoutSec": 5
+      }
+    ]
+  }
+}

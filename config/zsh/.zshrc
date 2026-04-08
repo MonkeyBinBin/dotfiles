@@ -3,6 +3,11 @@
 # Minimal .zshrc: set config directory and source files in zshrc.d in lexicographic order.
 # This file is intentionally small — per-repo zsh files live in the same directory as this file.
 
+# Powerlevel10k instant prompt — 必須放在 .zshrc 最頂端，任何會產生 console 輸出的程式碼都要在此之前
+if [[ -r "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh" ]]; then
+  source "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh"
+fi
+
 # Determine the directory containing this .zshrc (works when the file is sourced)
 if [[ -z ${ZSH_CONFIG_DIR:-} ]]; then
 	# 偵測並解析被 source 的腳本檔（支援 symlink）

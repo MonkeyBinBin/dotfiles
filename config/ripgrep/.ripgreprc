@@ -1,0 +1,14 @@
+# 搜尋行為
+--smart-case
+--hidden
+
+# 排除目錄與檔案
+--glob=!.git
+--glob=!node_modules
+--glob=!dist
+--glob=!build
+--glob=!*.min.*
+--glob=!*.map
+--glob=!package-lock.json
+--glob=!yarn.lock
+--glob=!pnpm-lock.yaml

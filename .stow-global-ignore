@@ -10,4 +10,5 @@
 ^\.env$
 ^.*~$
 ^.*\.swp$
+^.*\.example$
 ^config/.*/README\.md$

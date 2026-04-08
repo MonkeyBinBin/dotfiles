@@ -19,7 +19,10 @@
 [[ -n ${_DOTFILES_PATHS_LOADED:-} ]] && return
 export _DOTFILES_PATHS_LOADED=1
 
-# 並避免重複加入相同路徑。
-# if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
-#   export PATH="$HOME/.local/bin:$PATH"
-# fi
+# 避免重複加入相同路徑
+for _dir in "$HOME/bin" "$HOME/.local/bin"; do
+  if [[ -d "$_dir" && ":$PATH:" != *":$_dir:"* ]]; then
+    export PATH="$_dir:$PATH"
+  fi
+done
+unset _dir

@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+
+  "app": {
+    "appearance": "dark",
+    "newWorkspacePlacement": "afterCurrent"
+  },
+
+  "sidebarAppearance": {
+    "matchTerminalBackground": false,
+    "tintColor": "#D4A017",
+    "darkModeTintColor": "#B8860B",
+    "lightModeTintColor": "#E6C65B"
+  },
+
+  "workspaceColors": {
+    "colors": {
+      "Yellow": "#D4A017",
+      "Gold": "#B8860B",
+      "Amber": "#FFBF00",
+      "Brown": "#7B3F00",
+      "Charcoal": "#3E4B5E"
+    }
+  },
+
+  "notifications": {
+    "dockBadge": true,
+    "showInMenuBar": true,
+    "unreadPaneRing": true,
+    "paneFlash": true,
+    "sound": "Pop"
+  },
+
+  "automation": {
+    "socketControlMode": "notifications",
+    "claudeCodeIntegration": true
+  },
+
+  "browser": {
+    "openTerminalLinksInCmuxBrowser": true
+  }
+}

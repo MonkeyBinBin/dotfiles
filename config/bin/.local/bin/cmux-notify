@@ -1,0 +1,37 @@
+#!/bin/bash
+# cmux-notify — AI CLI 工具通用通知腳本
+#
+# 用法：
+#   cmux-notify <工具名稱>
+#
+# 從 stdin 讀取各工具傳入的 hook JSON，根據事件類型發送 cmux 通知。
+# 支援 Claude Code、Codex CLI、Gemini CLI、Copilot CLI 的事件格式。
+
+TOOL_NAME="${1:-AI Agent}"
+
+[ -S /tmp/cmux.sock ] || exit 0
+
+EVENT=$(cat)
+# 各工具的事件欄位名稱不同，依序嘗試解析
+EVENT_TYPE=$(echo "$EVENT" | jq -r '.hook_event_name // empty' 2>/dev/null)
+
+case "$EVENT_TYPE" in
+  # 完成類事件
+  Stop|SessionEnd|sessionEnd|AfterAgent)
+    cmux notify --title "$TOOL_NAME" --body "回應完成" 2>/dev/null
+    ;;
+  # 通知類事件
+  Notification)
+    cmux notify --title "$TOOL_NAME" --subtitle "等待輸入" --body "需要使用者確認" 2>/dev/null
+    ;;
+  # 開始類事件
+  SessionStart|sessionStart)
+    cmux notify --title "$TOOL_NAME" --body "Session 開始" 2>/dev/null
+    ;;
+  # 錯誤類事件
+  errorOccurred)
+    cmux notify --title "$TOOL_NAME" --subtitle "錯誤" --body "發生錯誤" 2>/dev/null
+    ;;
+esac
+
+exit 0

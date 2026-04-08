@@ -19,6 +19,8 @@
 [[ -n ${_DOTFILES_ALIASES_LOADED:-} ]] && return
 export _DOTFILES_ALIASES_LOADED=1
 
+alias reload-zsh="source ~/.zshrc"
+
 if command -v htop >/dev/null 2>&1; then
   alias top="htop"
 fi
@@ -37,4 +39,8 @@ if typeset -f start_tmux >/dev/null 2>&1; then
   # Public command: tmuxd -> delegates to the start_tmux function
   tmuxd() { start_tmux "$@"; }
   alias st='tmuxd'
+fi
+
+if command -v npm >/dev/null 2>&1; then
+  alias install-agent-cli="npm install -g @openai/codex @google/gemini-cli @github/copilot @anthropic-ai/claude-code"
 fi

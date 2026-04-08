@@ -3,8 +3,9 @@ set -euo pipefail
 
 # Wrapper for GNU Stow
 # - Reads .stow-global-ignore (repo or $HOME) and turns lines into --ignore=PATTERN
-# - Always uses repo's `config/` as the stow -d target directory. If `config/`
-#   is missing or contains no package directories, the script exits with an error.
+# - Always uses repo's `config/` as the stow -d source directory and `$HOME` as
+#   the stow -t target directory. If `config/` is missing or contains no package
+#   directories, the script exits with an error.
 #
 # Usage examples:
 #   chmod +x scripts/stow-wrap.sh
@@ -134,8 +135,9 @@ if [[ $found_pkg -eq 0 ]]; then
   exit 1
 fi
 
-# Prepend the chosen -d so it applies before package names/targets
-cmd=(stow -d "$CHOSEN_CONFIG_DIR" "${cmd[@]:1}")
+# Prepend the chosen -d and default -t $HOME so it applies before package names/targets
+# 使用者若透過參數傳入 -t，stow 會以最後出現的 -t 為準，因此仍可覆蓋
+cmd=(stow -d "$CHOSEN_CONFIG_DIR" -t "$HOME" "${cmd[@]:1}")
 
 if [[ $DEBUG -eq 1 ]]; then
   echo "[stow-wrap] Using ignore file: ${USED_IGNORE_FILE:-<none>}"
