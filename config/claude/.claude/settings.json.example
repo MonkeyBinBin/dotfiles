@@ -54,7 +54,6 @@
       "Bash(> /dev/*)",
       "Bash(mkfs*)",
       "Bash(dd *)",
-      "Bash(:(){ :|:& };:*)",
       "Bash(curl * | sh*)",
       "Bash(curl * | bash*)",
       "Bash(wget * | sh*)",
