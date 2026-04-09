@@ -3,7 +3,8 @@
 
   "app": {
     "appearance": "dark",
-    "newWorkspacePlacement": "afterCurrent"
+    "newWorkspacePlacement": "afterCurrent",
+    "preferredEditor": "code -w"
   },
 
   "sidebarAppearance": {
@@ -38,5 +39,12 @@
 
   "browser": {
     "openTerminalLinksInCmuxBrowser": true
+  },
+
+  "shortcuts": {
+    "focusLeft": "opt+cmd+h",
+    "focusDown": "opt+cmd+j",
+    "focusUp": "opt+cmd+k",
+    "focusRight": "opt+cmd+l"
   }
 }

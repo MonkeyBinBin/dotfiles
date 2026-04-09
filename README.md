@@ -55,12 +55,15 @@ git clone https://github.com/zsh-users/zsh-syntax-highlighting.git \
 git clone https://github.com/zsh-users/zsh-autosuggestions.git \
   ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-autosuggestions
 
+git clone https://github.com/jeffreytse/zsh-vi-mode.git \
+  ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-vi-mode
+
 # Powerlevel10k 主題
 git clone --depth=1 https://github.com/romkatv/powerlevel10k.git \
   ${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/themes/powerlevel10k
 ```
 
-> 其餘 plugins（`git`、`macos`、`sudo`、`extract`、`colored-man-pages`、`command-not-found`）為 Oh-My-Zsh 內建。
+> 其餘 plugins（`git`、`macos`、`sudo`、`extract`、`colored-man-pages`、`command-not-found`）為 Oh-My-Zsh 內建。`zsh-vi-mode` 已啟用系統剪貼簿整合（`ZVM_SYSTEM_CLIPBOARD_ENABLED=true`）。
 
 ### 4. 安裝 fzf-git 整合（選用）
 

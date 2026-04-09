@@ -16,6 +16,9 @@ if [[ -f "$ZSH/oh-my-zsh.sh" ]]; then
   ZSH_THEME="powerlevel10k/powerlevel10k"
   POWERLEVEL9K_MODE='nerdfont-complete'
 
+  # 在 Oh-My-Zsh 載入前設定 zsh-vi-mode，使其初始化時即啟用系統剪貼簿
+  ZVM_SYSTEM_CLIPBOARD_ENABLED=true
+
   plugins=(
     git
     macos
@@ -23,6 +26,7 @@ if [[ -f "$ZSH/oh-my-zsh.sh" ]]; then
     extract
     colored-man-pages
     command-not-found
+    zsh-vi-mode
     zsh-autosuggestions
     zsh-syntax-highlighting
   )
