@@ -1,4 +1,16 @@
+# macOS
 .DS_Store
+
+# 編輯器暫存檔
+*.swp
+*.swo
+*~
+*.bak
+
+# 環境與機密檔案
+.env
+.env.*
+*.local
 
 # 機器專屬設定（不納入版控）
 **/90-local.zsh
