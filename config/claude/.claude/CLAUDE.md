@@ -22,7 +22,6 @@
 # Git 慣例
 
 - commit 格式使用 Conventional Commits，例：`type(scope): 簡短描述`
-- 不要自動執行 git commit，等待我確認
 
 # 文件與分析工作
 
