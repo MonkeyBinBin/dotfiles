@@ -4,19 +4,19 @@
 
 ## 套件總覽
 
-| 套件          | 說明                              | 安裝後的路徑                                     |
-| ------------- | --------------------------------- | ------------------------------------------------ |
-| `bin`         | 共用腳本（cmux-notify 等）        | `~/.local/bin/`                                  |
-| `zsh`         | Zsh shell 設定                    | `~/.zshrc`、`~/zshrc.d/` → `config/zsh/zshrc.d/` |
-| `tmux`        | tmux 終端多工器設定               | `~/.tmux.conf`                                   |
-| `ghostty`     | Ghostty 終端模擬器設定            | `~/.config/ghostty/config`                       |
-| `cmux`        | Cmux 終端機設定                   | `~/.config/cmux/`                                |
-| `claude`      | Claude Code 系統提示 + hooks 範本 | `~/.claude/CLAUDE.md`                            |
-| `codex`       | Codex CLI 系統提示 + hooks 設定   | `~/.codex/AGENTS.md`、`hooks.json`               |
-| `gemini`      | Gemini CLI 系統提示 + hooks 範本  | `~/.gemini/GEMINI.md`                            |
-| `copilot`     | Copilot CLI 系統提示 + hooks 設定 | `~/.copilot/instructions.md`、`hooks.json`       |
-| `hammerspoon` | Hammerspoon macOS 自動化          | `~/.hammerspoon/`                                |
-| `ripgrep`     | ripgrep 搜尋工具設定              | `~/.ripgreprc`                                   |
+| 套件          | 說明                                       | 安裝後的路徑                                     |
+| ------------- | ------------------------------------------ | ------------------------------------------------ |
+| `bin`         | 共用腳本（cmux-notify 等）                 | `~/.local/bin/`                                  |
+| `zsh`         | Zsh shell 設定                             | `~/.zshrc`、`~/zshrc.d/` → `config/zsh/zshrc.d/` |
+| `tmux`        | tmux 終端多工器設定                        | `~/.tmux.conf`                                   |
+| `ghostty`     | Ghostty 終端模擬器設定                     | `~/.config/ghostty/config`                       |
+| `cmux`        | Cmux 終端機設定                            | `~/.config/cmux/`                                |
+| `claude`      | Claude Code 系統提示 + hooks 範本 + skills | `~/.claude/CLAUDE.md`、`~/.claude/skills/`       |
+| `codex`       | Codex CLI 系統提示 + hooks 設定            | `~/.codex/AGENTS.md`、`hooks.json`               |
+| `gemini`      | Gemini CLI 系統提示 + hooks 範本           | `~/.gemini/GEMINI.md`                            |
+| `copilot`     | Copilot CLI 系統提示 + hooks 設定          | `~/.copilot/instructions.md`、`hooks.json`       |
+| `hammerspoon` | Hammerspoon macOS 自動化                   | `~/.hammerspoon/`                                |
+| `ripgrep`     | ripgrep 搜尋工具設定                       | `~/.ripgreprc`                                   |
 
 ---
 
@@ -166,6 +166,8 @@ which fzf eza cmux-notify
 ./scripts/stow-wrap.sh --list-ignore   # 列出忽略規則
 ./scripts/stow-wrap.sh -D zsh          # 移除套件 symlink
 ```
+
+> `claude`、`codex`、`copilot`、`gemini` 套件會自動以 `--no-folding` 模式部署，避免將目標目錄折疊為單一 symlink，確保非 dotfiles 管理的檔案不受影響。多套件混合執行時會自動拆分為獨立呼叫。
 
 ## Zsh 設定架構
 

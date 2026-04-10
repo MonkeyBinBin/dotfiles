@@ -135,12 +135,50 @@ if [[ $found_pkg -eq 0 ]]; then
   exit 1
 fi
 
-# Prepend the chosen -d and default -t $HOME so it applies before package names/targets
-# 使用者若透過參數傳入 -t，stow 會以最後出現的 -t 為準，因此仍可覆蓋
-cmd=(stow -d "$CHOSEN_CONFIG_DIR" -t "$HOME" "${cmd[@]:1}")
+# 這些套件的目標目錄可能同時存放非 dotfiles 管理的內容，
+# 使用 --no-folding 避免 stow 將整個上層目錄折疊為單一 symlink。
+# 因為 --no-folding 是 stow 全域選項，需要將這些套件拆成獨立呼叫
+NO_FOLDING_PKGS=(claude codex copilot gemini)
+
+# 將套件分為需要 --no-folding 與一般兩組
+no_folding_args=()
+normal_args=()
+stow_flags=()
+
+for arg in "${stow_args[@]}"; do
+  if [[ "$arg" == -* ]]; then
+    stow_flags+=("$arg")
+    continue
+  fi
+  is_no_folding=0
+  for nf in "${NO_FOLDING_PKGS[@]}"; do
+    if [[ "$arg" == "$nf" ]]; then
+      is_no_folding=1
+      break
+    fi
+  done
+  if [[ $is_no_folding -eq 1 ]]; then
+    no_folding_args+=("$arg")
+  else
+    normal_args+=("$arg")
+  fi
+done
+
+# 共用的基礎指令參數
+base_cmd=(stow -d "$CHOSEN_CONFIG_DIR" -t "$HOME")
+if [[ ${#IGNORE_ARGS[@]} -gt 0 ]]; then
+  base_cmd+=("${IGNORE_ARGS[@]}")
+fi
+
+# 輔助函式：印出 debug 資訊
+print_debug() {
+  local label="$1"
+  shift
+  echo "[stow-wrap] $label: $*" >&2
+}
 
 if [[ $DEBUG -eq 1 ]]; then
-  echo "[stow-wrap] Using ignore file: ${USED_IGNORE_FILE:-<none>}"
+  echo "[stow-wrap] Using ignore file: ${USED_IGNORE_FILE:-<none>}" >&2
   if [[ -n "$CHOSEN_CONFIG_DIR" && -d "$CHOSEN_CONFIG_DIR" ]]; then
     echo "[stow-wrap] chosen config dir: $CHOSEN_CONFIG_DIR" >&2
   fi
@@ -150,7 +188,12 @@ if [[ $DEBUG -eq 1 ]]; then
       echo "  $ia" >&2
     done
   fi
-  echo "[stow-wrap] final command: ${cmd[*]}" >&2
+  if [[ ${#no_folding_args[@]} -gt 0 ]]; then
+    print_debug "no-folding packages" "${no_folding_args[*]}"
+  fi
+  if [[ ${#normal_args[@]} -gt 0 ]]; then
+    print_debug "normal packages" "${normal_args[*]}"
+  fi
 fi
 
 if [[ $LIST_IGNORE -eq 1 ]]; then
@@ -159,18 +202,36 @@ if [[ $LIST_IGNORE -eq 1 ]]; then
   else
     echo "Loaded ignore patterns:"
     for ia in "${IGNORE_ARGS[@]}"; do
-      # strip leading --ignore= for display
       echo "  ${ia#--ignore=}"
     done
   fi
   exit 0
 fi
 
-if [[ $DRY_RUN -eq 1 ]]; then
-  printf '%s ' "${cmd[@]}"
-  printf '\n'
-  exit 0
+# 執行一般套件
+if [[ ${#normal_args[@]} -gt 0 ]]; then
+  normal_cmd=("${base_cmd[@]}" "${stow_flags[@]}" "${normal_args[@]}")
+  if [[ $DEBUG -eq 1 ]]; then
+    print_debug "normal command" "${normal_cmd[*]}"
+  fi
+  if [[ $DRY_RUN -eq 1 ]]; then
+    printf '%s ' "${normal_cmd[@]}"
+    printf '\n'
+  else
+    "${normal_cmd[@]}"
+  fi
 fi
 
-# Execute stow with the computed args
-exec "${cmd[@]}"
+# 執行需要 --no-folding 的套件（獨立呼叫以避免影響一般套件）
+if [[ ${#no_folding_args[@]} -gt 0 ]]; then
+  nf_cmd=("${base_cmd[@]}" --no-folding "${stow_flags[@]}" "${no_folding_args[@]}")
+  if [[ $DEBUG -eq 1 ]]; then
+    print_debug "no-folding command" "${nf_cmd[*]}"
+  fi
+  if [[ $DRY_RUN -eq 1 ]]; then
+    printf '%s ' "${nf_cmd[@]}"
+    printf '\n'
+  else
+    "${nf_cmd[@]}"
+  fi
+fi
