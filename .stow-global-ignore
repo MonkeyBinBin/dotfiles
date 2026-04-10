@@ -1,14 +1,16 @@
-^README\.md$
-^LICENSE$
-^\.git$
-^\.gitignore$
-^\.DS_Store$
-^\.stow-global-ignore$
-^\.vscode$
-^scripts$
-^node_modules$
-^\.env$
-^.*~$
-^.*\.swp$
-^.*\.example$
-^config/.*/README\.md$
+# stow 會自動把不含 `/` 的樣式包成 (\A|/)PATTERN(\z|/) 比對每個路徑片段，
+# 所以這裡不要再加 ^ 或 $ 錨點，否則只會匹配套件根目錄。
+# 含 `/` 的樣式則會被錨定為從套件根目錄開始的完整路徑。
+\.DS_Store
+\.git
+\.gitignore
+\.stow-global-ignore
+\.vscode
+\.env
+node_modules
+README\.md
+LICENSE
+scripts
+.*~
+.*\.swp
+.*\.example

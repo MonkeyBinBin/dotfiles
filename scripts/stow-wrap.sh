@@ -209,8 +209,10 @@ if [[ $LIST_IGNORE -eq 1 ]]; then
 fi
 
 # 執行一般套件
+# 注意：macOS 內建 bash 3.2 在 set -u 下展開空陣列會報 unbound variable，
+# 因此使用 ${arr[@]+"${arr[@]}"} 的安全展開語法
 if [[ ${#normal_args[@]} -gt 0 ]]; then
-  normal_cmd=("${base_cmd[@]}" "${stow_flags[@]}" "${normal_args[@]}")
+  normal_cmd=("${base_cmd[@]}" ${stow_flags[@]+"${stow_flags[@]}"} "${normal_args[@]}")
   if [[ $DEBUG -eq 1 ]]; then
     print_debug "normal command" "${normal_cmd[*]}"
   fi
@@ -224,7 +226,7 @@ fi
 
 # 執行需要 --no-folding 的套件（獨立呼叫以避免影響一般套件）
 if [[ ${#no_folding_args[@]} -gt 0 ]]; then
-  nf_cmd=("${base_cmd[@]}" --no-folding "${stow_flags[@]}" "${no_folding_args[@]}")
+  nf_cmd=("${base_cmd[@]}" --no-folding ${stow_flags[@]+"${stow_flags[@]}"} "${no_folding_args[@]}")
   if [[ $DEBUG -eq 1 ]]; then
     print_debug "no-folding command" "${nf_cmd[*]}"
   fi
