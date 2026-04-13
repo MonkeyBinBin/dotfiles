@@ -38,7 +38,9 @@
   },
 
   "browser": {
-    "openTerminalLinksInCmuxBrowser": true
+    "openTerminalLinksInCmuxBrowser": false,
+    "interceptTerminalOpenCommandInCmuxBrowser": false,
+    "hostsToOpenInEmbeddedBrowser": ["localhost", "127.0.0.1"]
   },
 
   "shortcuts": {
