@@ -1,0 +1,10 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# 編輯器暫存檔
+*.swp
+*.swo
+*~

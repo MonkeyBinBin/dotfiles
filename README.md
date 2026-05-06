@@ -17,6 +17,7 @@
 | `copilot`     | Copilot CLI 系統提示 + hooks 設定          | `~/.copilot/instructions.md`、`hooks.json`       |
 | `hammerspoon` | Hammerspoon macOS 自動化                   | `~/.hammerspoon/`                                |
 | `ripgrep`     | ripgrep 搜尋工具設定                       | `~/.ripgreprc`                                   |
+| `git`         | 全域 git ignore（XDG 路徑，免設定 git config）  | `~/.config/git/ignore`                           |
 
 ---
 
@@ -108,7 +109,7 @@ done
 
 # 部署所有套件
 chmod +x scripts/stow-wrap.sh
-for pkg in bin zsh tmux ghostty cmux claude codex gemini copilot hammerspoon ripgrep; do
+for pkg in bin zsh tmux ghostty cmux claude codex gemini copilot hammerspoon ripgrep git; do
   ./scripts/stow-wrap.sh "$pkg"
 done
 ```
