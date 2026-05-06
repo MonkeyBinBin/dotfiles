@@ -132,10 +132,12 @@ Codex 和 Copilot 的 `hooks.json` 已由 stow 部署，按以下步驟完成設
   codex_hooks = true
   ```
 - **Copilot CLI**：部署後即生效，無需額外設定
-- **Claude Code**：參考 repo 中的 `config/claude/.claude/settings.json.example`，將 hooks 區塊手動合併到 `~/.claude/settings.json`
-- **Gemini CLI**：參考 repo 中的 `config/gemini/.gemini/settings.json.example`，將 hooks 區塊手動合併到 `~/.gemini/settings.json`
+- **Claude Code / Gemini CLI**：執行 `./scripts/stow-wrap.sh claude gemini` 時，`stow-wrap` 會自動呼叫 `scripts/sync-ai-cli-settings.sh`：
+  - `~/.<tool>/settings.json` 不存在 → 直接複製 `.example` 範本
+  - 已存在 → 用 `jq` 智慧合併：`permissions.allow`/`deny` 取聯集去重；`hooks` 以 command 字串為鍵冪等附加；`env` 同 key 以範本為準。`plugins`、`mcpServers` 等使用者自訂內容完全保留
+  - 合併前會建立 `settings.json.bak.YYYYMMDD-HHMMSS` 備份
 
-> Claude Code 和 Gemini CLI 的 `settings.json` 含機器專屬設定（plugins、MCP servers），無法直接由 stow 管理，因此提供 `.example` 範本供手動合併。
+> Claude Code 和 Gemini CLI 的 `settings.json` 含機器專屬設定（plugins、MCP servers），無法整檔由 stow 管理，故改採「不存在則複製、已存在則合併」策略。`jq` 為必要相依（`brew install jq`）。可用 `--dry-run` 預覽合併動作。
 
 ### 10. 建立機器專屬設定（選用）
 
@@ -200,12 +202,12 @@ which fzf eza cmux-notify
 
 所有工具共用 `~/.local/bin/cmux-notify` 腳本，各工具透過參數傳入名稱：
 
-| 工具        | Hook 設定                           | 管理方式                          |
-| ----------- | ----------------------------------- | --------------------------------- |
-| Claude Code | `settings.json.example`（手動合併） | settings.json 含機器專屬設定      |
-| Codex CLI   | `hooks.json`（stow 管理）           | 需啟用 `codex_hooks` feature flag |
-| Gemini CLI  | `settings.json.example`（手動合併） | settings.json 含機器專屬設定      |
-| Copilot CLI | `hooks.json`（stow 管理）           | 部署後即生效                      |
+| 工具        | Hook 設定                                 | 管理方式                          |
+| ----------- | ----------------------------------------- | --------------------------------- |
+| Claude Code | `settings.json.example`（sync 自動合併）  | stow 後自動呼叫 sync 腳本         |
+| Codex CLI   | `hooks.json`（stow 管理）                 | 需啟用 `codex_hooks` feature flag |
+| Gemini CLI  | `settings.json.example`（sync 自動合併）  | stow 後自動呼叫 sync 腳本         |
+| Copilot CLI | `hooks.json`（stow 管理）                 | 部署後即生效                      |
 
 ### 設定檔策略
 
