@@ -18,6 +18,8 @@ if [[ -f "$ZSH/oh-my-zsh.sh" ]]; then
 
   # 在 Oh-My-Zsh 載入前設定 zsh-vi-mode，使其初始化時即啟用系統剪貼簿
   ZVM_SYSTEM_CLIPBOARD_ENABLED=true
+  # 改用 sourcing 模式初始化，避免延後到 precmd hook 與 p10k instant prompt 衝突
+  ZVM_INIT_MODE=sourcing
 
   plugins=(
     git
