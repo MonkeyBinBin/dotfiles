@@ -3,6 +3,13 @@
 # Minimal .zshrc: set config directory and source files in zshrc.d in lexicographic order.
 # This file is intentionally small — per-repo zsh files live in the same directory as this file.
 
+# direnv 預載：把首次 .envrc 載入訊息擠到 p10k instant prompt 之前，
+# 避免「console output during zsh initialization」警告。
+# 後續目錄切換仍由 zshrc.d/32-direnv.zsh 註冊的 hook 處理。
+if [[ -z "${DISABLE_DIRENV:-}" ]] && command -v direnv >/dev/null 2>&1; then
+  eval "$(direnv export zsh)"
+fi
+
 # Powerlevel10k instant prompt — 必須放在 .zshrc 最頂端，任何會產生 console 輸出的程式碼都要在此之前
 if [[ -r "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh" ]]; then
   source "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh"

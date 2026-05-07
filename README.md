@@ -33,7 +33,7 @@
 brew install stow
 
 # CLI 增強工具
-brew install eza bat htop fd fzf ripgrep zoxide jq
+brew install eza bat htop fd fzf ripgrep zoxide jq direnv
 
 # 開發工具（按需安裝）
 brew install tmux pyenv
@@ -176,6 +176,7 @@ which fzf eza cmux-notify
 
 ```
 ~/.zshrc                    ← Stow symlink，最小化 loader
+├── direnv 預載              ← 在 instant prompt 前完成首次 .envrc 載入，避免 p10k 警告
 ├── p10k instant prompt     ← 最頂端載入，確保 prompt 即時顯示
 └── source zshrc.d/*.zsh    ← 依檔名順序載入以下模組
     ├── 00-paths.zsh        ← PATH 設定（$HOME/bin、$HOME/.local/bin）
@@ -185,6 +186,7 @@ which fzf eza cmux-notify
     ├── 20-aliases.zsh      ← 條件式別名（htop、bat、eza、tmux）
     ├── 30-fzf.zsh          ← FZF 模糊搜尋（色彩、fd、preview、rfv）
     ├── 31-zoxide.zsh       ← Zoxide 智慧目錄跳轉
+    ├── 32-direnv.zsh       ← direnv 目錄式環境變數自動載入（須先 brew install direnv）
     ├── 35-p10k.zsh         ← 載入 ~/.p10k.zsh（各機器獨立）
     ├── 36-p10k-theme.zsh   ← Gruvbox 色彩主題覆寫
     └── 90-local.zsh        ← 機器專屬設定（不納入版控）
