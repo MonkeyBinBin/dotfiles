@@ -7,6 +7,13 @@ set -euo pipefail
 #   the stow -t target directory. If `config/` is missing or contains no package
 #   directories, the script exits with an error.
 #
+# Shared skills:
+#   config/shared/skills/<skill>/ is the single source of truth for skills shared
+#   across all AI CLI tools (claude, codex, gemini, copilot). After stowing, this
+#   script automatically symlinks each shared skill into ~/.<tool>/skills/<skill>.
+#   Tool-specific skills (placed in config/<tool>/.<tool>/skills/<skill>/) take
+#   precedence and will not be overwritten. 'shared' is NOT a stow package.
+#
 # Usage examples:
 #   chmod +x scripts/stow-wrap.sh
 #   # stow the 'tmux' package located at repo/config/tmux
@@ -150,6 +157,10 @@ for arg in "${stow_args[@]}"; do
     stow_flags+=("$arg")
     continue
   fi
+  if [[ "$arg" == "shared" ]]; then
+    echo "Error: 'shared' is not a stow package; it is the source for shared skills." >&2
+    exit 1
+  fi
   is_no_folding=0
   for nf in "${NO_FOLDING_PKGS[@]}"; do
     if [[ "$arg" == "$nf" ]]; then
@@ -236,6 +247,65 @@ if [[ ${#no_folding_args[@]} -gt 0 ]]; then
   else
     "${nf_cmd[@]}"
   fi
+fi
+
+# stow --no-folding 會把 skills 底下每個 skill 建成真實目錄＋檔案 symlink；
+# 這裡將它們升級為資料夾層級 symlink（整個 skill 目錄直接指向 dotfiles）。
+# 慣例：每個 no-folding 套件的 skills 路徑為 config/<pkg>/.<pkg>/skills → ~/.<pkg>/skills
+if [[ ${#no_folding_args[@]} -gt 0 ]]; then
+  for arg in "${no_folding_args[@]}"; do
+    [[ "$arg" == -* ]] && continue
+    skills_src="$REPO_ROOT/config/$arg/.$arg/skills"
+    skills_dst="$HOME/.$arg/skills"
+    [[ -d "$skills_src" ]] || continue
+    for skill_dir in "$skills_src"/*/; do
+      [[ -d "$skill_dir" ]] || continue
+      skill_name="$(basename "$skill_dir")"
+      live="$skills_dst/$skill_name"
+      # 只處理 stow 建出的真實目錄，已是 symlink 者跳過
+      if [[ -d "$live" && ! -L "$live" ]]; then
+        if [[ $DEBUG -eq 1 ]]; then
+          print_debug "promote skill to folder symlink" "$arg/$skill_name"
+        fi
+        if [[ $DRY_RUN -eq 1 ]]; then
+          echo "rm -rf $live && ln -sf $skill_dir $live"
+        else
+          rm -rf "$live"
+          ln -sf "$skill_dir" "$live"
+        fi
+      fi
+    done
+  done
+fi
+
+# 注入共享 skills：將 config/shared/skills/<skill> symlink 到每個 AI 工具的 ~/.<pkg>/skills/
+# 已存在的目標（含工具專屬 skill）優先，不會被覆蓋。
+SHARED_SKILLS_DIR="$REPO_ROOT/config/shared/skills"
+if [[ -d "$SHARED_SKILLS_DIR" && ${#no_folding_args[@]} -gt 0 ]]; then
+  for arg in "${no_folding_args[@]}"; do
+    [[ "$arg" == -* ]] && continue
+    skills_dst="$HOME/.$arg/skills"
+    mkdir -p "$skills_dst"
+    for shared_skill in "$SHARED_SKILLS_DIR"/*/; do
+      [[ -d "$shared_skill" ]] || continue
+      skill_name="$(basename "$shared_skill")"
+      live="$skills_dst/$skill_name"
+      if [[ -e "$live" || -L "$live" ]]; then
+        if [[ $DEBUG -eq 1 ]]; then
+          print_debug "skip shared skill (exists)" "$arg/$skill_name"
+        fi
+        continue
+      fi
+      if [[ $DEBUG -eq 1 ]]; then
+        print_debug "link shared skill" "$arg/$skill_name"
+      fi
+      if [[ $DRY_RUN -eq 1 ]]; then
+        echo "ln -sf $shared_skill $live"
+      else
+        ln -sf "$shared_skill" "$live"
+      fi
+    done
+  done
 fi
 
 # Claude / Gemini 的 settings.json 含機器專屬設定（plugins、MCP servers）

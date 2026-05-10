@@ -4,20 +4,22 @@
 
 ## 套件總覽
 
-| 套件          | 說明                                       | 安裝後的路徑                                     |
-| ------------- | ------------------------------------------ | ------------------------------------------------ |
-| `bin`         | 共用腳本（cmux-notify 等）                 | `~/.local/bin/`                                  |
-| `zsh`         | Zsh shell 設定                             | `~/.zshrc`、`~/zshrc.d/` → `config/zsh/zshrc.d/` |
-| `tmux`        | tmux 終端多工器設定                        | `~/.tmux.conf`                                   |
-| `ghostty`     | Ghostty 終端模擬器設定                     | `~/.config/ghostty/config`                       |
-| `cmux`        | Cmux 終端機設定                            | `~/.config/cmux/`                                |
-| `claude`      | Claude Code 系統提示 + hooks 範本 + skills | `~/.claude/CLAUDE.md`、`~/.claude/skills/`       |
-| `codex`       | Codex CLI 系統提示 + hooks 設定            | `~/.codex/AGENTS.md`、`hooks.json`               |
-| `gemini`      | Gemini CLI 系統提示 + hooks 範本           | `~/.gemini/GEMINI.md`                            |
-| `copilot`     | Copilot CLI 系統提示 + hooks 設定          | `~/.copilot/instructions.md`、`hooks.json`       |
-| `hammerspoon` | Hammerspoon macOS 自動化                   | `~/.hammerspoon/`                                |
-| `ripgrep`     | ripgrep 搜尋工具設定                       | `~/.ripgreprc`                                   |
-| `git`         | 全域 git ignore（XDG 路徑，免設定 git config）  | `~/.config/git/ignore`                           |
+| 套件          | 說明                                           | 安裝後的路徑                                      |
+| ------------- | ---------------------------------------------- | ------------------------------------------------- |
+| `bin`         | 共用腳本（cmux-notify 等）                     | `~/.local/bin/`                                   |
+| `zsh`         | Zsh shell 設定                                 | `~/.zshrc`、`~/zshrc.d/` → `config/zsh/zshrc.d/` |
+| `tmux`        | tmux 終端多工器設定                            | `~/.tmux.conf`                                    |
+| `ghostty`     | Ghostty 終端模擬器設定                         | `~/.config/ghostty/config`                        |
+| `cmux`        | Cmux 終端機設定                                | `~/.config/cmux/`                                 |
+| `claude`      | Claude Code 系統提示 + hooks 範本              | `~/.claude/CLAUDE.md`                             |
+| `codex`       | Codex CLI 系統提示 + hooks 設定                | `~/.codex/AGENTS.md`、`hooks.json`                |
+| `gemini`      | Gemini CLI 系統提示 + hooks 範本               | `~/.gemini/GEMINI.md`                             |
+| `copilot`     | Copilot CLI 系統提示 + hooks 設定              | `~/.copilot/instructions.md`、`hooks.json`        |
+| `hammerspoon` | Hammerspoon macOS 自動化                       | `~/.hammerspoon/`                                 |
+| `ripgrep`     | ripgrep 搜尋工具設定                           | `~/.ripgreprc`                                    |
+| `git`         | 全域 git ignore（XDG 路徑，免設定 git config） | `~/.config/git/ignore`                            |
+
+> `config/shared/skills/` 為共享 skills 的單一來源，**不是 stow 套件**。`stow-wrap.sh` 部署 AI CLI 套件時會自動將其 symlink 到每個工具的 `~/.<tool>/skills/`。
 
 ---
 
@@ -170,7 +172,7 @@ which fzf eza cmux-notify
 ./scripts/stow-wrap.sh -D zsh          # 移除套件 symlink
 ```
 
-> `claude`、`codex`、`copilot`、`gemini` 套件會自動以 `--no-folding` 模式部署，避免將目標目錄折疊為單一 symlink，確保非 dotfiles 管理的檔案不受影響。多套件混合執行時會自動拆分為獨立呼叫。
+> `claude`、`codex`、`copilot`、`gemini` 套件會自動以 `--no-folding` 模式部署，避免將目標目錄折疊為單一 symlink，確保非 dotfiles 管理的檔案不受影響。多套件混合執行時會自動拆分為獨立呼叫。部署完成後，`config/shared/skills/` 內的共享 skills 會自動 symlink 至各工具的 `~/.<tool>/skills/`；工具專屬 skill 優先，不會被覆蓋。`shared` 不是合法的套件名稱，傳入會直接報錯。
 
 ## Zsh 設定架構
 
@@ -199,6 +201,14 @@ which fzf eza cmux-notify
 ### 系統提示
 
 四個工具各自維護獨立的系統提示檔，皆透過 stow 管理。目前內容相同，可依不同 LLM 特性分別微調。
+
+### Skills（共享技能）
+
+`config/shared/skills/` 是所有 AI CLI 工具共用 skills 的唯一來源。部署時 `stow-wrap.sh` 自動將每個 skill 目錄 symlink 到各工具的 `~/.<tool>/skills/<skill>`，無需手動同步。
+
+若特定工具需要專屬 skill，將其放入 `config/<tool>/.<tool>/skills/<skill>/`；該目錄下的 skill 由既有 promote 流程優先處理，不會被共享版本覆蓋。
+
+新增 / 修改共享 skill 只需操作 `config/shared/skills/`，重新執行 `./scripts/stow-wrap.sh <AI 工具套件>` 即可生效。
 
 ### cmux 通知 Hooks
 
