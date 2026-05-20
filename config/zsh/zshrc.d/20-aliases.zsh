@@ -42,5 +42,5 @@ if typeset -f start_tmux >/dev/null 2>&1; then
 fi
 
 if command -v npm >/dev/null 2>&1; then
-  alias install-agent-cli="npm install -g @openai/codex @google/gemini-cli @github/copilot"
+  alias install-agent-cli="npm install -g @openai/codex @github/copilot"
 fi

@@ -8,12 +8,12 @@ set -euo pipefail
 # 用法：
 #   scripts/sync-ai-cli-settings.sh [--dry-run] [--debug] [pkg ...]
 #
-# 預設處理 claude 與 gemini 套件，可指定子集合（例如只處理 claude）。
+# 預設處理 claude 套件，可指定子集合。
 # 此腳本由 stow-wrap.sh 在部署完 AI CLI 套件後自動呼叫，亦可單獨執行。
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MERGE_FILTER="$REPO_ROOT/scripts/lib/merge-settings.jq"
-DEFAULT_PKGS=(claude gemini)
+DEFAULT_PKGS=(claude)
 
 DRY_RUN=0
 DEBUG=0

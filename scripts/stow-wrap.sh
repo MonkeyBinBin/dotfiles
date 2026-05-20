@@ -9,7 +9,7 @@ set -euo pipefail
 #
 # Shared skills:
 #   config/shared/skills/<skill>/ is the single source of truth for skills shared
-#   across all AI CLI tools (claude, codex, gemini, copilot). After stowing, this
+#   across all AI CLI tools (claude, codex, copilot). After stowing, this
 #   script automatically symlinks each shared skill into ~/.<tool>/skills/<skill>.
 #   Tool-specific skills (placed in config/<tool>/.<tool>/skills/<skill>/) take
 #   precedence and will not be overwritten. 'shared' is NOT a stow package.
@@ -145,7 +145,7 @@ fi
 # 這些套件的目標目錄可能同時存放非 dotfiles 管理的內容，
 # 使用 --no-folding 避免 stow 將整個上層目錄折疊為單一 symlink。
 # 因為 --no-folding 是 stow 全域選項，需要將這些套件拆成獨立呼叫
-NO_FOLDING_PKGS=(claude codex copilot gemini)
+NO_FOLDING_PKGS=(claude codex copilot)
 
 # 將套件分為需要 --no-folding 與一般兩組
 no_folding_args=()
@@ -308,13 +308,13 @@ if [[ -d "$SHARED_SKILLS_DIR" && ${#no_folding_args[@]} -gt 0 ]]; then
   done
 fi
 
-# Claude / Gemini 的 settings.json 含機器專屬設定（plugins、MCP servers）
+# Claude 的 settings.json 含機器專屬設定（plugins、MCP servers）
 # 無法整檔由 stow 管理，因此 stow 完成後自動同步：不存在則複製範本，存在則智慧合併
 if [[ ${#no_folding_args[@]} -gt 0 ]]; then
   ai_sync_pkgs=()
   for arg in "${no_folding_args[@]}"; do
     case "$arg" in
-      claude|gemini) ai_sync_pkgs+=("$arg") ;;
+      claude) ai_sync_pkgs+=("$arg") ;;
     esac
   done
   if [[ ${#ai_sync_pkgs[@]} -gt 0 ]]; then
