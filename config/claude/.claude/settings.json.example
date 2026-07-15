@@ -65,6 +65,26 @@
     ]
   },
   "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$HOME/.config/claude/cc-notify.sh\" prompt"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$HOME/.config/claude/cc-notify.sh\" pretool"
+          }
+        ]
+      }
+    ],
     "Notification": [
       {
         "hooks": [
@@ -75,12 +95,31 @@
         ]
       }
     ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$HOME/.config/claude/cc-notify.sh\" dec"
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [
           {
             "type": "command",
             "command": "cmux-notify 'Claude Code'"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$HOME/.config/claude/cc-notify.sh\" stop",
+            "timeout": 15
           }
         ]
       }

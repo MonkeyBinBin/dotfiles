@@ -214,6 +214,18 @@ which fzf eza cmux-notify
 | Claude Code | `settings.json.example`（sync 自動合併）  | stow 後自動呼叫 sync 腳本         |
 | Codex CLI   | `hooks.json`（stow 管理）                 | 需啟用 `codex_hooks` feature flag |
 
+#### Claude Code Telegram 完成通知（`cc-notify.sh`）
+
+`claude` 套件另含 `~/.config/claude/cc-notify.sh`（由 stow 部署為 symlink），在 Claude Code
+「工作真正完成」時發一則 Telegram 訊息。設計為 trailing-edge idle debounce：主 agent 閒置
+`CC_NOTIFY_IDLE_WINDOW` 秒後才發，任何後續活動（新 prompt、工具呼叫、subagent 結束）都會
+取消待發通知，因此多 subagent／多 turn 的工作會 collapse 成單一通知。相關 hooks
+（`UserPromptSubmit`/`PreToolUse`/`SubagentStop`/`Stop`）已寫入 `settings.json.example`，由 sync 合併。
+
+設定：複製 `~/.config/claude/telegram.env.example` 為 `telegram.env` 並填入 `TELEGRAM_BOT_TOKEN`、
+`TELEGRAM_CHAT_ID`（此檔含 secret，不納入版控）；可選用 `CC_NOTIFY_IDLE_WINDOW`（預設 25s）與
+`CC_NOTIFY_MIN_SECONDS`（預設 30s，主 turn 短於此不通知）。未設定 `telegram.env` 時腳本靜默略過。
+
 ### 設定檔策略
 
 各工具的設定檔（`config.toml`、`settings.json`、`config.json`）包含機器專屬內容，不納入版控，各機器獨立維護。
