@@ -9,7 +9,7 @@ set -euo pipefail
 #
 # Shared skills:
 #   config/shared/skills/<skill>/ is the single source of truth for skills shared
-#   across all AI CLI tools (claude, codex, copilot). After stowing, this
+#   across all AI CLI tools (claude, codex). After stowing, this
 #   script automatically symlinks each shared skill into ~/.<tool>/skills/<skill>.
 #   Tool-specific skills (placed in config/<tool>/.<tool>/skills/<skill>/) take
 #   precedence and will not be overwritten. 'shared' is NOT a stow package.
@@ -145,7 +145,7 @@ fi
 # 這些套件的目標目錄可能同時存放非 dotfiles 管理的內容，
 # 使用 --no-folding 避免 stow 將整個上層目錄折疊為單一 symlink。
 # 因為 --no-folding 是 stow 全域選項，需要將這些套件拆成獨立呼叫
-NO_FOLDING_PKGS=(claude codex copilot)
+NO_FOLDING_PKGS=(claude codex)
 
 # 將套件分為需要 --no-folding 與一般兩組
 no_folding_args=()

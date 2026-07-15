@@ -5,7 +5,7 @@
 #   cmux-notify <工具名稱>
 #
 # 從 stdin 讀取各工具傳入的 hook JSON，根據事件類型發送 cmux 通知。
-# 支援 Claude Code、Codex CLI、Gemini CLI、Copilot CLI 的事件格式。
+# 支援 Claude Code、Codex CLI 的事件格式。
 
 TOOL_NAME="${1:-AI Agent}"
 
@@ -17,7 +17,7 @@ EVENT_TYPE=$(echo "$EVENT" | jq -r '.hook_event_name // empty' 2>/dev/null)
 
 case "$EVENT_TYPE" in
   # 完成類事件
-  Stop|SessionEnd|sessionEnd|AfterAgent)
+  Stop|SessionEnd)
     cmux notify --title "$TOOL_NAME" --body "回應完成" 2>/dev/null
     ;;
   # 通知類事件
@@ -25,12 +25,8 @@ case "$EVENT_TYPE" in
     cmux notify --title "$TOOL_NAME" --subtitle "等待輸入" --body "需要使用者確認" 2>/dev/null
     ;;
   # 開始類事件
-  SessionStart|sessionStart)
+  SessionStart)
     cmux notify --title "$TOOL_NAME" --body "Session 開始" 2>/dev/null
-    ;;
-  # 錯誤類事件
-  errorOccurred)
-    cmux notify --title "$TOOL_NAME" --subtitle "錯誤" --body "發生錯誤" 2>/dev/null
     ;;
 esac
 

@@ -13,7 +13,6 @@
 | `cmux`        | Cmux 終端機設定                                | `~/.config/cmux/`                                 |
 | `claude`      | Claude Code 系統提示 + hooks 範本              | `~/.claude/CLAUDE.md`                             |
 | `codex`       | Codex CLI 系統提示 + hooks 設定                | `~/.codex/AGENTS.md`、`hooks.json`                |
-| `copilot`     | Copilot CLI 系統提示 + hooks 設定              | `~/.copilot/instructions.md`、`hooks.json`        |
 | `hammerspoon` | Hammerspoon macOS 自動化                       | `~/.hammerspoon/`                                 |
 | `ripgrep`     | ripgrep 搜尋工具設定                           | `~/.ripgreprc`                                    |
 | `git`         | 全域 git ignore（XDG 路徑，免設定 git config） | `~/.config/git/ignore`                            |
@@ -99,7 +98,6 @@ mkdir -p ~/.dotfiles-backup
 for f in ~/.zshrc ~/.tmux.conf ~/.ripgreprc \
          ~/.config/ghostty/config ~/.config/cmux/settings.json \
          ~/.claude/CLAUDE.md ~/.codex/AGENTS.md ~/.codex/hooks.json \
-         ~/.copilot/instructions.md ~/.copilot/hooks.json \
          ~/.hammerspoon/init.lua ~/.local/bin/cmux-notify; do
   # 用 cp -L 解引用 symlink，確保備份的是實體內容
   [ -e "$f" ] && mkdir -p ~/.dotfiles-backup/"$(dirname "${f#$HOME/}")" \
@@ -109,7 +107,7 @@ done
 
 # 部署所有套件
 chmod +x scripts/stow-wrap.sh
-for pkg in bin zsh tmux ghostty cmux claude codex copilot hammerspoon ripgrep git; do
+for pkg in bin zsh tmux ghostty cmux claude codex hammerspoon ripgrep git; do
   ./scripts/stow-wrap.sh "$pkg"
 done
 ```
@@ -124,14 +122,13 @@ p10k configure
 
 ### 9. 設定 AI CLI 工具的 cmux 通知
 
-Codex 和 Copilot 的 `hooks.json` 已由 stow 部署，按以下步驟完成設定：
+Codex 的 `hooks.json` 已由 stow 部署，按以下步驟完成設定：
 
 - **Codex CLI**：在 `~/.codex/config.toml` 啟用 feature flag：
   ```toml
   [features]
   codex_hooks = true
   ```
-- **Copilot CLI**：部署後即生效，無需額外設定
 - **Claude Code**：執行 `./scripts/stow-wrap.sh claude` 時，`stow-wrap` 會自動呼叫 `scripts/sync-ai-cli-settings.sh`：
   - `~/.<tool>/settings.json` 不存在 → 直接複製 `.example` 範本
   - 已存在 → 用 `jq` 智慧合併：`permissions.allow`/`deny` 取聯集去重；`hooks` 以 command 字串為鍵冪等附加；`env` 同 key 以範本為準。`plugins`、`mcpServers` 等使用者自訂內容完全保留
@@ -170,7 +167,7 @@ which fzf eza cmux-notify
 ./scripts/stow-wrap.sh -D zsh          # 移除套件 symlink
 ```
 
-> `claude`、`codex`、`copilot` 套件會自動以 `--no-folding` 模式部署，避免將目標目錄折疊為單一 symlink，確保非 dotfiles 管理的檔案不受影響。多套件混合執行時會自動拆分為獨立呼叫。部署完成後，`config/shared/skills/` 內的共享 skills 會自動 symlink 至各工具的 `~/.<tool>/skills/`；工具專屬 skill 優先，不會被覆蓋。`shared` 不是合法的套件名稱，傳入會直接報錯。
+> `claude`、`codex` 套件會自動以 `--no-folding` 模式部署，避免將目標目錄折疊為單一 symlink，確保非 dotfiles 管理的檔案不受影響。多套件混合執行時會自動拆分為獨立呼叫。部署完成後，`config/shared/skills/` 內的共享 skills 會自動 symlink 至各工具的 `~/.<tool>/skills/`；工具專屬 skill 優先，不會被覆蓋。`shared` 不是合法的套件名稱，傳入會直接報錯。
 
 ## Zsh 設定架構
 
@@ -198,7 +195,7 @@ which fzf eza cmux-notify
 
 ### 系統提示
 
-四個工具各自維護獨立的系統提示檔，皆透過 stow 管理。目前內容相同，可依不同 LLM 特性分別微調。
+兩個工具各自維護獨立的系統提示檔，皆透過 stow 管理。目前內容相同，可依不同 LLM 特性分別微調。
 
 ### Skills（共享技能）
 
@@ -216,7 +213,6 @@ which fzf eza cmux-notify
 | ----------- | ----------------------------------------- | --------------------------------- |
 | Claude Code | `settings.json.example`（sync 自動合併）  | stow 後自動呼叫 sync 腳本         |
 | Codex CLI   | `hooks.json`（stow 管理）                 | 需啟用 `codex_hooks` feature flag |
-| Copilot CLI | `hooks.json`（stow 管理）                 | 部署後即生效                      |
 
 ### 設定檔策略
 
