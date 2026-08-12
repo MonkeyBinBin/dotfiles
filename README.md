@@ -6,13 +6,12 @@
 
 | 套件          | 說明                                           | 安裝後的路徑                                      |
 | ------------- | ---------------------------------------------- | ------------------------------------------------- |
-| `bin`         | 共用腳本（cmux-notify 等）                     | `~/.local/bin/`                                   |
 | `zsh`         | Zsh shell 設定                                 | `~/.zshrc`、`~/zshrc.d/` → `config/zsh/zshrc.d/` |
 | `tmux`        | tmux 終端多工器設定                            | `~/.tmux.conf`                                    |
 | `ghostty`     | Ghostty 終端模擬器設定                         | `~/.config/ghostty/config`                        |
 | `cmux`        | Cmux 終端機設定                                | `~/.config/cmux/`                                 |
 | `claude`      | Claude Code 系統提示 + hooks 範本              | `~/.claude/CLAUDE.md`                             |
-| `codex`       | Codex CLI 系統提示 + hooks 設定                | `~/.codex/AGENTS.md`、`hooks.json`                |
+| `codex`       | Codex CLI 系統提示                             | `~/.codex/AGENTS.md`                              |
 | `hammerspoon` | Hammerspoon macOS 自動化                       | `~/.hammerspoon/`                                 |
 | `ripgrep`     | ripgrep 搜尋工具設定                           | `~/.ripgreprc`                                    |
 | `git`         | 全域 git ignore（XDG 路徑，免設定 git config） | `~/.config/git/ignore`                            |
@@ -97,8 +96,8 @@ cd ~/dotfiles
 mkdir -p ~/.dotfiles-backup
 for f in ~/.zshrc ~/.tmux.conf ~/.ripgreprc \
          ~/.config/ghostty/config ~/.config/cmux/settings.json \
-         ~/.claude/CLAUDE.md ~/.codex/AGENTS.md ~/.codex/hooks.json \
-         ~/.hammerspoon/init.lua ~/.local/bin/cmux-notify; do
+         ~/.claude/CLAUDE.md ~/.codex/AGENTS.md \
+         ~/.hammerspoon/init.lua; do
   # 用 cp -L 解引用 symlink，確保備份的是實體內容
   [ -e "$f" ] && mkdir -p ~/.dotfiles-backup/"$(dirname "${f#$HOME/}")" \
     && cp -L "$f" ~/.dotfiles-backup/"${f#$HOME/}" \
@@ -107,7 +106,7 @@ done
 
 # 部署所有套件
 chmod +x scripts/stow-wrap.sh
-for pkg in bin zsh tmux ghostty cmux claude codex hammerspoon ripgrep git; do
+for pkg in zsh tmux ghostty cmux claude codex hammerspoon ripgrep git; do
   ./scripts/stow-wrap.sh "$pkg"
 done
 ```
@@ -152,7 +151,7 @@ cp ~/dotfiles/config/zsh/zshrc.d/90-local.zsh.example ~/dotfiles/config/zsh/zshr
 exec zsh
 ls -la ~/.zshrc ~/.tmux.conf
 alias
-which fzf eza cmux-notify
+which fzf eza
 ```
 
 ---
@@ -167,7 +166,19 @@ which fzf eza cmux-notify
 ./scripts/stow-wrap.sh -D zsh          # 移除套件 symlink
 ```
 
-> `claude`、`codex` 套件會自動以 `--no-folding` 模式部署，避免將目標目錄折疊為單一 symlink，確保非 dotfiles 管理的檔案不受影響。多套件混合執行時會自動拆分為獨立呼叫。部署完成後，`config/shared/skills/` 內的共享 skills 會自動 symlink 至各工具的 `~/.<tool>/skills/`；工具專屬 skill 優先，不會被覆蓋。`shared` 不是合法的套件名稱，傳入會直接報錯。
+> `bin`、`claude`、`codex` 套件會自動以 `--no-folding` 模式部署（腳本內的 `NO_FOLDING_PKGS`），避免將目標目錄折疊為單一 symlink，確保非 dotfiles 管理的檔案不受影響。多套件混合執行時會自動拆分為獨立呼叫。
+>
+> 部署完成後，`config/shared/skills/` 內的共享 skills 會自動 symlink 至各 AI CLI 工具的 `~/.<tool>/skills/`（腳本內的 `AI_CLI_PKGS`，目前為 `claude`、`codex`）；工具專屬 skill 優先，不會被覆蓋。`bin` 雖同為 no-folding 套件但不參與 skills 注入。`shared` 不是合法的套件名稱，傳入會直接報錯。
+
+### `--no-folding` 為什麼必要
+
+stow 預設會做 directory folding：若目標目錄在 `$HOME` 尚不存在，stow 不會逐檔建 symlink，而是直接把整個目錄做成一個指向 repo 的 symlink。之後任何寫入該目錄的檔案都會實際落在 dotfiles repo 內。
+
+實際案例：曾有一個 `bin` 套件（放 `cmux-notify`）對應 `~/.local/bin/`，但 `~/.local/` 同時是 uv、Claude Code installer 等工具的安裝位置。`~/.local` 被折疊成 `~/.local -> dotfiles/config/bin/.local` 後，這些工具安裝的內容累積到 1.5 GB 全部落在 repo 內。該套件已隨 `cmux-notify` 一併移除，但教訓保留於此。
+
+判斷準則：**只要套件的目標路徑或其上層目錄可能被 dotfiles 以外的程式寫入，就要加進 `NO_FOLDING_PKGS`。**
+
+> 同理，`.gitignore` 不要使用 `*.local` 這類樣式 —— gitignore 的 `*` 可匹配零字元，會連名為 `.local` 的目錄整棵樹一起忽略，使上述污染在 `git status` 完全隱形。
 
 ## Zsh 設定架構
 
@@ -207,12 +218,24 @@ which fzf eza cmux-notify
 
 ### cmux 通知 Hooks
 
-所有工具共用 `~/.local/bin/cmux-notify` 腳本，各工具透過參數傳入名稱：
+**由 cmux 自行處理，dotfiles 不再維護通知腳本。**
 
-| 工具        | Hook 設定                                 | 管理方式                          |
-| ----------- | ----------------------------------------- | --------------------------------- |
-| Claude Code | `settings.json.example`（sync 自動合併）  | stow 後自動呼叫 sync 腳本         |
-| Codex CLI   | `hooks.json`（stow 管理）                 | 需啟用 `codex_hooks` feature flag |
+| 工具        | 安裝方式                                       | 產生的檔案                              |
+| ----------- | ---------------------------------------------- | --------------------------------------- |
+| Claude Code | cmux Claude wrapper 自動注入，無須設定         | 無（wrapper 動態注入）                  |
+| 其他 agent  | `cmux hooks setup <agent>`                     | 各 agent 自己的 hook 檔（cmux 管理）    |
+
+Claude Code 只要 cmux 設定中 `automation.claudeCodeIntegration` 為 `true` 即生效：cmux 用
+wrapper 包住 `claude` 執行檔（PATH 最前面的 `cmux-cli-shims/`），啟動時動態注入自己的 hooks，
+提供 running/idle/needsInput 狀態、Feed 審批、session restore 與 `PushNotification` 橋接。
+
+其他 agent（`codex`、`opencode`、`gemini` 等）用 `cmux hooks setup` 安裝，cmux 會寫入該 agent
+自己的設定檔（Codex 為 `~/.codex/hooks.json` 與 `config.toml`）。**這些檔案由 cmux 管理，不納入
+dotfiles**——否則 cmux 更新格式時 repo 內的手寫版本會悄悄失效。
+
+> 歷史：先前由 dotfiles 維護一支 `cmux-notify` 腳本供各工具呼叫，因 cmux 變更 socket 路徑
+> （`/tmp/cmux.sock` → `~/.local/state/cmux/cmux-<uid>.sock`）而靜默失效。既然 cmux 已內建整合，
+> 該腳本與其所屬的 `bin` 套件已一併移除。細節見 `cmux docs agents`。
 
 #### Claude Code Telegram 完成通知（`cc-notify.sh`）
 
@@ -230,9 +253,35 @@ which fzf eza cmux-notify
 
 各工具的設定檔（`config.toml`、`settings.json`、`config.json`）包含機器專屬內容，不納入版控，各機器獨立維護。
 
+## 多機同步：移除不會自動傳播
+
+`git pull` 只更新 repo 內的檔案，**無法撤銷既有部署**。從 repo 刪除一個檔案後，其他機器上仍會留下：
+
+- stow 建立的 symlink（pull 後變成 broken symlink）
+- `sync-ai-cli-settings.sh` 合併進 live `~/.claude/settings.json` 的項目（該腳本只增不減）
+- 各工具自己快取的狀態（例如 Codex 的 `[hooks.state]` trusted hash）
+
+因此凡是「下架」性質的變更，都在 `scripts/` 下附一支 `migrate-<YYYYMMDD>-<描述>.sh`，記錄該次變更需要在其他機器上執行的清理步驟。慣例：
+
+- 支援 `--dry-run`，預覽時不得寫入任何檔案
+- 冪等：在已清理或全新的機器上執行應為 no-op
+- 修改前先備份（`cp -p` 保留權限），並在輸出中告知備份路徑
+- 需要大量資料搬移或有風險的操作只偵測並提示，不自動執行
+
+現有腳本：
+
+```bash
+./scripts/migrate-20260812-remove-cmux-notify.sh --dry-run   # 預覽
+./scripts/migrate-20260812-remove-cmux-notify.sh             # 執行
+```
+
+> 若尚未 pull，優先在 pull **之前**執行 `./scripts/stow-wrap.sh -D <套件>` 解除部署——套件目錄一旦被 pull 刪除，`stow -D` 就無法再運作。
+
 ## 新增套件
 
 1. 在 `config/` 下建立新目錄，結構反映 `$HOME` 下的相對路徑
 2. 將設定檔放入對應位置
-3. 執行 `./scripts/stow-wrap.sh <套件名>` 部署
-4. 更新此 README 的套件總覽表格
+3. 若目標路徑或其上層目錄可能被 dotfiles 以外的程式寫入，將套件名加入 `scripts/stow-wrap.sh` 的 `NO_FOLDING_PKGS`（原因見上方「`--no-folding` 為什麼必要」）
+4. 執行 `./scripts/stow-wrap.sh <套件名>` 部署
+5. 部署後確認目標目錄本身仍是真實目錄而非 symlink：`ls -ld ~/<目標目錄>`
+6. 更新此 README 的套件總覽表格

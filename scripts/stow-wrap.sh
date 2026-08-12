@@ -145,7 +145,25 @@ fi
 # 這些套件的目標目錄可能同時存放非 dotfiles 管理的內容，
 # 使用 --no-folding 避免 stow 將整個上層目錄折疊為單一 symlink。
 # 因為 --no-folding 是 stow 全域選項，需要將這些套件拆成獨立呼叫
+#
+# 判斷準則：只要套件的目標路徑或其上層目錄可能被 dotfiles 以外的程式寫入，
+# 就必須列入，否則折疊後那些程式的檔案會全部落進 repo。
 NO_FOLDING_PKGS=(claude codex)
+
+# AI CLI 套件（慣例：config/<pkg>/.<pkg>/skills → ~/.<pkg>/skills）
+# skills promote 與 shared skills 注入只對這些套件執行
+AI_CLI_PKGS=(claude codex)
+
+# 檢查 $1 是否存在於後續參數列表中
+in_list() {
+  local needle="$1"
+  shift
+  local item
+  for item in "$@"; do
+    [[ "$item" == "$needle" ]] && return 0
+  done
+  return 1
+}
 
 # 將套件分為需要 --no-folding 與一般兩組
 no_folding_args=()
@@ -161,17 +179,18 @@ for arg in "${stow_args[@]}"; do
     echo "Error: 'shared' is not a stow package; it is the source for shared skills." >&2
     exit 1
   fi
-  is_no_folding=0
-  for nf in "${NO_FOLDING_PKGS[@]}"; do
-    if [[ "$arg" == "$nf" ]]; then
-      is_no_folding=1
-      break
-    fi
-  done
-  if [[ $is_no_folding -eq 1 ]]; then
+  if in_list "$arg" "${NO_FOLDING_PKGS[@]}"; then
     no_folding_args+=("$arg")
   else
     normal_args+=("$arg")
+  fi
+done
+
+# 本次呼叫中屬於 AI CLI 的套件（skills 相關處理只跑這些）
+ai_cli_args=()
+for arg in ${no_folding_args[@]+"${no_folding_args[@]}"}; do
+  if in_list "$arg" "${AI_CLI_PKGS[@]}"; then
+    ai_cli_args+=("$arg")
   fi
 done
 
@@ -251,9 +270,9 @@ fi
 
 # stow --no-folding 會把 skills 底下每個 skill 建成真實目錄＋檔案 symlink；
 # 這裡將它們升級為資料夾層級 symlink（整個 skill 目錄直接指向 dotfiles）。
-# 慣例：每個 no-folding 套件的 skills 路徑為 config/<pkg>/.<pkg>/skills → ~/.<pkg>/skills
-if [[ ${#no_folding_args[@]} -gt 0 ]]; then
-  for arg in "${no_folding_args[@]}"; do
+# 慣例：每個 AI CLI 套件的 skills 路徑為 config/<pkg>/.<pkg>/skills → ~/.<pkg>/skills
+if [[ ${#ai_cli_args[@]} -gt 0 ]]; then
+  for arg in "${ai_cli_args[@]}"; do
     [[ "$arg" == -* ]] && continue
     skills_src="$REPO_ROOT/config/$arg/.$arg/skills"
     skills_dst="$HOME/.$arg/skills"
@@ -281,8 +300,8 @@ fi
 # 注入共享 skills：將 config/shared/skills/<skill> symlink 到每個 AI 工具的 ~/.<pkg>/skills/
 # 已存在的目標（含工具專屬 skill）優先，不會被覆蓋。
 SHARED_SKILLS_DIR="$REPO_ROOT/config/shared/skills"
-if [[ -d "$SHARED_SKILLS_DIR" && ${#no_folding_args[@]} -gt 0 ]]; then
-  for arg in "${no_folding_args[@]}"; do
+if [[ -d "$SHARED_SKILLS_DIR" && ${#ai_cli_args[@]} -gt 0 ]]; then
+  for arg in "${ai_cli_args[@]}"; do
     [[ "$arg" == -* ]] && continue
     skills_dst="$HOME/.$arg/skills"
     mkdir -p "$skills_dst"

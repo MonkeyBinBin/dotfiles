@@ -85,16 +85,6 @@
         ]
       }
     ],
-    "Notification": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "cmux-notify 'Claude Code'"
-          }
-        ]
-      }
-    ],
     "SubagentStop": [
       {
         "hooks": [
@@ -106,14 +96,6 @@
       }
     ],
     "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "cmux-notify 'Claude Code'"
-          }
-        ]
-      },
       {
         "hooks": [
           {

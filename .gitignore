@@ -10,7 +10,10 @@
 # 環境與機密檔案
 .env
 .env.*
-*.local
+# 注意：不要寫成 `*.local`。gitignore 的 `*` 可匹配零字元，
+# 那會連 `config/bin/.local/`（對應 ~/.local）整個目錄一起忽略，
+# 導致外部工具寫進 repo 的內容完全看不見。
+*.local.*
 
 # 機器專屬設定（不納入版控）
 **/90-local.zsh
