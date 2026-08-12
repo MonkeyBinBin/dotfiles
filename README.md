@@ -10,7 +10,7 @@
 | `tmux`        | tmux 終端多工器設定                            | `~/.tmux.conf`                                    |
 | `ghostty`     | Ghostty 終端模擬器設定                         | `~/.config/ghostty/config`                        |
 | `cmux`        | Cmux 終端機設定                                | `~/.config/cmux/`                                 |
-| `claude`      | Claude Code 系統提示 + hooks 範本              | `~/.claude/CLAUDE.md`                             |
+| `claude`      | Claude Code 系統提示 + output styles + hooks 範本 | `~/.claude/CLAUDE.md`、`~/.claude/output-styles/` |
 | `codex`       | Codex CLI 系統提示                             | `~/.codex/AGENTS.md`                              |
 | `hammerspoon` | Hammerspoon macOS 自動化                       | `~/.hammerspoon/`                                 |
 | `ripgrep`     | ripgrep 搜尋工具設定                           | `~/.ripgreprc`                                    |
@@ -248,6 +248,19 @@ dotfiles**——否則 cmux 更新格式時 repo 內的手寫版本會悄悄失�
 設定：複製 `~/.config/claude/telegram.env.example` 為 `telegram.env` 並填入 `TELEGRAM_BOT_TOKEN`、
 `TELEGRAM_CHAT_ID`（此檔含 secret，不納入版控）；可選用 `CC_NOTIFY_IDLE_WINDOW`（預設 25s）與
 `CC_NOTIFY_MIN_SECONDS`（預設 30s，主 turn 短於此不通知）。未設定 `telegram.env` 時腳本靜默略過。
+
+#### Claude Code Output Styles
+
+`claude` 套件含 `config/claude/.claude/output-styles/`，由 stow 以 `--no-folding` 逐檔 symlink
+到 `~/.claude/output-styles/`，因此 Claude Code 自己在該目錄產生的 style 不受影響。目前收錄：
+
+| Style  | 用途                                                                     |
+| ------ | ------------------------------------------------------------------------ |
+| `eli5` | 極簡回覆，只講做了什麼、成不成功、下一步做什麼                           |
+| `ste`  | 受控技術語言（ASD-STE100 Issue 9 紀律）：單一詞義、短句、主動語態、零歧義 |
+
+新增 style：在 `config/claude/.claude/output-styles/` 放入 `<name>.md`（frontmatter 需含
+`name`、`description`），再跑 `./scripts/stow-wrap.sh claude`。切換用 `/output-style`。
 
 ### 設定檔策略
 
