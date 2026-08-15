@@ -15,30 +15,31 @@
       "Bash(git remote -v*)",
       "Bash(git ls-files *)",
       "Bash(git add *)",
-      "Bash(git commit *)",
-      "Bash(npm run *)",
+      "Bash(npm run build)",
+      "Bash(npm run lint)",
+      "Bash(npm run test)",
+      "Bash(npm run test:*)",
       "Bash(npm test *)",
-      "Bash(npx *)",
-      "Bash(node *)",
-      "Bash(ng *)",
+      "Bash(ng build*)",
+      "Bash(ng test*)",
+      "Bash(ng lint*)",
+      "Bash(ng generate *)",
       "Bash(dotnet build *)",
       "Bash(dotnet test *)",
-      "Bash(dotnet run *)",
       "Bash(ls *)",
-      "Bash(cat *)",
-      "Bash(head *)",
-      "Bash(tail *)",
       "Bash(wc *)",
       "Bash(which *)",
-      "Bash(* --version)",
-      "Bash(* --help)",
       "Bash(echo *)",
       "Bash(date *)",
       "Bash(pwd)",
-      "Bash(env)",
-      "Bash(gh pr *)",
-      "Bash(gh issue *)",
-      "Bash(gh run *)",
+      "Bash(gh pr view*)",
+      "Bash(gh pr list*)",
+      "Bash(gh pr diff*)",
+      "Bash(gh pr checks*)",
+      "Bash(gh issue view*)",
+      "Bash(gh issue list*)",
+      "Bash(gh run view*)",
+      "Bash(gh run list*)",
       "Bash(jq *)",
       "Bash(brew list *)",
       "Bash(brew info *)"
@@ -62,7 +63,8 @@
       "Bash(eval *)",
       "Bash(npm publish*)",
       "Bash(dotnet nuget push *)"
-    ]
+    ],
+    "defaultMode": "auto"
   },
   "hooks": {
     "UserPromptSubmit": [
@@ -106,5 +108,11 @@
         ]
       }
     ]
-  }
+  },
+  "effortLevel": "high",
+  "theme": "dark-daltonized",
+  "autoCompactEnabled": false,
+  "remoteControlAtStartup": true,
+  "inputNeededNotifEnabled": true,
+  "agentPushNotifEnabled": true
 }
