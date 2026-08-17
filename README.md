@@ -95,7 +95,7 @@ cd ~/dotfiles
 # 備份現有設定檔
 mkdir -p ~/.dotfiles-backup
 for f in ~/.zshrc ~/.tmux.conf ~/.ripgreprc \
-         ~/.config/ghostty/config ~/.config/cmux/settings.json \
+         ~/.config/ghostty/config ~/.config/cmux/cmux.json \
          ~/.claude/CLAUDE.md ~/.codex/AGENTS.md \
          ~/.hammerspoon/init.lua; do
   # 用 cp -L 解引用 symlink，確保備份的是實體內容
