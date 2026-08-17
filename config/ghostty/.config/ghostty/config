@@ -50,8 +50,8 @@ clipboard-write = allow
 link-url = true
 
 # 非焦點分割面板的透明度，方便辨識目前操作的面板
-unfocused-split-opacity = 0.5
-background-opacity = 0.8
+unfocused-split-opacity = 0.7
+background-opacity = 0.9
 
 # 快速鍵 — 分割視窗（vim 風格 h/j/k/l）
 keybind = cmd+d=new_split:right
