@@ -1,0 +1,1 @@
+{ "name": "rpg-hud", "version": "0.2.0", "description": "A game HUD pane: hero stats, summoned subagents, a git world map, skills and trophies", "types": "./types/index.d.ts" }

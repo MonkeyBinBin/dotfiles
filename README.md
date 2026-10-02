@@ -266,7 +266,7 @@ dotfiles**——否則 cmux 更新格式時 repo 內的手寫版本會悄悄失�
 #### Claude Code Mods
 
 `claude-mods` 套件收錄 `config/claude-mods/.claude/mods/<mod>/`，由 `CLAUDE_CODE_PLUGIN_DIRS`
-（`settings.json.example` 的 `env`，經 `sync-ai-cli-settings.sh` 合併）載入。目前收錄 `tool-calls`、
+（`settings.json.example` 的 `env`，經 `sync-ai-cli-settings.sh` 合併）載入。目前收錄 `rpg-hud`、
 `slime-band`、`skill-bar`。
 
 此套件**刻意不用** `--no-folding`：plugin loader 讀 `hooks/hooks.json` 時不跟隨 symlink，且 module
