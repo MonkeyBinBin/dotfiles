@@ -127,11 +127,17 @@ function advance($: EngineInterface, change: (p: Progress) => Progress): Promise
   progressQueue = progressQueue
     .then(async () => {
       const now = await $.clock.now()
-      const stored = (await $.store.get(PROGRESS_KEY).catch(() => undefined)) as Partial<Progress> | undefined
-      let next = change({ ...EMPTY_PROGRESS, ...stored })
+      // A store that cannot be read is never written: building on nothing would erase every session's progress.
+      // This session's copy takes the change alone until the store answers again.
+      const read_ = await $.store.get(PROGRESS_KEY).then(
+        value => ({ isRead: true, value: value as Partial<Progress> | undefined }),
+        () => ({ isRead: false, value: undefined }),
+      )
+      const base = read_.isRead ? read_.value : await read($, progress)
+      let next = change({ ...EMPTY_PROGRESS, ...base })
       const fresh = newlyEarned(next)
       if (fresh.length > 0) next = { ...next, unlocked: { ...next.unlocked, ...Object.fromEntries(fresh.map(t => [t.id, now])) } }
-      await $.store.set(PROGRESS_KEY, next)
+      if (read_.isRead) await $.store.set(PROGRESS_KEY, next)
       await update($, progress, () => next)
       for (const trophy of fresh) $.ui.toast(`🏆 Trophy unlocked: ${trophy.title}`)
     })

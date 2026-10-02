@@ -56,6 +56,8 @@ type World = {
   usage?: unknown
   // What the store holds at the start: another session's progress.
   stored?: Record<string, unknown>
+  // The store cannot be read.
+  isStoreDown?: boolean
 }
 
 // The world beneath the plugin: a clock, a store, a folder, and each noun the plugin calls answered.
@@ -63,7 +65,7 @@ type World = {
 const world = (on: On, options: World = {}) => {
   const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) })
   const store = new Map<string, unknown>(Object.entries(options.stored ?? {}))
-  on('store.get', async (_$, e) => ({ value: store.get(e.key) }))
+  on('store.get', async (_$, e) => (options.isStoreDown ? { deny: 'store unavailable' } : { value: store.get(e.key) }) as never)
   on('store.set', async (_$, e) => {
     store.set(e.key, e.value)
     return { value: undefined }
@@ -1032,6 +1034,19 @@ test('only a check runner summons a boss, never a word in the arguments', () => 
   expect(kinds('grep -r test .')).toBeUndefined()
   expect(kinds('cat jest.config.js')).toBeUndefined()
   expect(kinds('git commit -m "fix lint"')).toBeUndefined()
+  // Wrappers, flags and binaries run straight through a package manager.
+  expect(kinds('uv run pytest -q')).toBe('test')
+  expect(kinds('poetry run pytest')).toBe('test')
+  expect(kinds('pnpm vitest run')).toBe('test')
+  expect(kinds('yarn jest --ci')).toBe('test')
+  expect(kinds('pnpm --filter web test')).toBe('test')
+  expect(kinds('npm --prefix app run lint')).toBe('lint')
+  expect(kinds('npx -y vitest')).toBe('test')
+  expect(kinds('pnpm exec tsc --noEmit')).toBe('types')
+  expect(kinds('make test')).toBe('test')
+  expect(kinds('make -j4 lint')).toBe('lint')
+  expect(kinds('make build')).toBeUndefined()
+  expect(kinds('uv pip install pytest')).toBeUndefined()
 })
 
 test('a NotebookEdit counts as exploring and editing its notebook', async ($, on) => {
@@ -1098,4 +1113,14 @@ test('a hovered row the bag no longer has is let go', async ($, on) => {
   const rows = (await ui.findAll({ type: 'Text', in: 'bag' })).map(row => row.text ?? '').join('|')
   expect(rows).toContain('The bag is empty')
   expect(rows).not.toContain('▶')
+})
+
+test('a store that cannot be read is never overwritten', async ($, on) => {
+  const { store } = world(on, { isStoreDown: true, stored: { progress: { ...EMPTY_PROGRESS, totalCalls: 50 } } })
+  await $.tool.call({ tool: 'Read', file_path: '/x/a.md' })
+  expect((store.get('progress') as { totalCalls: number }).totalCalls).toBe(50)
+  // This session's copy still counts the call.
+  const ui = await mountPane($, 'desktop')
+  await showTab($, ui, 'feats', 'desktop')
+  expect((await texts(ui)).join('|')).toContain('1/15 earned')
 })
