@@ -9,6 +9,20 @@
 # 確認 p10k 已載入才進行覆寫
 (( $+functions[p10k] )) || return
 
+# Codex and Claude embedded terminals don't currently expose Nerd Font configuration.
+# Keep the colors from ~/.p10k.zsh and use glyph-safe prompt symbols.
+if [[ -n ${CODEX_SHELL:-} ||
+      -n ${CODEX_SESSION_ID:-} ||
+      ${TERM_PROGRAM:-} == claude-desktop ]]; then
+  typeset -g POWERLEVEL9K_OS_ICON_CONTENT_EXPANSION=''
+  typeset -g POWERLEVEL9K_DIR_VISUAL_IDENTIFIER_EXPANSION=''
+  typeset -g POWERLEVEL9K_VCS_VISUAL_IDENTIFIER_EXPANSION=''
+  typeset -g POWERLEVEL9K_VCS_BRANCH_ICON='git:'
+  typeset -g POWERLEVEL9K_TIME_VISUAL_IDENTIFIER_EXPANSION=''
+  p10k reload
+  return
+fi
+
 # ── 全域底色 / 前景色 ──
 typeset -g POWERLEVEL9K_BACKGROUND=236
 typeset -g POWERLEVEL9K_FOREGROUND=223
