@@ -3,15 +3,15 @@ import type { Engine } from 'claude-code/testing'
 
 import { HERO_FRAMES } from './hero-cells'
 import { HURT_MS, pickFrame, pickMood } from './anim'
-import { countFailures, fightBoss } from './boss'
-import { diffArgv, isLinear, parseBag, parseGraphLine, parseStatus, parseWorktrees, shortAge } from './git'
+import { bossFor, countFailures, fightBoss } from './boss'
+import { GIT_STATUS, diffArgv, isLinear, parseBag, parseGraphLine, parseStatus, parseWorktrees, shortAge } from './git'
 import { campsOn } from './map'
 import { parseDiff, rarityOf, splitBar } from './diff'
 import { countPatch, patchSource } from './edit-card'
 import { trailStops } from './map'
 import { gaugeColor, heroStats, manaLeft, normalizeCall, rankFor, statusLayout } from './hero'
 import { rosterOrder } from './pets'
-import { skillOfPrompt, touchFile } from './register'
+import { campFor, skillOfPrompt, touchFile } from './register'
 import { groupSkills, masteryStars } from './skills'
 import { EMPTY_PROGRESS, newlyEarned } from './trophies'
 import { barFill, oneLine } from './util'
@@ -54,20 +54,26 @@ type World = {
   tool?: (e: { tool: string; command?: string }) => ReturnType<typeof fail> | undefined
   git?: (argv: readonly string[]) => { stdout: string } | undefined
   usage?: unknown
+  // What the store holds at the start: another session's progress.
+  stored?: Record<string, unknown>
 }
 
 // The world beneath the plugin: a clock, a store, a folder, and each noun the plugin calls answered.
 // A test registers each of these once, before it first calls $.
 const world = (on: On, options: World = {}) => {
   const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) })
-  const store = new Map<string, unknown>()
+  const store = new Map<string, unknown>(Object.entries(options.stored ?? {}))
   on('store.get', async (_$, e) => ({ value: store.get(e.key) }))
   on('store.set', async (_$, e) => {
     store.set(e.key, e.value)
     return { value: undefined }
   })
   on('session.cwd', async () => ({ value: '/x' }))
-  on('ui.toast', async () => ({ value: undefined }))
+  const toasts: string[] = []
+  on('ui.toast', async (_$, e) => {
+    toasts.push((e as { text: string }).text)
+    return { value: undefined }
+  })
   on('turn.complete', async () => ({ text: '' }))
   const fills: string[] = []
   on('prompt.fill', async (_$, e) => {
@@ -76,11 +82,13 @@ const world = (on: On, options: World = {}) => {
   })
   on('session.usage', async () => ({ value: options.usage ?? { startedAt: 0, rateLimits: [], context: { window: 200000 } } }) as never)
   on('process.run', async (_$, e) => {
-    const answer = options.git?.(e.argv)
+    // The git config switches (`-c core.quotePath=false`) are the plugin's own; fixtures read the command after them.
+    const argv = e.argv.filter((word, index, all) => word !== '-c' && all[index - 1] !== '-c')
+    const answer = options.git?.(argv)
     return { value: answer === undefined ? NO_GIT : { ...NO_GIT, exitCode: 0, stderr: '', ...answer } }
   })
   on('tool.call', async (_$, e) => options.tool?.(e as never) ?? { result: { text: 'ok' } })
-  return { clock, store, fills }
+  return { clock, store, fills, toasts }
 }
 
 const failBash = (text: string): World['tool'] => e => (e.tool === 'Bash' ? fail(text) : undefined)
@@ -972,4 +980,122 @@ test('a spawn answered after its first tool call does not add the pet twice', as
   expect(shown).toContain('Scout Hawk')
   expect(shown).toContain('Look around')
   expect(shown).toContain('⚔ 1 · Grep x')
+})
+
+// --- Second review fixes ---
+
+test('the level keeps rising past the 200 calls the spell book keeps, and levels up once per ten', async ($, on) => {
+  const { toasts } = world(on)
+  for (let n = 1; n <= 215; n += 1) await $.tool.call({ tool: 'Read', file_path: `/x/f${n}.md` })
+  expect(toasts.filter(text => text.startsWith('✦ Level up!'))).toHaveLength(21)
+  const ui = await mountPane($, 'terminal')
+  const shown = (await texts(ui)).join('|')
+  expect(shown).toContain('Lv.22')
+  expect(shown).toContain('215 casts')
+})
+
+test('a bag file opens its diff on desktop too', async ($, on) => {
+  mapWorld(on, [logLine('* ', 'abc1234', 'HEAD -> main, origin/main', '2 hours ago', 'feat: map')])
+  await $.turn.complete({ answer: '', durationMs: 5, isAborted: false, turnId: 't' } as never)
+  const ui = await mountPane($, 'desktop', 40)
+  await showTab($, ui, 'map', 'desktop')
+  await ui.press({ key: 'open-bag' })
+  await ui.press({ key: 'bag-x.ts' })
+  expect((await texts(ui)).join('|')).toContain('🔍 INSPECT  x.ts')
+})
+
+test('git prints paths as written, and a control character in one cannot break the drawing', () => {
+  expect(GIT_STATUS).toContain('core.quotePath=false')
+  expect(diffArgv({ path: '日記.md', status: 'M' })).toContain('core.quotePath=false')
+  expect(parseBag('?? 日記.md\n?? bad\u0007name.md\n', '').map(item => item.path)).toEqual(['日記.md', 'bad?name.md'])
+})
+
+test("progress adds to what other sessions saved, never overwrites it", async ($, on) => {
+  const { store } = world(on, { stored: { progress: { ...EMPTY_PROGRESS, totalCalls: 50, unlocked: { 'first-cast': 1 } } } })
+  await $.tool.call({ tool: 'Read', file_path: '/x/a.md' })
+  const saved = store.get('progress') as { totalCalls: number; unlocked: Record<string, number> }
+  expect(saved.totalCalls).toBe(51)
+  expect(saved.unlocked['first-cast']).toBe(1)
+})
+
+test('only a check runner summons a boss, never a word in the arguments', () => {
+  const kinds = (command: string) => bossFor(command)?.kind
+  expect(kinds('pnpm test')).toBe('test')
+  expect(kinds('npm run test:unit')).toBe('test')
+  expect(kinds('npx vitest run')).toBe('test')
+  expect(kinds('python -m pytest -q')).toBe('test')
+  expect(kinds('go test ./...')).toBe('test')
+  expect(kinds('cd web && pnpm run lint')).toBe('lint')
+  expect(kinds('./node_modules/.bin/tsc --noEmit')).toBe('types')
+  expect(kinds('CI=1 npx playwright test')).toBe('e2e')
+  expect(kinds('ls tests/')).toBeUndefined()
+  expect(kinds('grep -r test .')).toBeUndefined()
+  expect(kinds('cat jest.config.js')).toBeUndefined()
+  expect(kinds('git commit -m "fix lint"')).toBeUndefined()
+})
+
+test('a NotebookEdit counts as exploring and editing its notebook', async ($, on) => {
+  mapWorld(on, [logLine('* ', 'abc1234', 'HEAD -> main', '2 hours ago', 'x')])
+  await $.tool.call({ tool: 'NotebookEdit', notebook_path: '/x/nb/plot.ipynb', new_source: 'x' } as never)
+  const ui = await mountPane($, 'terminal', 40)
+  await showTab($, ui, 'map')
+  expect((await texts(ui)).join('|')).toContain('nb/plot.ipynb')
+})
+
+test('a new file ending in a newline counts its lines once', async ($, on) => {
+  world(on)
+  const ui = await $.ui.mount({
+    plugin: 'rpg-hud',
+    surface: 'terminal',
+    component: 'ToolResult',
+    requestId: 't3',
+    props: {
+      tool_use_id: 't3',
+      tool: 'Write',
+      output: { type: 'create', filePath: '/x/new.ts', content: 'a\nb\nc\n', structuredPatch: [], originalFile: null },
+      isErrored: false,
+    },
+  })
+  const shown = (await texts(ui)).join('|')
+  expect(shown).toContain('+3')
+  expect(shown).not.toContain('+4')
+})
+
+test('where a pet camps', () => {
+  const outpost = { path: '/w/feat', realPath: '/w/feat', name: 'feat', branch: 'feat', isMain: false, isLocked: false, isPrunable: false, ahead: 0, behind: 0, dirty: 0, age: '' }
+  const home = { ...outpost, path: '/x', realPath: '/x', name: 'x', isMain: true, isHere: true }
+  const list = [home, { ...outpost, isHere: false }]
+  // Its own worktree, even under the repository's .claude/worktrees.
+  expect(campFor({ cwd: '/x/.claude/worktrees/agent-7', isIsolated: true }, list, '/x')).toBe('agent-7')
+  expect(campFor({ isIsolated: true }, list, '/x')).toBe('worktree')
+  expect(campFor({ cwd: '/w/feat', isIsolated: false }, list, '/x')).toBe('feat')
+  expect(campFor({ cwd: '/x', isIsolated: false }, list, '/x')).toBeUndefined()
+  expect(campFor({ cwd: '/x/src', isIsolated: false }, list, '/x')).toBeUndefined()
+  expect(campFor({ cwd: '/elsewhere/tool', isIsolated: false }, list, '/x')).toBe('tool')
+  expect(campFor({ isIsolated: false }, list, '/x')).toBeUndefined()
+})
+
+test('a hovered row the bag no longer has is let go', async ($, on) => {
+  let status = '## main\n M x.ts\n'
+  world(on, {
+    git: argv => {
+      if (argv[1] === 'status') return { stdout: status }
+      if (argv[1] === 'rev-parse') return { stdout: '/x\n' }
+      if (argv[1] === 'diff') return { stdout: '1\t0\tx.ts\n' }
+      return { stdout: '' }
+    },
+  })
+  await $.turn.complete({ answer: '', durationMs: 5, isAborted: false, turnId: 't' } as never)
+  const ui = await mountPane($, 'terminal', 40)
+  await showTab($, ui, 'map')
+  await ui.press({ key: 'open-bag' })
+  await ui.pointer({ type: 'move', x: 6, y: 1, in: 'bag' })
+  expect((await ui.findAll({ type: 'Text', in: 'bag' })).map(row => row.text ?? '').join('|')).toContain('⏎ inspect')
+
+  status = '## main\n'
+  await $.turn.complete({ answer: '', durationMs: 5, isAborted: false, turnId: 't2' } as never)
+  await texts(ui)
+  const rows = (await ui.findAll({ type: 'Text', in: 'bag' })).map(row => row.text ?? '').join('|')
+  expect(rows).toContain('The bag is empty')
+  expect(rows).not.toContain('▶')
 })

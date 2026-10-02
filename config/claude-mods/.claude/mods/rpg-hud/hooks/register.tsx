@@ -45,6 +45,7 @@ import { WINDOW_CHROME_COLUMNS, WINDOW_CHROME_ROWS, clampOffset, pageItems, rend
 import type { Item } from './window'
 
 const calls = atom({ plugin: 'rpg-hud', key: 'calls' } as const, [] as ToolCall[])
+const castCount = atom({ plugin: 'rpg-hud', key: 'castCount' } as const, 0)
 // Rows scrolled down each menu window; the status panel and the menu never scroll.
 const offsets = atom({ plugin: 'rpg-hud', key: 'offsets' } as const, {} as Record<string, number>)
 const flashUntil = atom({ plugin: 'rpg-hud', key: 'flashUntil' } as const, 0)
@@ -116,20 +117,26 @@ export const skillOfPrompt = (text: string, known: readonly string[]): string | 
 }
 
 // Applies `change` to the lifetime progress, saves it, and celebrates any trophy it earns.
-async function advance($: EngineInterface, change: (p: Progress) => Progress) {
-  const now = await $.clock.now()
-  let earned: string[] = []
-  await update($, progress, current => {
-    const next = change({ ...EMPTY_PROGRESS, ...current })
-    const fresh = newlyEarned(next)
-    earned = fresh.map(trophy => trophy.title)
-    if (fresh.length === 0) return next
-    return { ...next, unlocked: { ...next.unlocked, ...Object.fromEntries(fresh.map(t => [t.id, now])) } }
-  })
-  await $.store.set(PROGRESS_KEY, await read($, progress))
-  for (const title of earned) {
-    $.ui.toast(`🏆 Trophy unlocked: ${title}`)
-  }
+// One change after another: each reads what the last one wrote.
+let progressQueue: Promise<void> = Promise.resolve()
+
+// Applies `change` to the lifetime progress and celebrates any trophy it earns. The store is shared by every
+// session, so the change applies to what the store holds now, other sessions' work included, never to this
+// session's copy; this session's copy then follows the store.
+function advance($: EngineInterface, change: (p: Progress) => Progress): Promise<void> {
+  progressQueue = progressQueue
+    .then(async () => {
+      const now = await $.clock.now()
+      const stored = (await $.store.get(PROGRESS_KEY).catch(() => undefined)) as Partial<Progress> | undefined
+      let next = change({ ...EMPTY_PROGRESS, ...stored })
+      const fresh = newlyEarned(next)
+      if (fresh.length > 0) next = { ...next, unlocked: { ...next.unlocked, ...Object.fromEntries(fresh.map(t => [t.id, now])) } }
+      await $.store.set(PROGRESS_KEY, next)
+      await update($, progress, () => next)
+      for (const trophy of fresh) $.ui.toast(`🏆 Trophy unlocked: ${trophy.title}`)
+    })
+    .catch(() => undefined)
+  return progressQueue
 }
 
 async function loadProgress($: EngineInterface) {
@@ -271,12 +278,16 @@ async function inspectChange($: EngineInterface, path: string, from: Pick<MapVie
   const items = root === undefined ? await read($, bag) : ((await read($, outpostBag))?.items ?? [])
   const item = items.find(one => one.path === path) ?? { path, status: 'M' as const }
   await update($, inspect, () => null)
-  await update($, mapView, (): MapView => ({ view: 'diff', path, ...from }))
+  const keep = { ...(from.root === undefined ? {} : { root: from.root }), ...(from.via === undefined ? {} : { via: from.via }) }
+  await update($, mapView, (): MapView => ({ view: 'diff', path, ...keep }))
   await update($, offsets, all => ({ ...all, 'map:diff': 0 }))
   const cwd = root ?? (await toplevel($))
   const ran = await $.process.run(diffArgv(item), cwd === undefined ? {} : { cwd }).catch(() => undefined)
   // `git diff --no-index` exits 1 when the files differ, which is the point.
   const lines = ran === undefined || ran.exitCode > 1 ? [] : ran.stdout.split('\n')
+  // Another diff opened while this one ran keeps the window.
+  const shown = await read($, mapView)
+  if (shown.view !== 'diff' || shown.path !== path || shown.root !== root) return
   await update($, inspect, () => ({ path, lines: lines.slice(0, DIFF_LINES), isCut: lines.length > DIFF_LINES }))
 }
 
@@ -312,17 +323,27 @@ async function discoverPet($: EngineInterface, agentId: string) {
 // Where back leads from a bag: the outposts list for a bag opened there, the map otherwise.
 const isFromOutposts = (view: Pick<MapView, 'root' | 'via'>) => view.root !== undefined || view.via === 'outposts'
 
-// The outpost (worktree) a pet works in: one of the outposts other than the session's own folder, or any folder
-// outside the session's repository. Its own folder or a folder inside it is no camp.
-async function campOfPet($: EngineInterface, cwd: string | undefined, isIsolated: boolean) {
-  if (cwd === undefined) return isIsolated ? 'worktree' : undefined
-  const realCwd = await realOf($, cwd)
-  const outpost = (await read($, outposts)).find(one => one.realPath === realCwd)
+// The outpost (worktree) a pet works in: a worktree of its own wherever it sits (`<repo>/.claude/worktrees/…`
+// included), one of the outposts other than the session's own folder, or any folder outside the session's
+// repository. Its own folder or a folder inside it is no camp. Paths come with their links resolved.
+export const campFor = (pet: { cwd?: string; isIsolated: boolean }, outpostsNow: readonly Outpost[], root?: string) => {
+  if (pet.isIsolated) return pet.cwd === undefined ? 'worktree' : baseName(pet.cwd)
+  if (pet.cwd === undefined) return undefined
+  const { cwd } = pet
+  const outpost = outpostsNow.find(one => one.realPath === cwd)
   if (outpost !== undefined) return outpost.isHere ? undefined : outpost.name
+  const isInside = root !== undefined && (cwd === root || cwd.startsWith(`${root}/`))
+  return isInside ? undefined : baseName(cwd)
+}
+
+async function campOfPet($: EngineInterface, cwd: string | undefined, isIsolated: boolean) {
+  const realCwd = cwd === undefined ? undefined : await realOf($, cwd)
   const root = await toplevel($)
-  const realRoot = root === undefined ? undefined : await realOf($, root)
-  const isInside = realRoot !== undefined && (realCwd === realRoot || realCwd.startsWith(`${realRoot}/`))
-  return isInside ? undefined : baseName(realCwd)
+  return campFor(
+    { ...(realCwd === undefined ? {} : { cwd: realCwd }), isIsolated },
+    await read($, outposts),
+    root === undefined ? undefined : await realOf($, root),
+  )
 }
 
 const refreshAll = ($: EngineInterface) =>
@@ -532,6 +553,7 @@ export const register: Register = on => {
     if (e.tool === 'Agent' && (e as { isolation?: unknown }).isolation === 'worktree') isolated.add(e.tool_use_id)
     if (isMain) {
       await update($, calls, list => [...list, call].slice(-200))
+      await update($, castCount, count => count + 1)
       anim.running += 1
     } else if (e.agentId !== undefined) {
       const agentId = e.agentId
@@ -558,7 +580,9 @@ export const register: Register = on => {
     const status: ToolCallStatus = isError ? 'err' : 'ok'
 
     // The world reacts to every loop's calls: files explored, bosses fought.
-    const filePath = (e as { file_path?: unknown }).file_path
+    // NotebookEdit names its file `notebook_path`.
+    const fields = e as { file_path?: unknown; notebook_path?: unknown }
+    const filePath = fields.file_path ?? fields.notebook_path
     if (typeof filePath === 'string' && (e.tool === 'Read' || EDIT_TOOLS.has(e.tool))) {
       const cwd = await $.session.cwd()
       const path = filePath.startsWith(`${cwd}/`) ? filePath.slice(cwd.length + 1) : filePath
@@ -604,7 +628,7 @@ export const register: Register = on => {
       if (typeof skill === 'string') await castSkill($, skill)
     }
 
-    const total = (await read($, calls)).length
+    const total = await read($, castCount)
     const best = (await read($, combo)).best
     const isNight = new Date(endedAt).getHours() < NIGHT_HOURS
     await advance($, p => ({
@@ -707,6 +731,7 @@ export const register: Register = on => {
       {
         hero,
         list: callList,
+        casts: await read($, castCount),
         vitals: await read($, vitals),
         combo: await read($, combo),
         boss: await read($, boss),
@@ -828,7 +853,7 @@ export const register: Register = on => {
       subtitle = featsSubtitle(progressNow)
     } else {
       items = spellItems(ui, callList, inner)
-      subtitle = `${callList.length} casts`
+      subtitle = `${await read($, castCount)} casts`
     }
 
     const offset = (await read($, offsets))[windowKey] ?? 0

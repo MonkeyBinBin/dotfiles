@@ -56,7 +56,9 @@ export function renderEditCard(ui: ElementTable, tool: string, output: EditOutpu
   const { Box, Text, Code } = ui
   const hunks = output.structuredPatch ?? []
   const isCreate = tool === 'Write' && output.type === 'create'
-  const created = isCreate ? (output.content ?? '').split('\n') : []
+  // The lines of the new file; a final newline ends the last line rather than starting another.
+  const content = output.content ?? ''
+  const created = !isCreate || content === '' ? [] : (content.endsWith('\n') ? content.slice(0, -1) : content).split('\n')
   const { added, removed } = isCreate ? { added: created.length, removed: 0 } : countPatch(hunks)
   const rarity = rarityOf(added + removed)
   const { plus, minus } = splitBar(added, removed, BAR)

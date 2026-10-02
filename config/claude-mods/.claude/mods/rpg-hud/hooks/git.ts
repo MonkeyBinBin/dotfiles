@@ -67,14 +67,18 @@ export const GIT_LOG = [
   `--format=%h${SEP}%D${SEP}%cr${SEP}%s`,
 ]
 export const GIT_REMOTES = ['git', 'remote']
-export const GIT_STATUS = ['git', 'status', '--porcelain=v1', '--branch', '--untracked-files=all']
+// Paths as written (日記.md), not C-escaped ("\346\227\245…"), so they match between commands and on disk.
+const RAW_PATHS = ['-c', 'core.quotePath=false']
 
-export const GIT_NUMSTAT = ['git', 'diff', '--numstat', 'HEAD']
+export const GIT_STATUS = ['git', ...RAW_PATHS, 'status', '--porcelain=v1', '--branch', '--untracked-files=all']
+
+export const GIT_NUMSTAT = ['git', ...RAW_PATHS, 'diff', '--numstat', 'HEAD']
 
 // Paths from a porcelain line's tail: `a.ts`, `"with space.ts"` or `old.ts -> new.ts` (the new one).
+// A control character left in a name (git still quotes those) would make the whole drawing invalid: it shows as ?.
 const porcelainPath = (tail: string): string => {
   const path = tail.includes(' -> ') ? (tail.split(' -> ').pop() ?? tail) : tail
-  return path.replace(/^"(.*)"$/, '$1')
+  return path.replace(/^"(.*)"$/, '$1').replace(/[\u0000-\u001f\u007f]/g, '?')
 }
 
 const STATUS_OF: Record<string, BagItem['status']> = { M: 'M', A: 'A', D: 'D', R: 'R', C: 'A', '?': '?', U: 'M', T: 'M' }
@@ -104,8 +108,8 @@ export const parseBag = (porcelain: string, numstat: string): BagItem[] => {
 // What `git diff` prints for one bag item: against HEAD, or against nothing for a file git does not track yet.
 export const diffArgv = (item: Pick<BagItem, 'path' | 'status'>): string[] =>
   item.status === '?'
-    ? ['git', 'diff', '--no-color', '--no-index', '--', '/dev/null', item.path]
-    : ['git', 'diff', '--no-color', 'HEAD', '--', item.path]
+    ? ['git', ...RAW_PATHS, 'diff', '--no-color', '--no-index', '--', '/dev/null', item.path]
+    : ['git', ...RAW_PATHS, 'diff', '--no-color', 'HEAD', '--', item.path]
 
 export const GIT_WORKTREES = ['git', 'worktree', 'list', '--porcelain']
 

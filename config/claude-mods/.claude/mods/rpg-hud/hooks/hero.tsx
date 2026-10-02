@@ -42,12 +42,13 @@ export const normalizeCall = (stored: unknown): ToolCall => {
   }
 }
 
-// Level follows the call count; each failure among the recent calls costs a heart.
-export const heroStats = (list: readonly ToolCall[]) => {
+// Level follows the call count (`total`, uncapped; the list keeps only the latest calls);
+// each failure among the recent calls costs a heart.
+export const heroStats = (list: readonly ToolCall[], total: number = list.length) => {
   const failures = list.slice(-HP_WINDOW).filter(call => call.status === 'err').length
   return {
-    level: 1 + Math.floor(list.length / CALLS_PER_LEVEL),
-    xp: list.length % CALLS_PER_LEVEL,
+    level: 1 + Math.floor(total / CALLS_PER_LEVEL),
+    xp: total % CALLS_PER_LEVEL,
     hp: HEARTS - Math.min(HEARTS, failures),
   }
 }
@@ -74,6 +75,8 @@ export const statusLayout = (width: number, hasRaster: boolean) => {
 
 export type StatusData = {
   hero: HeroClass
+  // Every call this session; `list` holds only the latest.
+  casts: number
   list: readonly ToolCall[]
   vitals: Vitals
   combo: Combo
@@ -103,7 +106,7 @@ const Bar = (ui: ElementTable, label: string, color: string, value: number, max:
 export function renderStatus(ui: ElementTable, data: StatusData, Raster?: ElementTable<'terminal'>['Raster']) {
   const { Box, Text } = ui
   const { list, vitals, combo, boss, width } = data
-  const { level, xp, hp } = heroStats(list)
+  const { level, xp, hp } = heroStats(list, data.casts)
   const mp = manaLeft(vitals)
   const current = list.findLast(call => call.status === 'run')
   const failed = list.filter(call => call.status === 'err').length
@@ -145,7 +148,7 @@ export function renderStatus(ui: ElementTable, data: StatusData, Raster?: Elemen
         </Box>
         <Text wrap="truncate">
           <Text italic color="cyan">{rankOf(hero, level)}</Text>
-          <Text dimColor> · {list.length} casts</Text>
+          <Text dimColor> · {data.casts} casts</Text>
         </Text>
         {Bar(ui, 'HP', gaugeColor(hp, HEARTS, 'green'), hp, HEARTS, `${hp}/${HEARTS}`, barWidth)}
         {mp === undefined

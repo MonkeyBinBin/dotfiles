@@ -37,11 +37,14 @@ export function pickList<R>(surface: ClientSurface<PickState>, options: PickOpti
     })
     surface.setState({ tick: 0 })
   }
-  const state = surface.state ?? { tick: 0 }
   const pickable = (index: number) => {
     const row = rows[index]
     return row !== undefined && isPickable(row)
   }
+  // A hover the rows no longer have (the list shrank) is dropped, which also stops the blink timer.
+  const held = surface.state ?? { tick: 0 }
+  const state = held.hover !== undefined && !pickable(held.hover) ? { ...held, hover: undefined } : held
+  if (state !== held) surface.setState(state)
   const openAt = (index: number) => {
     const row = rows[index]
     if (row !== undefined && isPickable(row)) open(row)

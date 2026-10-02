@@ -114,7 +114,10 @@ export type Progress = {
 declare module 'claude-code' {
   interface PluginState {
     'rpg-hud': {
+      // The latest 200 calls, for the spell book.
       calls: ToolCall[]
+      // Every main-loop call this session, uncapped: the hero's level and XP.
+      castCount: number
       // Rows scrolled down each menu window.
       offsets: Record<string, number>
       // Until when the status panel glows after a level up.
