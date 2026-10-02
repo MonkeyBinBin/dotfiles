@@ -80,6 +80,8 @@ export type StatusData = {
   boss: Boss | null
   trophies: { earned: number; total: number }
   petsOut: number
+  // The outpost (worktree) the session works in, when not the repository's main folder.
+  camp?: string
   isFlashing: boolean
   width: number
 }
@@ -175,7 +177,7 @@ export function renderStatus(ui: ElementTable, data: StatusData, Raster?: Elemen
           </Text>
         ) : (
           <Text dimColor wrap="truncate">
-            {hero.resting}
+            {data.camp === undefined ? hero.resting : `🏕 camping at ${data.camp}`}
           </Text>
         )}
         {bossRow ??

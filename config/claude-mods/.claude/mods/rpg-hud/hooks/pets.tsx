@@ -67,6 +67,7 @@ export function petItems(
                 <Text wrap="truncate">
                   <Text bold color={pet.status === 'err' ? 'gray' : species.color}>{species.name}</Text>
                   <Text dimColor> {oneLine(pet.kind, 16)}</Text>
+                  {pet.camp !== undefined && <Text color="cyan"> ⚑{pet.camp}</Text>}
                 </Text>
               </Box>
               <Text color={status.color}>{status.text}</Text>

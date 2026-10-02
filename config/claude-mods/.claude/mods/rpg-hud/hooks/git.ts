@@ -1,7 +1,7 @@
-import type { BagItem, GitMap } from '../types'
+import type { BagItem, GitMap, Outpost } from '../types'
 
 // `## main...origin/main [ahead 1, behind 2]`, or `## HEAD (no branch)` when detached.
-export const parseStatus = (porcelain: string): Omit<GitMap, 'isRepo' | 'graph'> => {
+export const parseStatus = (porcelain: string): Omit<GitMap, 'isRepo' | 'graph' | 'remotes'> => {
   const lines = porcelain.split('\n').filter(line => line.length > 0)
   const head = lines[0]?.startsWith('## ') ? (lines.shift() ?? '') : ''
   const branch = head.slice(3).split('...')[0]?.replace(/^No commits yet on /, '') ?? ''
@@ -26,7 +26,8 @@ const SEP = '\x1f'
 const ROW = new RegExp(`^([*|\\\\/_ .-]*?)([0-9a-f]{7,40})${SEP}([^${SEP}]*)${SEP}([^${SEP}]*)${SEP}(.*)$`)
 
 // One `git log --graph` line in GIT_LOG's format; a connector-only line has no hash.
-export const parseGraphLine = (line: string): GraphRow => {
+// `remoteNames` (`git remote`) tells a remote-tracking ref (`origin/main`) from a local branch with a slash (`feat/x`).
+export const parseGraphLine = (line: string, remoteNames: readonly string[] = ['origin']): GraphRow => {
   const match = ROW.exec(line)
   if (match === null) return { graph: line, hash: '', refs: '', age: '', subject: '', isHead: false, remotes: [] }
   const refs = match[3] ?? ''
@@ -38,7 +39,7 @@ export const parseGraphLine = (line: string): GraphRow => {
     age: shortAge(match[4] ?? ''),
     subject: match[5] ?? '',
     isHead: names.some(ref => ref === 'HEAD' || ref.startsWith('HEAD -> ')),
-    remotes: names.filter(ref => /^[\w.-]+\/[\w./-]+$/.test(ref) && !ref.endsWith('/HEAD') && !ref.startsWith('tag:')),
+    remotes: names.filter(ref => remoteNames.some(remote => ref.startsWith(`${remote}/`)) && !ref.endsWith('/HEAD')),
   }
 }
 
@@ -65,6 +66,7 @@ export const GIT_LOG = [
   `-n${GRAPH_LIMIT}`,
   `--format=%h${SEP}%D${SEP}%cr${SEP}%s`,
 ]
+export const GIT_REMOTES = ['git', 'remote']
 export const GIT_STATUS = ['git', 'status', '--porcelain=v1', '--branch', '--untracked-files=all']
 
 export const GIT_NUMSTAT = ['git', 'diff', '--numstat', 'HEAD']
@@ -104,3 +106,38 @@ export const diffArgv = (item: Pick<BagItem, 'path' | 'status'>): string[] =>
   item.status === '?'
     ? ['git', 'diff', '--no-color', '--no-index', '--', '/dev/null', item.path]
     : ['git', 'diff', '--no-color', 'HEAD', '--', item.path]
+
+export const GIT_WORKTREES = ['git', 'worktree', 'list', '--porcelain']
+
+export type WorktreeEntry = Pick<Outpost, 'path' | 'name' | 'branch' | 'isMain' | 'isLocked' | 'isPrunable'>
+
+// `git worktree list --porcelain`: one block per worktree, the main one first. A bare repository's own entry
+// is left out, and then no worktree is the main one: every one of them is linked.
+export const parseWorktrees = (text: string): WorktreeEntry[] => {
+  const blocks = text
+    .split(/\n\s*\n/)
+    .map(block => block.split('\n').filter(line => line.length > 0))
+    .filter(lines => lines[0]?.startsWith('worktree '))
+  const isBare = blocks[0]?.includes('bare') === true
+  return blocks
+    .filter(lines => !lines.includes('bare'))
+    .map((lines, index) => {
+      const path = (lines[0] ?? '').slice('worktree '.length)
+      const branch = lines.find(line => line.startsWith('branch '))?.slice('branch '.length).replace(/^refs\/heads\//, '') ?? ''
+      return {
+        path,
+        name: path.split('/').filter(part => part.length > 0).pop() ?? path,
+        branch,
+        isMain: !isBare && index === 0,
+        isLocked: lines.some(line => line === 'locked' || line.startsWith('locked ')),
+        isPrunable: lines.some(line => line === 'prunable' || line.startsWith('prunable ')),
+      }
+    })
+}
+
+// A worktree's status, numstat and last commit, run from its own folder.
+export const outpostArgv = {
+  status: (path: string) => ['git', '-C', path, ...GIT_STATUS.slice(1)],
+  numstat: (path: string) => ['git', '-C', path, ...GIT_NUMSTAT.slice(1)],
+  age: (path: string) => ['git', '-C', path, 'log', '-1', '--format=%cr'],
+}

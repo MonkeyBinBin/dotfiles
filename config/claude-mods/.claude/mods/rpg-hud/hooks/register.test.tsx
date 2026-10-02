@@ -4,7 +4,8 @@ import type { Engine } from 'claude-code/testing'
 import { HERO_FRAMES } from './hero-cells'
 import { HURT_MS, pickFrame, pickMood } from './anim'
 import { countFailures, fightBoss } from './boss'
-import { diffArgv, isLinear, parseBag, parseGraphLine, parseStatus, shortAge } from './git'
+import { diffArgv, isLinear, parseBag, parseGraphLine, parseStatus, parseWorktrees, shortAge } from './git'
+import { campsOn } from './map'
 import { parseDiff, rarityOf, splitBar } from './diff'
 import { countPatch, patchSource } from './edit-card'
 import { trailStops } from './map'
@@ -290,6 +291,7 @@ const mapWorld = (on: On, log: string[], status = '## main...origin/main [ahead 
     git: argv => {
       if (argv[1] === 'status') return { stdout: status }
       if (argv[1] === 'rev-parse') return { stdout: '/x\n' }
+      if (argv[1] === 'remote') return { stdout: 'origin\n' }
       if (argv[1] === 'diff' && argv[2] === '--numstat') return { stdout: '2\t1\tx.ts\n' }
       if (argv[1] === 'diff') return { stdout: `${DIFF.join('\n')}\n` }
       return { stdout: `${log.join('\n')}\n` }
@@ -763,4 +765,211 @@ test('/hud class picks a class and the panel follows it', async ($, on) => {
   expect(await $.command.run({ command: 'hud', args: 'class bard' } as never)).toMatchObject({
     text: 'No such class. Pick one of: wizard, knight, ranger, rogue, cleric, artificer.',
   })
+})
+
+// --- Outposts (worktrees) ---
+
+const WORKTREES = [
+  'worktree /x',
+  'HEAD abc1234',
+  'branch refs/heads/main',
+  '',
+  'worktree /x-wt/feat-x',
+  'HEAD bcd2345',
+  'branch refs/heads/feat/x',
+  '',
+  'worktree /x-wt/locked-one',
+  'HEAD cde3456',
+  'detached',
+  'locked',
+  '',
+  'worktree /gone/ruin',
+  'HEAD def4567',
+  'branch refs/heads/old',
+  'prunable gitdir file points to non-existent location',
+  '',
+].join('\n')
+
+// A repository with three outposts besides the main folder; `here` is where the session runs.
+const outpostGit = (here: string) => (argv: readonly string[]) => {
+  const at = argv[1] === '-C' ? argv[2] : undefined
+  const command = at === undefined ? argv.slice(1) : argv.slice(3)
+  if (command[0] === 'worktree') return { stdout: WORKTREES }
+  if (command[0] === 'remote') return { stdout: 'origin\n' }
+  if (command[0] === 'rev-parse') return { stdout: `${here}\n` }
+  if (command[0] === 'status') {
+    return { stdout: at === '/x-wt/feat-x' ? '## feat/x...origin/feat/x [ahead 2]\n M a.ts\n M b.ts\n' : '## main\n' }
+  }
+  if (command[0] === 'log' && command[1] === '-1') return { stdout: '3 hours ago\n' }
+  if (command[0] === 'diff' && command[1] === '--numstat') return { stdout: at === '/x-wt/feat-x' ? '5\t1\ta.ts\n2\t0\tb.ts\n' : '' }
+  if (command[0] === 'diff') return { stdout: `${DIFF.join('\n')}\n` }
+  return { stdout: `${logLine('* ', 'abc1234', 'HEAD -> main', '2 hours ago', 'feat: map')}\n${logLine('* ', 'bcd2345', 'feat/x', '1 day ago', 'wip')}\n` }
+}
+
+const outpostWorld = (on: On, here = '/x') => world(on, { git: outpostGit(here) })
+
+test('reads the worktrees as outposts', () => {
+  expect(parseWorktrees(WORKTREES)).toEqual([
+    { path: '/x', name: 'x', branch: 'main', isMain: true, isLocked: false, isPrunable: false },
+    { path: '/x-wt/feat-x', name: 'feat-x', branch: 'feat/x', isMain: false, isLocked: false, isPrunable: false },
+    { path: '/x-wt/locked-one', name: 'locked-one', branch: '', isMain: false, isLocked: true, isPrunable: false },
+    { path: '/gone/ruin', name: 'ruin', branch: 'old', isMain: false, isLocked: false, isPrunable: true },
+  ])
+  expect(parseWorktrees('worktree /bare\nbare\n')).toEqual([])
+})
+
+test('flags the branches another outpost has checked out', () => {
+  expect(campsOn('HEAD -> main, feat/x, origin/main', { 'feat/x': 'feat-x', main: 'x' })).toEqual(['x', 'feat-x'])
+  expect(campsOn('', { main: 'x' })).toEqual([])
+})
+
+test('walks from the map to an outpost, its bag and a diff, and back', async ($, on) => {
+  outpostWorld(on)
+  await $.turn.complete({ answer: '', durationMs: 5, isAborted: false, turnId: 't' } as never)
+  const ui = await mountPane($, 'terminal', 40)
+  await showTab($, ui, 'map')
+  expect(await ui.find({ type: 'Button', key: 'open-outposts' })).toBeDefined()
+  let shown = (await texts(ui)).join('|')
+  expect(shown).not.toContain('🏰 feat/x')
+  // feat/x is checked out at the feat-x outpost.
+  expect(shown).toContain(' ⚑feat-x')
+
+  await ui.press({ key: 'open-outposts' })
+  expect((await texts(ui)).join('|')).toContain('🏕 OUTPOSTS  4 camps · 1 with unsaved work')
+  const camps = (await ui.findAll({ type: 'Text', in: 'outposts' })).map(row => row.text ?? '').join('|')
+  expect(camps).toContain('feat-x')
+  expect(camps).toContain('feat/x ↑2')
+  expect(camps).toContain('⚠ 2 unsaved')
+  expect(camps).toContain('here')
+  expect(camps).toContain('prunable')
+
+  // A ruin opens nothing; feat-x (row 2) opens its own bag.
+  await ui.pointer({ type: 'up', x: 6, y: 4, button: 'left', in: 'outposts' })
+  expect((await texts(ui)).join('|')).toContain('🏕 OUTPOSTS')
+  await ui.pointer({ type: 'up', x: 6, y: 2, button: 'left', in: 'outposts' })
+  shown = (await texts(ui)).join('|')
+  expect(shown).toContain('🎒 INVENTORY  ⚑feat-x · 2 items · +7 −1')
+  const bagRows = (await ui.findAll({ type: 'Text', in: 'bag' })).map(row => row.text ?? '').join('|')
+  expect(bagRows).toContain('◂ back to the outposts')
+
+  await ui.pointer({ type: 'up', x: 6, y: 1, button: 'left', in: 'bag' })
+  expect((await texts(ui)).join('|')).toContain('🔍 INSPECT  a.ts')
+  await ui.press({ key: 'inspect-back' })
+  expect((await texts(ui)).join('|')).toContain('⚑feat-x')
+  await ui.pointer({ type: 'up', x: 3, y: 0, button: 'left', in: 'bag' })
+  expect((await texts(ui)).join('|')).toContain('🏕 OUTPOSTS')
+  await ui.pointer({ type: 'up', x: 3, y: 0, button: 'left', in: 'outposts' })
+  expect((await texts(ui)).join('|')).toContain('🧭 WORLD MAP')
+})
+
+test('a session in an outpost camps there, and a pet sent elsewhere shows its camp', async ($, on) => {
+  outpostWorld(on, '/x-wt/feat-x')
+  on('agent.spawn', async () => ({ model: 'claude-haiku-4-5', agentId: 'agent-2' }))
+  await $.turn.complete({ answer: '', durationMs: 5, isAborted: false, turnId: 't' } as never)
+  await $.agent.spawn({ prompt: 'Fix it', description: 'Fix it', subagentType: 'general-purpose', cwd: '/x-wt/locked-one' } as never)
+
+  const ui = await mountPane($, 'terminal', 40)
+  expect((await texts(ui)).join('|')).toContain('🏕 camping at feat-x')
+  await showTab($, ui, 'pets')
+  expect((await texts(ui)).join('|')).toContain(' ⚑locked-one')
+})
+
+// --- Review fixes ---
+
+test('in a bare repository no worktree is the main one', () => {
+  const bare = 'worktree /repo.git\nbare\n\nworktree /repo/main\nHEAD abc\nbranch refs/heads/main\n\nworktree /repo/feat\nHEAD bcd\nbranch refs/heads/feat\n'
+  expect(parseWorktrees(bare).map(one => [one.name, one.isMain])).toEqual([
+    ['main', false],
+    ['feat', false],
+  ])
+})
+
+test('an edit refreshes only the bag; outposts are surveyed when their list opens', async ($, on) => {
+  const runs: string[] = []
+  const answer = outpostGit('/x')
+  world(on, {
+    git: argv => {
+      runs.push(argv.slice(1).join(' '))
+      return answer(argv)
+    },
+  })
+  await $.turn.complete({ answer: '', durationMs: 5, isAborted: false, turnId: 't' } as never)
+  // The refreshes run unawaited; drawing the pane lets them finish.
+  const ui = await mountPane($, 'terminal', 40)
+  await showTab($, ui, 'map')
+  // The turn's refresh lists the outposts but surveys none.
+  expect(runs.some(run => run.startsWith('worktree list'))).toBe(true)
+  expect(runs.some(run => run.startsWith('-C '))).toBe(false)
+
+  runs.length = 0
+  await $.tool.call({ tool: 'Edit', file_path: '/x/a.ts', old_string: 'a', new_string: 'b' } as never)
+  await texts(ui)
+  expect(runs.some(run => run.startsWith('status'))).toBe(true)
+  expect(runs.some(run => /^(log|remote|worktree)/.test(run))).toBe(false)
+
+  await ui.press({ key: 'open-outposts' })
+  expect(runs.filter(run => /^-C \S+ status/.test(run))).toHaveLength(3)
+  const camps = (await ui.findAll({ type: 'Text', in: 'outposts' })).map(row => row.text ?? '').join('|')
+  expect(camps).toContain('⚠ 2 unsaved')
+})
+
+test("the session's own outpost opened from the list leads back to the list", async ($, on) => {
+  outpostWorld(on)
+  await $.turn.complete({ answer: '', durationMs: 5, isAborted: false, turnId: 't' } as never)
+  const ui = await mountPane($, 'terminal', 40)
+  await showTab($, ui, 'map')
+  await ui.press({ key: 'open-outposts' })
+  // Row 1 is the session's own folder, /x.
+  await ui.pointer({ type: 'up', x: 6, y: 1, button: 'left', in: 'outposts' })
+  expect((await ui.findAll({ type: 'Text', in: 'bag' })).map(row => row.text ?? '').join('|')).toContain('◂ back to the outposts')
+  await ui.pointer({ type: 'up', x: 3, y: 0, button: 'left', in: 'bag' })
+  expect((await texts(ui)).join('|')).toContain('🏕 OUTPOSTS')
+})
+
+test('a pet working inside the session folder has no camp', async ($, on) => {
+  outpostWorld(on)
+  on('agent.spawn', async () => ({ model: 'claude-haiku-4-5', agentId: 'agent-3' }))
+  await $.turn.complete({ answer: '', durationMs: 5, isAborted: false, turnId: 't' } as never)
+  await $.agent.spawn({ prompt: 'Read', description: 'Read src', subagentType: 'Explore', cwd: '/x/src' } as never)
+  const ui = await mountPane($, 'terminal', 40)
+  await showTab($, ui, 'pets')
+  expect((await texts(ui)).join('|')).not.toContain('⚑')
+})
+
+// --- Subagents met only through their tool calls ---
+
+test("a skill's forked subagent joins the party from its first tool call", async ($, on) => {
+  world(on)
+  on('agent.list', async () => ({
+    value: [{ id: 'fork-1', description: '/code-review high', type: 'fork', status: 'running' }],
+  }))
+  await $.tool.call({ tool: 'Grep', pattern: 'TODO', agentId: 'fork-1' } as never)
+  await $.tool.call({ tool: 'Read', file_path: '/x/a.ts', agentId: 'fork-1' } as never)
+
+  const ui = await mountPane($, 'terminal')
+  await showTab($, ui, 'pets')
+  const shown = (await texts(ui)).join('|')
+  expect(shown).toContain('1 questing · 1 summoned')
+  expect(shown).toContain('Wisp')
+  expect(shown).toContain('/code-review high')
+  expect(shown).toContain('⚔ 2 · Read a.ts')
+
+  await $.turn.complete({ agentId: 'fork-1', answer: 'Found 10 issues', durationMs: 5, isAborted: false, turnId: 't' } as never)
+  expect((await texts(ui)).join('|')).toContain('↩ Found 10 issues')
+})
+
+test('a spawn answered after its first tool call does not add the pet twice', async ($, on) => {
+  world(on)
+  on('agent.list', async () => ({ value: [] }))
+  on('agent.spawn', async () => ({ model: 'claude-haiku-4-5', agentId: 'agent-9' }))
+  await $.tool.call({ tool: 'Grep', pattern: 'x', agentId: 'agent-9' } as never)
+  await $.agent.spawn({ prompt: 'Look', description: 'Look around', subagentType: 'Explore' } as never)
+
+  const ui = await mountPane($, 'terminal')
+  await showTab($, ui, 'pets')
+  const shown = (await texts(ui)).join('|')
+  expect(shown).toContain('1 questing · 1 summoned')
+  expect(shown).toContain('Scout Hawk')
+  expect(shown).toContain('Look around')
+  expect(shown).toContain('⚔ 1 · Grep x')
 })

@@ -25,6 +25,8 @@ export type Pet = {
   lastTool?: string
   lastSummary?: string
   loot?: string
+  // The outpost (worktree) the pet works in, when not the session's own folder.
+  camp?: string
 }
 
 // Context window and spend, as the status line reports them.
@@ -42,6 +44,8 @@ export type GitMap = {
   behind: number
   dirty: number
   graph: string[]
+  // The remotes' names (`git remote`), which tell remote-tracking refs from local branches.
+  remotes?: string[]
 }
 
 export type TouchedFile = { path: string; reads: number; edits: number }
@@ -55,8 +59,29 @@ export type BagItem = {
   isBinary: boolean
 }
 
-// What the map tab shows: the map itself, the bag of unsaved changes, or one change's diff.
-export type MapView = { view: 'map' | 'bag' | 'diff'; path?: string }
+// What the map tab shows: the map itself, the outposts (worktrees), a bag of unsaved changes, or one change's diff.
+// `root` names the outpost whose bag or diff it is; absent, the session's own.
+// `via` marks a bag or diff reached from the outposts list, where back leads even for the session's own folder.
+export type MapView = { view: 'map' | 'outposts' | 'bag' | 'diff'; path?: string; root?: string; via?: 'outposts' }
+
+// One git worktree: an outpost of the repository, its branch, and how its work stands.
+export type Outpost = {
+  path: string
+  // `path` with every symbolic link resolved, what the session's folder is compared against.
+  realPath: string
+  name: string
+  // The branch checked out, without refs/heads/; empty when detached.
+  branch: string
+  isHere: boolean
+  isMain: boolean
+  isLocked: boolean
+  isPrunable: boolean
+  ahead: number
+  behind: number
+  dirty: number
+  // The last commit's age, `3h`; empty when unknown.
+  age: string
+}
 
 // The diff being inspected, as git printed it.
 export type Inspect = { path: string; lines: string[]; isCut: boolean }
@@ -104,6 +129,9 @@ declare module 'claude-code' {
       map: GitMap
       touched: TouchedFile[]
       bag: BagItem[]
+      outposts: Outpost[]
+      // The bag of the outpost being looked at.
+      outpostBag: { root: string; items: BagItem[] } | null
       mapView: MapView
       inspect: Inspect | null
       loadout: Loadout

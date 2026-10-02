@@ -10,6 +10,7 @@ import type {
   Inspect,
   Loadout,
   MapView,
+  Outpost,
   Pet,
   Progress,
   Tab,
@@ -21,7 +22,8 @@ import type {
 import { FRAME_MS, HERO_CELLS, HURT_MS, PET_TICKS, anim, pickFrame, pickMood } from './anim'
 import { fightBoss } from './boss'
 import type { BagRow, BagProps } from './bag-client'
-import { GIT_LOG, GIT_NUMSTAT, GIT_STATUS, diffArgv, parseBag, parseStatus } from './git'
+import { GIT_LOG, GIT_NUMSTAT, GIT_REMOTES, GIT_STATUS, GIT_WORKTREES, diffArgv, outpostArgv, parseBag, parseStatus, parseWorktrees, shortAge } from './git'
+import type { OutpostRow, OutpostsProps } from './outposts-client'
 import { bagSubtitle, inspectItems } from './inspect'
 import { renderEditCard } from './edit-card'
 import type { EditOutput } from './edit-card'
@@ -65,6 +67,8 @@ const touched = atom({ plugin: 'rpg-hud', key: 'touched' } as const, [] as Touch
 const bag = atom({ plugin: 'rpg-hud', key: 'bag' } as const, [] as BagItem[])
 const mapView = atom({ plugin: 'rpg-hud', key: 'mapView' } as const, { view: 'map' } as MapView)
 const inspect = atom({ plugin: 'rpg-hud', key: 'inspect' } as const, null as Inspect | null)
+const outposts = atom({ plugin: 'rpg-hud', key: 'outposts' } as const, [] as Outpost[])
+const outpostBag = atom({ plugin: 'rpg-hud', key: 'outpostBag' } as const, null as { root: string; items: BagItem[] } | null)
 const loadout = atom({ plugin: 'rpg-hud', key: 'loadout' } as const, { skills: [], gear: [] } as Loadout)
 const skillCasts = atom({ plugin: 'rpg-hud', key: 'skillCasts' } as const, {} as Record<string, number>)
 
@@ -91,6 +95,8 @@ const EDIT_TOOLS = new Set(['Edit', 'Write', 'NotebookEdit'])
 // The longest diff the inspect view keeps, and how many new files' lines the bag counts.
 const DIFF_LINES = 3000
 const COUNTED_NEW_FILES = 30
+// Outposts beyond this many are listed without their status, which costs a git run each.
+const SURVEYED_OUTPOSTS = 10
 // Midnight to 4 a.m., local time.
 const NIGHT_HOURS = 4
 
@@ -160,46 +166,163 @@ async function refreshLoadout($: EngineInterface) {
   await update($, loadout, () => ({ skills, gear }))
 }
 
-async function refreshMap($: EngineInterface) {
-  const [status, log, numstat] = await Promise.all([
+const toplevel = async ($: EngineInterface) =>
+  (await $.process.run(['git', 'rev-parse', '--show-toplevel']).catch(() => undefined))?.stdout.trim()
+
+// A path with its symbolic links resolved (macOS's /tmp is /private/tmp), or as given when it cannot be.
+const realOf = async ($: EngineInterface, path: string) =>
+  (await $.fs.stat(path, { resolve: true }).catch(() => undefined))?.realPath ?? path
+
+const baseName = (path: string) => path.split('/').filter(part => part.length > 0).pop() ?? path
+
+// One folder's bag from its status: numstat run in `root` (an outpost) or the session's folder, untracked files
+// read from `base`. A file git does not track yet has no numstat: its lines all count as added.
+async function loadBag($: EngineInterface, status: string, root: string | undefined, base: string | undefined) {
+  const numstat = await $.process.run(root === undefined ? GIT_NUMSTAT : outpostArgv.numstat(root)).catch(() => undefined)
+  const items = parseBag(status, numstat?.exitCode === 0 ? numstat.stdout : '')
+  let counted = 0
+  return Promise.all(
+    items.map(async item => {
+      if (item.status !== '?' || base === undefined || counted >= COUNTED_NEW_FILES) return item
+      counted += 1
+      const text = await $.fs.read(`${base}/${item.path}`).catch(() => undefined)
+      return text === undefined ? item : { ...item, added: text.split('\n').length - (text.endsWith('\n') ? 1 : 0) }
+    }),
+  )
+}
+
+// `files`: what an edit can change, the status and the bag. `all`: the graph, the remotes and the outposts too.
+async function refreshMap($: EngineInterface, scope: 'files' | 'all' = 'all') {
+  const isAll = scope === 'all'
+  const [status, log, remoteList] = await Promise.all([
     $.process.run(GIT_STATUS).catch(() => undefined),
-    $.process.run(GIT_LOG).catch(() => undefined),
-    $.process.run(GIT_NUMSTAT).catch(() => undefined),
+    isAll ? $.process.run(GIT_LOG).catch(() => undefined) : undefined,
+    isAll ? $.process.run(GIT_REMOTES).catch(() => undefined) : undefined,
   ])
   if (status === undefined || status.exitCode !== 0) {
     await update($, map, current => ({ ...current, isRepo: false }))
     await update($, bag, () => [])
+    await update($, outposts, () => [])
     return
   }
-  const graph = log?.exitCode === 0 ? log.stdout.split('\n').filter(line => line.length > 0) : []
-  await update($, map, () => ({ isRepo: true, graph, ...parseStatus(status.stdout) }))
-
-  // A file git does not track yet has no numstat: its lines all count as added.
-  const items = parseBag(status.stdout, numstat?.exitCode === 0 ? numstat.stdout : '')
-  const root = (await $.process.run(['git', 'rev-parse', '--show-toplevel']).catch(() => undefined))?.stdout.trim()
-  let counted = 0
-  const filled = await Promise.all(
-    items.map(async item => {
-      if (item.status !== '?' || root === undefined || counted >= COUNTED_NEW_FILES) return item
-      counted += 1
-      const text = await $.fs.read(`${root}/${item.path}`).catch(() => undefined)
-      return text === undefined ? item : { ...item, added: text.split('\n').length - (text.endsWith('\n') ? 1 : 0) }
-    }),
-  )
-  await update($, bag, () => filled)
+  const root = await toplevel($)
+  if (isAll) {
+    const graph = log?.exitCode === 0 ? log.stdout.split('\n').filter(line => line.length > 0) : []
+    const remotes = remoteList?.exitCode === 0 ? remoteList.stdout.split('\n').filter(name => name.length > 0) : []
+    await update($, map, () => ({ isRepo: true, graph, remotes, ...parseStatus(status.stdout) }))
+  } else {
+    await update($, map, current => ({ ...current, isRepo: true, ...parseStatus(status.stdout) }))
+  }
+  const items = await loadBag($, status.stdout, undefined, root)
+  await update($, bag, () => items)
+  if (isAll) await listOutposts($, root, false)
 }
 
-// Opens one bag item's diff in the map tab's window.
-async function inspectChange($: EngineInterface, path: string) {
-  const item = (await read($, bag)).find(one => one.path === path) ?? { path, status: 'M' as const }
+// The worktrees as outposts. Listing them is one git run; `survey` also reads each one's branch distance, unsaved
+// work and last commit (two runs each), which only the outposts view shows, so it alone asks for it.
+// Without a survey an outpost keeps the figures its last one found.
+async function listOutposts($: EngineInterface, root: string | undefined, survey: boolean) {
+  const listed = await $.process.run(GIT_WORKTREES).catch(() => undefined)
+  if (listed === undefined || listed.exitCode !== 0) return void (await update($, outposts, () => []))
+  const entries = parseWorktrees(listed.stdout)
+  // One outpost is the repository alone: nothing to show.
+  if (entries.length < 2) return void (await update($, outposts, () => []))
+  const here = root === undefined ? undefined : await realOf($, root)
+  const previous = await read($, outposts)
+  const list = await Promise.all(
+    entries.map(async (entry, index): Promise<Outpost> => {
+      const old = previous.find(one => one.path === entry.path)
+      const realPath = await realOf($, entry.path)
+      const known = { ahead: old?.ahead ?? 0, behind: old?.behind ?? 0, dirty: old?.dirty ?? 0, age: old?.age ?? '' }
+      const outpost = { ...entry, realPath, isHere: realPath === here, ...known }
+      if (!survey || entry.isPrunable || index >= SURVEYED_OUTPOSTS) return outpost
+      const [status, age] = await Promise.all([
+        $.process.run(outpostArgv.status(entry.path)).catch(() => undefined),
+        $.process.run(outpostArgv.age(entry.path)).catch(() => undefined),
+      ])
+      const { ahead, behind, dirty } = status?.exitCode === 0 ? parseStatus(status.stdout) : known
+      return { ...outpost, ahead, behind, dirty, age: age?.exitCode === 0 ? shortAge(age.stdout.trim()) : known.age }
+    }),
+  )
+  await update($, outposts, () => list)
+}
+
+const surveyOutposts = async ($: EngineInterface) => listOutposts($, await toplevel($), true)
+
+// Opens an outpost's bag: the session's own folder shows the usual bag, another worktree its own.
+// Either way back leads to the outposts list it was opened from.
+async function openOutpost($: EngineInterface, path: string) {
+  const outpost = (await read($, outposts)).find(one => one.path === path)
+  if (outpost === undefined || outpost.isPrunable) return
+  await update($, offsets, all => ({ ...all, 'map:bag': 0 }))
+  if (outpost.isHere) return void (await update($, mapView, (): MapView => ({ view: 'bag', via: 'outposts' })))
+  await update($, outpostBag, () => ({ root: path, items: [] }))
+  await update($, mapView, (): MapView => ({ view: 'bag', root: path, via: 'outposts' }))
+  const status = await $.process.run(outpostArgv.status(path)).catch(() => undefined)
+  const items = status?.exitCode === 0 ? await loadBag($, status.stdout, path, path) : []
+  // A later outpost opened while this one loaded keeps its own bag.
+  if ((await read($, mapView)).root !== path) return
+  await update($, outpostBag, () => ({ root: path, items }))
+}
+
+// Opens one bag item's diff in the map tab's window, keeping where its bag came from (`root`, `via`).
+async function inspectChange($: EngineInterface, path: string, from: Pick<MapView, 'root' | 'via'>) {
+  const { root } = from
+  const items = root === undefined ? await read($, bag) : ((await read($, outpostBag))?.items ?? [])
+  const item = items.find(one => one.path === path) ?? { path, status: 'M' as const }
   await update($, inspect, () => null)
-  await update($, mapView, (): MapView => ({ view: 'diff', path }))
+  await update($, mapView, (): MapView => ({ view: 'diff', path, ...from }))
   await update($, offsets, all => ({ ...all, 'map:diff': 0 }))
-  const root = (await $.process.run(['git', 'rev-parse', '--show-toplevel']).catch(() => undefined))?.stdout.trim()
-  const ran = await $.process.run(diffArgv(item), root === undefined ? {} : { cwd: root }).catch(() => undefined)
+  const cwd = root ?? (await toplevel($))
+  const ran = await $.process.run(diffArgv(item), cwd === undefined ? {} : { cwd }).catch(() => undefined)
   // `git diff --no-index` exits 1 when the files differ, which is the point.
   const lines = ran === undefined || ran.exitCode > 1 ? [] : ran.stdout.split('\n')
   await update($, inspect, () => ({ path, lines: lines.slice(0, DIFF_LINES), isCut: lines.length > DIFF_LINES }))
+}
+
+// Adds a pet to the party and counts the summon; a pet already there under the same agent (one met through its
+// tool calls before its spawn answered) is replaced, keeping what it has done, and not counted twice.
+async function joinParty($: EngineInterface, pet: Pet) {
+  const before = (await read($, pets)).find(one => one.agentId !== undefined && one.agentId === pet.agentId)
+  const joined = before === undefined ? pet : { ...pet, actions: before.actions, lastTool: before.lastTool, lastSummary: before.lastSummary, startedAt: before.startedAt }
+  await update($, pets, list =>
+    [...list.filter(one => one.id !== pet.id && (pet.agentId === undefined || one.agentId !== pet.agentId)), joined].slice(-50),
+  )
+  if (before !== undefined) return
+  const out = (await read($, pets)).filter(one => one.status === 'run').length
+  await advance($, p => ({ ...p, petsSummoned: p.petsSummoned + 1, maxPetsAtOnce: Math.max(p.maxPetsAtOnce, out) }))
+  $.ui.toast(`🐾 ${speciesFor(pet.kind).name} summoned: ${pet.description}`)
+}
+
+// A subagent met through its tool calls with no spawn of its own seen: a skill's fork, a teammate, or one whose
+// spawn answered after its first call. The session's agent list names its type and task when it can.
+async function discoverPet($: EngineInterface, agentId: string) {
+  const info = (await $.agent.list().catch(() => [])).find(agent => agent.id === agentId)
+  await joinParty($, {
+    id: `agent:${agentId}`,
+    agentId,
+    kind: info?.type ?? 'fork',
+    description: info?.description || info?.name || 'a task in the background',
+    startedAt: await $.clock.now(),
+    status: 'run',
+    actions: 0,
+  })
+}
+
+// Where back leads from a bag: the outposts list for a bag opened there, the map otherwise.
+const isFromOutposts = (view: Pick<MapView, 'root' | 'via'>) => view.root !== undefined || view.via === 'outposts'
+
+// The outpost (worktree) a pet works in: one of the outposts other than the session's own folder, or any folder
+// outside the session's repository. Its own folder or a folder inside it is no camp.
+async function campOfPet($: EngineInterface, cwd: string | undefined, isIsolated: boolean) {
+  if (cwd === undefined) return isIsolated ? 'worktree' : undefined
+  const realCwd = await realOf($, cwd)
+  const outpost = (await read($, outposts)).find(one => one.realPath === realCwd)
+  if (outpost !== undefined) return outpost.isHere ? undefined : outpost.name
+  const root = await toplevel($)
+  const realRoot = root === undefined ? undefined : await realOf($, root)
+  const isInside = realRoot !== undefined && (realCwd === realRoot || realCwd.startsWith(`${realRoot}/`))
+  return isInside ? undefined : baseName(realCwd)
 }
 
 const refreshAll = ($: EngineInterface) =>
@@ -288,12 +411,22 @@ const startAnim = ($: EngineInterface) => {
   anim.ticker ??= $.clock.every(FRAME_MS, () => void paint($))
 }
 
+// The session's camp, when it works in a worktree other than the repository's main folder.
+const campOf = (list: readonly Outpost[]): { camp?: string } => {
+  const here = list.find(one => one.isHere)
+  return here === undefined || here.isMain ? {} : { camp: here.name }
+}
+
 export const register: Register = on => {
   // The last drawn log window; scrolling clamps against it.
   // `key` names the window being scrolled: a tab, or `map:bag` / `map:diff` inside the map tab.
   let layout = { rows: 1, total: 0, key: 'spells' }
   // Module state: whether the main loop's current turn has fizzled.
   let turnHadError = false
+  // Agent calls asked to run in a worktree of their own, by tool_use_id, until their spawn.
+  const isolated = new Set<string>()
+  // Subagents being looked up in the agent list, so parallel tool calls of one add it once.
+  const discovering = new Set<string>()
 
   on('session.start', async ($, e, next) => {
     await $.command.register({
@@ -361,14 +494,21 @@ export const register: Register = on => {
         return { ...p, turnStreak, bestTurnStreak: Math.max(p.bestTurnStreak, turnStreak) }
       })
     }
-    void refreshAll($).catch(() => undefined)
+    // The outposts list, while open, is surveyed again after each turn.
+    const isSurveying = (await read($, mapView)).view === 'outposts'
+    void refreshAll($)
+      .then(() => (isSurveying ? surveyOutposts($) : undefined))
+      .catch(() => undefined)
     return next(e)
   })
 
   on('agent.spawn', async ($, e, next) => {
     const ran = await next(e)
+    const isIsolated = isolated.delete(e.tool_use_id)
     if (ran.agentId === undefined) return ran
     const now = await $.clock.now()
+    // A pet sent to its own worktree, or to a folder outside the repository, camps there.
+    const camp = await campOfPet($, e.cwd, isIsolated)
     const pet: Pet = {
       id: e.tool_use_id,
       agentId: ran.agentId,
@@ -377,11 +517,9 @@ export const register: Register = on => {
       startedAt: now,
       status: 'run',
       actions: 0,
+      ...(camp === undefined ? {} : { camp }),
     }
-    await update($, pets, list => [...list.filter(one => one.id !== pet.id), pet].slice(-50))
-    const out = (await read($, pets)).filter(one => one.status === 'run').length
-    await advance($, p => ({ ...p, petsSummoned: p.petsSummoned + 1, maxPetsAtOnce: Math.max(p.maxPetsAtOnce, out) }))
-    $.ui.toast(`🐾 ${speciesFor(pet.kind).name} summoned: ${pet.description}`)
+    await joinParty($, pet)
     return ran
   })
 
@@ -391,11 +529,16 @@ export const register: Register = on => {
     const summary = summarize(e)
     const call: ToolCall = { id: e.tool_use_id, tool: e.tool, summary, startedAt, status: 'run' }
 
+    if (e.tool === 'Agent' && (e as { isolation?: unknown }).isolation === 'worktree') isolated.add(e.tool_use_id)
     if (isMain) {
       await update($, calls, list => [...list, call].slice(-200))
       anim.running += 1
     } else if (e.agentId !== undefined) {
       const agentId = e.agentId
+      if (!(await read($, pets)).some(pet => pet.agentId === agentId) && !discovering.has(agentId)) {
+        discovering.add(agentId)
+        await discoverPet($, agentId).finally(() => discovering.delete(agentId))
+      }
       await update($, pets, list =>
         list.map(pet =>
           pet.agentId === agentId ? { ...pet, actions: pet.actions + 1, lastTool: e.tool, lastSummary: summary } : pet,
@@ -408,6 +551,8 @@ export const register: Register = on => {
       ran = await next(e)
     } finally {
       if (isMain) anim.running -= 1
+      // An Agent call that never spawned (refused, interrupted) leaves no isolation mark behind.
+      if (e.tool === 'Agent') isolated.delete(e.tool_use_id)
     }
     const isError = ran.deny !== undefined || ran.isError === true
     const status: ToolCallStatus = isError ? 'err' : 'ok'
@@ -418,7 +563,7 @@ export const register: Register = on => {
       const cwd = await $.session.cwd()
       const path = filePath.startsWith(`${cwd}/`) ? filePath.slice(cwd.length + 1) : filePath
       await update($, touched, list => touchFile(list, path, EDIT_TOOLS.has(e.tool)))
-      if (EDIT_TOOLS.has(e.tool)) void refreshMap($).catch(() => undefined)
+      if (EDIT_TOOLS.has(e.tool)) void refreshMap($, 'files').catch(() => undefined)
     }
     if (e.tool === 'Bash') {
       const command = e.command
@@ -494,8 +639,17 @@ export const register: Register = on => {
     }
     if (e.element === 'bag') {
       const asked = data as { back?: unknown; inspect?: unknown }
-      if (asked.back === true) await update($, mapView, () => ({ view: 'map' }))
-      if (typeof asked.inspect === 'string') await inspectChange($, asked.inspect)
+      const from = await read($, mapView)
+      if (asked.back === true) await update($, mapView, (): MapView => ({ view: isFromOutposts(from) ? 'outposts' : 'map' }))
+      if (typeof asked.inspect === 'string') {
+        await inspectChange($, asked.inspect, { ...(from.root === undefined ? {} : { root: from.root }), ...(from.via === undefined ? {} : { via: from.via }) })
+      }
+      return {}
+    }
+    if (e.element === 'outposts') {
+      const asked = data as { back?: unknown; outpost?: unknown }
+      if (asked.back === true) await update($, mapView, (): MapView => ({ view: 'map' }))
+      if (typeof asked.outpost === 'string') await openOutpost($, asked.outpost)
       return {}
     }
     if (e.element === 'skills' && typeof data.cast === 'string') {
@@ -561,6 +715,7 @@ export const register: Register = on => {
           total: TROPHIES.length,
         },
         petsOut: petList.filter(pet => pet.status === 'run').length,
+        ...campOf(await read($, outposts)),
         isFlashing: (await read($, flashUntil)) > now,
         width,
       },
@@ -614,6 +769,7 @@ export const register: Register = on => {
     // The skills page and the bag are Clients of their own, so a click anywhere on a row acts on it.
     let skills: ReturnType<typeof skillRows> | undefined
     let bagRows: BagRow[] | undefined
+    let outpostRows: OutpostRow[] | undefined
     const view = active === 'map' ? await read($, mapView) : { view: 'map' as const }
     const windowKey = active === 'map' && view.view !== 'map' ? `map:${view.view}` : active
     let title = entry.title
@@ -622,26 +778,44 @@ export const register: Register = on => {
       subtitle = partySubtitle(petList)
     } else if (active === 'map' && view.view === 'diff') {
       const opened = await read($, inspect)
-      items = inspectItems(ui, opened, (await read($, bag)).find(item => item.path === view.path), inner, () => {
-        void update($, mapView, () => ({ view: 'bag' }))
+      const source = view.root === undefined ? await read($, bag) : ((await read($, outpostBag))?.items ?? [])
+      items = inspectItems(ui, opened, source.find(item => item.path === view.path), inner, () => {
+        void update($, mapView, (): MapView => ({ ...view, view: 'bag', path: undefined }))
       })
       title = '🔍 INSPECT'
       subtitle = view.path ?? ''
+    } else if (active === 'map' && view.view === 'outposts') {
+      const list = await read($, outposts)
+      outpostRows = [{ kind: 'back' }, ...list.map(outpost => ({ kind: 'outpost' as const, outpost }))]
+      if (list.length === 0) outpostRows.push({ kind: 'note', text: 'No outposts: this repository has one worktree.' })
+      items = []
+      title = '🏕 OUTPOSTS'
+      subtitle = `${list.length} camps · ${list.filter(one => one.dirty > 0).length} with unsaved work`
     } else if (active === 'map' && view.view === 'bag') {
-      const items_ = await read($, bag)
+      const opened = view.root === undefined ? undefined : await read($, outpostBag)
+      const items_ = view.root === undefined ? await read($, bag) : (opened?.root === view.root ? opened.items : [])
       bagRows = [
-        { kind: 'back' },
+        { kind: 'back', ...(isFromOutposts(view) ? { label: 'the outposts' } : {}) },
         ...(items_.length === 0 ? [{ kind: 'note' as const, text: 'The bag is empty: every change is committed.' }] : []),
         ...items_.map(item => ({ kind: 'item' as const, item })),
       ]
       items = []
       title = '🎒 INVENTORY'
-      subtitle = bagSubtitle(items_)
+      subtitle = view.root === undefined ? bagSubtitle(items_) : `⚑${baseName(view.root)} · ${bagSubtitle(items_)}`
     } else if (active === 'map') {
       const world = await read($, map)
-      items = mapItems(ui, world, await read($, touched), inner, () => {
-        void update($, mapView, () => ({ view: 'bag' }))
-        void update($, offsets, all => ({ ...all, 'map:bag': 0 }))
+      const list = await read($, outposts)
+      items = mapItems(ui, world, await read($, touched), inner, {
+        openBag: () => {
+          void update($, mapView, (): MapView => ({ view: 'bag' }))
+          void update($, offsets, all => ({ ...all, 'map:bag': 0 }))
+        },
+        openOutposts: () => {
+          void update($, mapView, (): MapView => ({ view: 'outposts' }))
+          void surveyOutposts($).catch(() => undefined)
+        },
+        outposts: list.length,
+        camps: Object.fromEntries(list.filter(one => !one.isHere && one.branch !== '').map(one => [one.branch, one.name])),
       })
       subtitle = mapSubtitle(world)
     } else if (active === 'skills') {
@@ -658,8 +832,37 @@ export const register: Register = on => {
     }
 
     const offset = (await read($, offsets))[windowKey] ?? 0
-    layout = { rows, total: skills?.length ?? bagRows?.length ?? totalRows(items), key: windowKey }
+    layout = { rows, total: skills?.length ?? bagRows?.length ?? outpostRows?.length ?? totalRows(items), key: windowKey }
     let body
+    if (outpostRows !== undefined) {
+      const start = clampOffset(offset, outpostRows.length, rows)
+      const shownRows = outpostRows.slice(start, start + rows)
+      if (e.surface === 'terminal') {
+        const { Client } = $.ui.resolve(e)
+        const outpostsProps: OutpostsProps = { rows: shownRows, width: inner }
+        body = {
+          node: <Client key="outposts" module="./outposts-client.tsx" props={outpostsProps} width={inner} height={rows} />,
+          total: outpostRows.length,
+        }
+      } else {
+        body = {
+          node: (
+            <Box flexDirection="column">
+              {shownRows.map((one, index) =>
+                one.kind === 'back' ? (
+                  <Button key="outposts-back" label="◂ back to the map" plain onPress={() => void update($, mapView, (): MapView => ({ view: 'map' }))} />
+                ) : one.kind === 'outpost' && !one.outpost.isPrunable ? (
+                  <Button key={`outpost-${one.outpost.path}`} label={`⚑ ${one.outpost.name}`} plain onPress={() => void openOutpost($, one.outpost.path)} />
+                ) : (
+                  <Box key={`outpost-${index}`} height={1} />
+                ),
+              )}
+            </Box>
+          ),
+          total: outpostRows.length,
+        }
+      }
+    }
     if (bagRows !== undefined) {
       const start = clampOffset(offset, bagRows.length, rows)
       const shownRows = bagRows.slice(start, start + rows)
@@ -673,9 +876,9 @@ export const register: Register = on => {
             <Box flexDirection="column">
               {shownRows.map((one, index) =>
                 one.kind === 'back' ? (
-                  <Button key="bag-back" label="◂ back to the map" plain onPress={() => void update($, mapView, () => ({ view: 'map' }))} />
+                  <Button key="bag-back" label="◂ back" plain onPress={() => void update($, mapView, (): MapView => ({ view: isFromOutposts(view) ? 'outposts' : 'map' }))} />
                 ) : one.kind === 'item' ? (
-                  <Button key={`bag-${one.item.path}`} label={one.item.path} plain onPress={() => void inspectChange($, one.item.path)} />
+                  <Button key={`bag-${one.item.path}`} label={one.item.path} plain onPress={() => void inspectChange($, one.item.path, view)} />
                 ) : (
                   <Box key={`bag-${index}`} height={1} />
                 ),

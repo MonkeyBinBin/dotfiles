@@ -21,7 +21,7 @@ export const exploredOrder = (files: readonly TouchedFile[]): TouchedFile[] =>
 
 export const mapSubtitle = (map: GitMap): string => {
   if (!map.isRepo) return 'uncharted'
-  const rows = map.graph.map(parseGraphLine)
+  const rows = map.graph.map(line => parseGraphLine(line, map.remotes))
   return `@ ${map.branch || 'detached'} · ${isLinear(rows) ? 'one road' : 'branching paths'}`
 }
 
@@ -68,6 +68,21 @@ const Lanes = (ui: ElementTable, graph: string, isHead: boolean) => {
 
 const row = (key: string, node: Item['node']): Item => ({ key, rows: 1, node })
 
+// Branches checked out in another outpost (worktree), to the outpost's name.
+export type Camps = Readonly<Record<string, string>>
+
+// The outposts camped on a commit's branches: `refs` as git decorates it (`HEAD -> main, feat/x`).
+export const campsOn = (refs: string, camps: Camps): string[] =>
+  refs
+    .split(',')
+    .map(ref => ref.trim().replace(/^HEAD -> /, ''))
+    .flatMap(ref => (camps[ref] === undefined ? [] : [camps[ref]]))
+
+const Flags = (ui: ElementTable, names: readonly string[]) => {
+  const { Text } = ui
+  return names.length === 0 ? null : <Text color="cyan"> ⚑{names.join(' ⚑')}</Text>
+}
+
 // The camp of unsaved work, with the button that opens the bag of changes.
 const campRow = (ui: ElementTable, dirty: number, lead: string, openBag: () => void): Item => {
   const { Box, Text, Button } = ui
@@ -87,7 +102,8 @@ const campRow = (ui: ElementTable, dirty: number, lead: string, openBag: () => v
   )
 }
 
-function trailItems(ui: ElementTable, rows: readonly GraphRow[], dirty: number, width: number, openBag: () => void): Item[] {
+function trailItems(ui: ElementTable, rows: readonly GraphRow[], dirty: number, width: number, actions: MapActions): Item[] {
+  const { openBag, camps } = actions
   const { Box, Text } = ui
   const subjectWidth = (extra: number) => Math.max(4, width - TRAIL_COLUMNS - HASH_COLUMNS - AGE_COLUMNS - extra)
   return trailStops(rows, dirty).map((stop, index) => {
@@ -127,6 +143,7 @@ function trailItems(ui: ElementTable, rows: readonly GraphRow[], dirty: number, 
             <Text color="gray">◇</Text>
           )
         const loot = place === 'carried'
+        const flags = campsOn(commit.refs, camps)
         return row(
           `s-${commit.hash}`,
           <Box height={1}>
@@ -137,8 +154,9 @@ function trailItems(ui: ElementTable, rows: readonly GraphRow[], dirty: number, 
                 <Text> </Text>
                 <Text color="yellow" dimColor>{commit.hash.slice(0, 7)} </Text>
                 <Text bold={place === 'here'} dimColor={place === 'road'}>
-                  {oneLine(commit.subject, subjectWidth(loot ? LOOT_COLUMNS : 0))}
+                  {oneLine(commit.subject, subjectWidth((loot ? LOOT_COLUMNS : 0) + flags.join('  ').length + flags.length * 2))}
                 </Text>
+                {Flags(ui, flags)}
               </Text>
             </Box>
             {loot && <Text> 🎒</Text>}
@@ -152,11 +170,14 @@ function trailItems(ui: ElementTable, rows: readonly GraphRow[], dirty: number, 
   })
 }
 
-function branchItems(ui: ElementTable, rows: readonly GraphRow[], width: number): Item[] {
+function branchItems(ui: ElementTable, rows: readonly GraphRow[], width: number, camps: Camps): Item[] {
   const { Box, Text } = ui
   return rows.map((line, index) => {
-    const refs = line.refs === '' ? '' : `(${line.refs}) `
-    const subjectWidth = Math.max(4, width - line.graph.length - HASH_COLUMNS - refs.length - AGE_COLUMNS)
+    const refs = line.refs === '' ? '' : `(${line.refs})`
+    const flags = campsOn(line.refs, camps)
+    // The refs, their space, and each ⚑flag with its space.
+    const extras = (refs === '' ? 0 : refs.length + 1) + flags.reduce((sum, name) => sum + name.length + 2, 0)
+    const subjectWidth = Math.max(4, width - line.graph.length - HASH_COLUMNS - extras - AGE_COLUMNS)
     return row(
       `g-${index}`,
       <Box height={1}>
@@ -165,6 +186,8 @@ function branchItems(ui: ElementTable, rows: readonly GraphRow[], width: number)
             {Lanes(ui, line.graph, line.isHead)}
             {line.hash !== '' && <Text color="yellow" dimColor>{line.hash.slice(0, 7)} </Text>}
             {refs !== '' && <Text color="green">{refs}</Text>}
+            {Flags(ui, flags)}
+            {refs !== '' && <Text> </Text>}
             <Text bold={line.isHead}>{oneLine(line.subject, subjectWidth)}</Text>
           </Text>
         </Box>
@@ -179,37 +202,47 @@ function branchItems(ui: ElementTable, rows: readonly GraphRow[], width: number)
 }
 
 // Where the party stands, the history as a road (one line) or a lane graph (branches), then the places explored.
-export function mapItems(
-  ui: ElementTable,
-  map: GitMap,
-  touched: readonly TouchedFile[],
-  width: number,
-  openBag: () => void,
-): Item[] {
-  const { Text } = ui
+export type MapActions = {
+  openBag: () => void
+  openOutposts: () => void
+  // How many outposts (worktrees) the repository has, the session's own included.
+  outposts: number
+  camps: Camps
+}
+
+export function mapItems(ui: ElementTable, map: GitMap, touched: readonly TouchedFile[], width: number, actions: MapActions): Item[] {
+  const { Box, Text, Button } = ui
+  const { openBag } = actions
   if (!map.isRepo) return [row('none', <Text dimColor>Uncharted land: this folder is not a git repository.</Text>)]
 
-  const rows = map.graph.map(parseGraphLine)
+  const rows = map.graph.map(line => parseGraphLine(line, map.remotes))
   const items: Item[] = [
     row(
       'where',
-      <Text wrap="truncate">
-        <Text bold color="yellow">@ {map.branch || 'detached'}</Text>
-        {map.ahead > 0 && <Text color="green">  ↑{map.ahead} to deliver</Text>}
-        {map.behind > 0 && <Text color="red">  ↓{map.behind} behind</Text>}
-        {map.dirty > 0 ? (
-          <Text color="red">  ⚠ {map.dirty} unsaved</Text>
-        ) : (
-          <Text color="green" dimColor>
-            {'  ✓ all saved'}
+      <Box height={1}>
+        <Box flexGrow={1}>
+          <Text wrap="truncate">
+            <Text bold color="yellow">@ {map.branch || 'detached'}</Text>
+            {map.ahead > 0 && <Text color="green">  ↑{map.ahead} to deliver</Text>}
+            {map.behind > 0 && <Text color="red">  ↓{map.behind} behind</Text>}
+            {map.dirty > 0 ? (
+              <Text color="red">  ⚠ {map.dirty} unsaved</Text>
+            ) : (
+              <Text color="green" dimColor>
+                {'  ✓ all saved'}
+              </Text>
+            )}
           </Text>
+        </Box>
+        {actions.outposts > 1 && (
+          <Button key="open-outposts" label={`🏕 ${actions.outposts} outposts ▸`} plain onPress={actions.openOutposts} />
         )}
-      </Text>,
+      </Box>,
     ),
     row('gap-top', <Text> </Text>),
     ...(isLinear(rows)
-      ? trailItems(ui, rows, map.dirty, width, openBag)
-      : [...(map.dirty > 0 ? [campRow(ui, map.dirty, '', openBag)] : []), ...branchItems(ui, rows, width)]),
+      ? trailItems(ui, rows, map.dirty, width, actions)
+      : [...(map.dirty > 0 ? [campRow(ui, map.dirty, '', openBag)] : []), ...branchItems(ui, rows, width, actions.camps)]),
     row('gap', <Text> </Text>),
     row(
       'explored',
