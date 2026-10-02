@@ -17,3 +17,6 @@
 
 # 機器專屬設定（不納入版控）
 **/90-local.zsh
+
+# Claude Code mods：.claude-plugin/types/ 由 engine 載入時自動產生
+**/.claude-plugin/types/

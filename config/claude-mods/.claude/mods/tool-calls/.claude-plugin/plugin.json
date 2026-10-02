@@ -1,0 +1,1 @@
+{ "name": "tool-calls", "version": "0.1.0", "description": "Show this session's tool calls in a pane", "types": "./types/index.d.ts" }

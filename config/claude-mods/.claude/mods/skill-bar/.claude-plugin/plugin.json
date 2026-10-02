@@ -1,0 +1,1 @@
+{ "name": "skill-bar", "version": "0.1.0", "description": "Pixel-art item slots above the prompt, one per project skill; press one to start it", "types": "./types/index.d.ts" }

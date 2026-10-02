@@ -1,0 +1,1 @@
+{ "name": "slime-band", "version": "0.1.0", "description": "A slime hops above the prompt while Claude works, with the session's key facts beside it", "types": "./types/index.d.ts" }

@@ -11,6 +11,7 @@
 | `ghostty`     | Ghostty 終端模擬器設定                         | `~/.config/ghostty/config`                        |
 | `cmux`        | Cmux 終端機設定                                | `~/.config/cmux/`                                 |
 | `claude`      | Claude Code 系統提示 + output styles + hooks 範本 | `~/.claude/CLAUDE.md`、`~/.claude/output-styles/` |
+| `claude-mods` | Claude Code mods（hooks plugin：pane、band 等） | `~/.claude/mods/<mod>/` → 目錄 symlink |
 | `codex`       | Codex CLI 系統提示                             | `~/.codex/AGENTS.md`                              |
 | `hammerspoon` | Hammerspoon macOS 自動化                       | `~/.hammerspoon/`                                 |
 | `ripgrep`     | ripgrep 搜尋工具設定                           | `~/.ripgreprc`                                    |
@@ -106,7 +107,7 @@ done
 
 # 部署所有套件
 chmod +x scripts/stow-wrap.sh
-for pkg in zsh tmux ghostty cmux claude codex hammerspoon ripgrep git; do
+for pkg in zsh tmux ghostty cmux claude claude-mods codex hammerspoon ripgrep git; do
   ./scripts/stow-wrap.sh "$pkg"
 done
 ```
@@ -261,6 +262,21 @@ dotfiles**——否則 cmux 更新格式時 repo 內的手寫版本會悄悄失�
 
 新增 style：在 `config/claude/.claude/output-styles/` 放入 `<name>.md`（frontmatter 需含
 `name`、`description`），再跑 `./scripts/stow-wrap.sh claude`。切換用 `/output-style`。
+
+#### Claude Code Mods
+
+`claude-mods` 套件收錄 `config/claude-mods/.claude/mods/<mod>/`，由 `CLAUDE_CODE_PLUGIN_DIRS`
+（`settings.json.example` 的 `env`，經 `sync-ai-cli-settings.sh` 合併）載入。目前收錄 `tool-calls`、
+`slime-band`、`skill-bar`。
+
+此套件**刻意不用** `--no-folding`：plugin loader 讀 `hooks/hooks.json` 時不跟隨 symlink，且 module
+realpath 落在 plugin 目錄外會被判為 path traversal，逐檔 symlink 會讓 mod 整個載入失敗。folding 後
+`~/.claude/mods/<mod>` 是指向 repo 的目錄 symlink，engine 產生的 `.claude-plugin/types/` 會寫進 repo
+（已 gitignore）。
+
+新增 mod：在 `config/claude-mods/.claude/mods/` 建目錄、把路徑加進 `settings.json.example` 的
+`CLAUDE_CODE_PLUGIN_DIRS`，再跑 `./scripts/stow-wrap.sh claude claude-mods`。驗證用
+`claude plugin validate ~/.claude/mods/<mod>` 與 `claude plugin test ~/.claude/mods/<mod>`。
 
 ### 設定檔策略
 
