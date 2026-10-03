@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register } from 'claude-code'
+import type { ElementTable, EngineInterface, Register, RenderChildren } from 'claude-code'
 
 import type {
   BagItem,
@@ -23,7 +23,7 @@ import type {
 } from '../types'
 import { FRAME_MS, HERO_CELLS, HURT_MS, PET_TICKS, anim, pickFrame, pickMood } from './anim'
 import { fightBoss, fightText, runsGit } from './boss'
-import type { BagRow, BagProps } from './bag-client'
+import type { BagProps, BagRow } from './bag-client'
 import { GIT_LOG, GIT_NUMSTAT, GIT_REMOTES, GIT_STATUS, GIT_WORKTREES, diffArgv, outpostArgv, parseBag, parseStatus, parseWorktrees, shortAge } from './git'
 import type { OutpostRow, OutpostsProps } from './outposts-client'
 import { bagSubtitle, inspectItems } from './inspect'
@@ -39,6 +39,7 @@ import { PET_COLUMNS, PET_ROWS, petCells, speciesFor } from './pet-sprites'
 import { partySubtitle, petItems } from './pets'
 import { recapText } from './recap'
 import { castText, skillRows, skillsSubtitle } from './skills'
+import type { SkillRow } from './skills'
 import type { SkillsProps } from './skills-client'
 import { filterSpells, spellFilters, spellItems } from './spellbook'
 import { EMPTY_PROGRESS, TROPHIES, newlyEarned } from './trophies'
@@ -80,6 +81,7 @@ const EMPTY_TALLY: Tally = { failures: 0, refusals: 0, bossesDefeated: 0, petsSu
 const tally = atom({ plugin: 'rpg-hud', key: 'tally' } as const, EMPTY_TALLY)
 const budget = atom({ plugin: 'rpg-hud', key: 'budget' } as const, null as number | null)
 const startedAt = atom({ plugin: 'rpg-hud', key: 'startedAt' } as const, 0)
+const waitingFor = atom({ plugin: 'rpg-hud', key: 'waitingFor' } as const, null as string | null)
 
 // Starts the HUD's watch of the session, once; a reload keeps it.
 const markStart = async ($: EngineInterface) => {
@@ -531,6 +533,225 @@ const campOf = (list: readonly Outpost[]): { camp?: string } => {
   return here === undefined || here.isMain ? {} : { camp: here.name }
 }
 
+// --- The menu windows ---
+
+// Every window the menu can show: a tab, or a view inside the map tab.
+type PageKey = Tab | 'map:bag' | 'map:diff' | 'map:outposts'
+
+// `$` goes beside it as an argument of its own: the engine never lets it ride in an object.
+type PageContext = {
+  ui: ElementTable
+  view: MapView
+  // The window's inner width.
+  inner: number
+  now: number
+  Raster: ElementTable<'terminal'>['Raster'] | undefined
+  callList: ToolCall[]
+  petList: Pet[]
+  progress: Progress
+}
+
+type TerminalClient = ElementTable<'terminal'>['Client']
+
+// Rows the window draws as a list to pick from: a Client on the terminal, so a click anywhere on a row acts on
+// it; a column of buttons elsewhere. The Clients all take `{ rows, width }`.
+type PickList<Row> = {
+  key: string
+  rows: readonly Row[]
+  // The terminal's Client for the shown rows; its module must be spelled out where it is drawn.
+  client: (Client: TerminalClient, props: { rows: Row[]; width: number }, height: number) => RenderChildren
+  // A row's button on surfaces with no Client; undefined leaves it a blank line.
+  button: (row: Row) => { key: string; label: string; dimColor?: boolean; onPress: () => void } | undefined
+}
+
+// What a window shows: its own title when not the tab's, the subtitle, and either items it pages itself or a
+// list to pick from; `actions` sit on its title row.
+type Page = {
+  title?: string
+  subtitle: string
+  items?: Item[]
+  list?: PickList<never>
+  actions?: RenderChildren
+}
+
+const pickList = <Row,>(list: PickList<Row>): PickList<never> => list as unknown as PickList<never>
+
+// The scrolled slice of a pick list, drawn for the surface.
+function pickBody($: EngineInterface, e: { surface: string }, list: PickList<never>, offset: number, rows: number, inner: number) {
+  const start = clampOffset(offset, list.rows.length, rows)
+  const shown = list.rows.slice(start, start + rows)
+  const total = list.rows.length
+  const ui = $.ui.resolve(e as never) as ElementTable
+  if (e.surface === 'terminal') {
+    const { Client } = ui as ElementTable<'terminal'>
+    return { node: list.client(Client, { rows: shown, width: inner }, rows), total }
+  }
+  const { Box, Button } = ui
+  return {
+    node: (
+      <Box flexDirection="column">
+        {shown.map((row, index) => {
+          const button = list.button(row)
+          return button === undefined ? (
+            <Box key={`${list.key}-${index}`} height={1} />
+          ) : (
+            <Button key={button.key} label={button.label} plain {...(button.dimColor === undefined ? {} : { dimColor: button.dimColor })} onPress={button.onPress} />
+          )
+        })}
+      </Box>
+    ),
+    total,
+  }
+}
+
+const backToMap = ($: EngineInterface) => void update($, mapView, (): MapView => ({ view: 'map' }))
+
+const spellsPage = async ($: EngineInterface, { ui, inner, callList }: PageContext): Promise<Page> => {
+  const filter = await read($, spellFilter)
+  const casts = await read($, castCount)
+  return {
+    items: spellItems(ui, callList, inner, filter),
+    subtitle: filter === 'all' ? `${casts} casts` : `${filterSpells(callList, filter).length} of ${casts} casts`,
+    ...(callList.length === 0
+      ? {}
+      : {
+          actions: spellFilters(ui, callList, filter, picked => {
+            void update($, spellFilter, () => picked)
+            void update($, offsets, all => ({ ...all, spells: 0 }))
+          }),
+        }),
+  }
+}
+
+const petsPage = async (_$: EngineInterface, { ui, inner, now, Raster, petList }: PageContext): Promise<Page> => ({
+  items: petItems(ui, petList, now, inner, Raster),
+  subtitle: partySubtitle(petList),
+})
+
+const mapPage = async ($: EngineInterface, { ui, inner }: PageContext): Promise<Page> => {
+  const world = await read($, map)
+  const list = await read($, outposts)
+  return {
+    items: mapItems(ui, world, await read($, touched), inner, {
+      openBag: () => {
+        void update($, mapView, (): MapView => ({ view: 'bag' }))
+        void update($, offsets, all => ({ ...all, 'map:bag': 0 }))
+      },
+      openOutposts: () => {
+        void update($, mapView, (): MapView => ({ view: 'outposts' }))
+        void surveyOutposts($).catch(() => undefined)
+      },
+      outposts: list.length,
+      camps: Object.fromEntries(list.filter(one => !one.isHere && one.branch !== '').map(one => [one.branch, one.name])),
+    }),
+    subtitle: mapSubtitle(world),
+  }
+}
+
+const diffPage = async ($: EngineInterface, { ui, view, inner }: PageContext): Promise<Page> => {
+  const opened = await read($, inspect)
+  const source = view.root === undefined ? await read($, bag) : ((await read($, outpostBag))?.items ?? [])
+  return {
+    title: '🔍 INSPECT',
+    items: inspectItems(ui, opened, source.find(item => item.path === view.path), inner, () => {
+      void update($, mapView, (): MapView => ({ ...view, view: 'bag', path: undefined }))
+    }),
+    subtitle: view.path ?? '',
+  }
+}
+
+const outpostsPage = async ($: EngineInterface): Promise<Page> => {
+  const list = await read($, outposts)
+  const rows: OutpostRow[] = [{ kind: 'back' }, ...list.map(outpost => ({ kind: 'outpost' as const, outpost }))]
+  if (list.length === 0) rows.push({ kind: 'note', text: 'No outposts: this repository has one worktree.' })
+  return {
+    title: '🏕 OUTPOSTS',
+    subtitle: `${list.length} camps · ${list.filter(one => one.dirty > 0).length} with unsaved work`,
+    list: pickList<OutpostRow>({
+      key: 'outposts',
+      rows,
+      client: (Client, props, height) => <Client key="outposts" module="./outposts-client.tsx" props={props satisfies OutpostsProps} width={props.width} height={height} />,
+      button: row => {
+        if (row.kind === 'back') return { key: 'outposts-back', label: '◂ back to the map', onPress: () => backToMap($) }
+        if (row.kind !== 'outpost' || row.outpost.isPrunable) return undefined
+        const { path, name } = row.outpost
+        return { key: `outpost-${path}`, label: `⚑ ${name}`, onPress: () => void openOutpost($, path) }
+      },
+    }),
+  }
+}
+
+const bagPage = async ($: EngineInterface, { view }: PageContext): Promise<Page> => {
+  const opened = view.root === undefined ? undefined : await read($, outpostBag)
+  const items = view.root === undefined ? await read($, bag) : opened?.root === view.root ? opened.items : []
+  const rows: BagRow[] = [
+    { kind: 'back', ...(isFromOutposts(view) ? { label: 'the outposts' } : {}) },
+    ...(items.length === 0 ? [{ kind: 'note' as const, text: 'The bag is empty: every change is committed.' }] : []),
+    ...items.map(item => ({ kind: 'item' as const, item })),
+  ]
+  return {
+    title: '🎒 INVENTORY',
+    subtitle: view.root === undefined ? bagSubtitle(items) : `⚑${baseName(view.root)} · ${bagSubtitle(items)}`,
+    list: pickList<BagRow>({
+      key: 'bag',
+      rows,
+      client: (Client, props, height) => <Client key="bag" module="./bag-client.tsx" props={props satisfies BagProps} width={props.width} height={height} />,
+      button: row => {
+        if (row.kind === 'back') {
+          return { key: 'bag-back', label: '◂ back', onPress: () => void update($, mapView, (): MapView => ({ view: isFromOutposts(view) ? 'outposts' : 'map' })) }
+        }
+        if (row.kind !== 'item') return undefined
+        const { path } = row.item
+        return { key: `bag-${path}`, label: path, onPress: () => void inspectChange($, path, view) }
+      },
+    }),
+  }
+}
+
+const skillsPage = async ($: EngineInterface, { now, progress: progressNow }: PageContext): Promise<Page> => {
+  const gear = await read($, loadout)
+  return {
+    subtitle: skillsSubtitle(gear, progressNow),
+    list: pickList<SkillRow>({
+      key: 'skills',
+      client: (Client, props, height) => <Client key="skills" module="./skills-client.tsx" props={props satisfies SkillsProps} width={props.width} height={height} />,
+      rows: skillRows({ loadout: gear, progress: progressNow, casts: await read($, skillCasts), now }),
+      // Each skill a button that fills the prompt.
+      button: row =>
+        row.kind !== 'skill'
+          ? undefined
+          : { key: `cast-${row.name}`, label: `/${row.name}`, dimColor: row.uses === 0, onPress: () => void $.prompt.fill({ text: castText(row.name) }) },
+    }),
+  }
+}
+
+const featsPage = async (_$: EngineInterface, { ui, inner, progress: progressNow }: PageContext): Promise<Page> => ({
+  items: featItems(ui, progressNow, inner),
+  subtitle: featsSubtitle(progressNow),
+})
+
+// The window a menu entry, or a view inside the map tab, shows.
+function pageFor($: EngineInterface, key: PageKey, ctx: PageContext): Promise<Page> {
+  switch (key) {
+    case 'spells':
+      return spellsPage($, ctx)
+    case 'pets':
+      return petsPage($, ctx)
+    case 'map':
+      return mapPage($, ctx)
+    case 'map:diff':
+      return diffPage($, ctx)
+    case 'map:outposts':
+      return outpostsPage($)
+    case 'map:bag':
+      return bagPage($, ctx)
+    case 'skills':
+      return skillsPage($, ctx)
+    case 'feats':
+      return featsPage($, ctx)
+  }
+}
+
 // The session's adventure log for /hud recap.
 // Every figure counts from the HUD's watch start, so the duration, the tally and the trophies agree.
 async function recap($: EngineInterface) {
@@ -593,6 +814,8 @@ export const register: Register = on => {
   const background = new Set<string>()
   // Subagents being looked up in the agent list, so parallel tool calls of one add it once.
   const discovering = new Set<string>()
+  // The loop whose tool `waitingFor` names: a subagent's id, undefined for the main loop.
+  let waitingAgent: string | undefined
 
   on('session.start', async ($, e, next) => {
     await $.command.register({
@@ -641,7 +864,20 @@ export const register: Register = on => {
     return { text: 'Adventure HUD opened.' }
   })
 
+  // A permission prompt is about to ask the person; the panel says so until that tool is done. A hook beneath
+  // that decides leaves no prompt to wait on.
+  on('classic.PermissionRequest', async ($, e, next) => {
+    const result = await next(e)
+    if (result.decision === undefined) {
+      waitingAgent = e.agent_id
+      const tool = e.tool_name
+      await update($, waitingFor, () => tool)
+    }
+    return result
+  })
+
   on('prompt.submit', async ($, e, next) => {
+    await update($, waitingFor, () => null)
     const known = (await read($, loadout)).skills.map(slot => slot.name)
     const skill = skillOfPrompt(e.text, known)
     if (skill !== undefined) await castSkill($, skill)
@@ -659,6 +895,8 @@ export const register: Register = on => {
       await finishPet($, pet => pet.agentId === agentId, e.isAborted ? 'err' : 'ok', 'answer' in e ? e.answer : '')
       return next(e)
     }
+    // An interrupted prompt leaves nothing waiting on the person.
+    await update($, waitingFor, () => null)
     if (!e.isAborted) {
       const isClean = !turnHadError
       await advance($, p => {
@@ -709,6 +947,11 @@ export const register: Register = on => {
     const isBackground = (e as { run_in_background?: unknown }).run_in_background === true
     if (e.tool === 'Agent' && (e as { isolation?: unknown }).isolation === 'worktree') isolated.add(e.tool_use_id)
     if (e.tool === 'Agent' && isBackground) background.add(e.tool_use_id)
+    // A question to the person waits on them while it is open.
+    if (e.tool === 'AskUserQuestion') {
+      waitingAgent = e.agentId
+      await update($, waitingFor, () => e.tool)
+    }
     if (isMain) {
       await update($, calls, list => [...list, call].slice(-200))
       await update($, castCount, count => count + 1)
@@ -736,6 +979,9 @@ export const register: Register = on => {
         isolated.delete(e.tool_use_id)
         background.delete(e.tool_use_id)
       }
+      // Run or refused, the tool a prompt asked about no longer waits on the person; the same tool in another
+      // loop is not the one asked about.
+      if (waitingAgent === e.agentId && (await read($, waitingFor)) === e.tool) await update($, waitingFor, () => null)
     }
     // A refused call never ran: the hero takes no hurt, the combo and the turn's streak stand.
     const isRefused = isRefusal(ran)
@@ -891,6 +1137,7 @@ export const register: Register = on => {
     const hero = classOf(await read($, heroClass))
     const bossNow = await read($, boss)
     const limit = await read($, budget)
+    const waiting = await read($, waitingFor)
     if (anim.heroClass !== hero.id) {
       // A new class: the portrait starts over from its first idle frame.
       anim.heroClass = hero.id
@@ -915,6 +1162,7 @@ export const register: Register = on => {
         ...campOf(await read($, outposts)),
         isFlashing: (await read($, flashUntil)) > now,
         width,
+        ...(waiting === null ? {} : { waitingFor: waiting }),
         ...(limit === null ? {} : { budget: limit }),
         ...(bossNow === null
           ? {}
@@ -972,166 +1220,14 @@ export const register: Register = on => {
     }
 
     const inner = Math.max(0, width - WINDOW_CHROME_COLUMNS)
-    let items: Item[]
-    let subtitle: string
-    // The skills page and the bag are Clients of their own, so a click anywhere on a row acts on it.
-    let skills: ReturnType<typeof skillRows> | undefined
-    let bagRows: BagRow[] | undefined
-    let outpostRows: OutpostRow[] | undefined
     const view = active === 'map' ? await read($, mapView) : { view: 'map' as const }
-    const windowKey = active === 'map' && view.view !== 'map' ? `map:${view.view}` : active
-    let title = entry.title
-    // Controls on the window's title row: the spell book's filters.
-    let actions: ReturnType<typeof spellFilters> | undefined
-    if (active === 'pets') {
-      items = petItems(ui, petList, now, inner, Raster)
-      subtitle = partySubtitle(petList)
-    } else if (active === 'map' && view.view === 'diff') {
-      const opened = await read($, inspect)
-      const source = view.root === undefined ? await read($, bag) : ((await read($, outpostBag))?.items ?? [])
-      items = inspectItems(ui, opened, source.find(item => item.path === view.path), inner, () => {
-        void update($, mapView, (): MapView => ({ ...view, view: 'bag', path: undefined }))
-      })
-      title = '🔍 INSPECT'
-      subtitle = view.path ?? ''
-    } else if (active === 'map' && view.view === 'outposts') {
-      const list = await read($, outposts)
-      outpostRows = [{ kind: 'back' }, ...list.map(outpost => ({ kind: 'outpost' as const, outpost }))]
-      if (list.length === 0) outpostRows.push({ kind: 'note', text: 'No outposts: this repository has one worktree.' })
-      items = []
-      title = '🏕 OUTPOSTS'
-      subtitle = `${list.length} camps · ${list.filter(one => one.dirty > 0).length} with unsaved work`
-    } else if (active === 'map' && view.view === 'bag') {
-      const opened = view.root === undefined ? undefined : await read($, outpostBag)
-      const items_ = view.root === undefined ? await read($, bag) : (opened?.root === view.root ? opened.items : [])
-      bagRows = [
-        { kind: 'back', ...(isFromOutposts(view) ? { label: 'the outposts' } : {}) },
-        ...(items_.length === 0 ? [{ kind: 'note' as const, text: 'The bag is empty: every change is committed.' }] : []),
-        ...items_.map(item => ({ kind: 'item' as const, item })),
-      ]
-      items = []
-      title = '🎒 INVENTORY'
-      subtitle = view.root === undefined ? bagSubtitle(items_) : `⚑${baseName(view.root)} · ${bagSubtitle(items_)}`
-    } else if (active === 'map') {
-      const world = await read($, map)
-      const list = await read($, outposts)
-      items = mapItems(ui, world, await read($, touched), inner, {
-        openBag: () => {
-          void update($, mapView, (): MapView => ({ view: 'bag' }))
-          void update($, offsets, all => ({ ...all, 'map:bag': 0 }))
-        },
-        openOutposts: () => {
-          void update($, mapView, (): MapView => ({ view: 'outposts' }))
-          void surveyOutposts($).catch(() => undefined)
-        },
-        outposts: list.length,
-        camps: Object.fromEntries(list.filter(one => !one.isHere && one.branch !== '').map(one => [one.branch, one.name])),
-      })
-      subtitle = mapSubtitle(world)
-    } else if (active === 'skills') {
-      const gear = await read($, loadout)
-      skills = skillRows({ loadout: gear, progress: progressNow, casts: await read($, skillCasts), now })
-      items = []
-      subtitle = skillsSubtitle(gear, progressNow)
-    } else if (active === 'feats') {
-      items = featItems(ui, progressNow, inner)
-      subtitle = featsSubtitle(progressNow)
-    } else {
-      const filter = await read($, spellFilter)
-      items = spellItems(ui, callList, inner, filter)
-      if (callList.length > 0) {
-        actions = spellFilters(ui, callList, filter, picked => {
-          void update($, spellFilter, () => picked)
-          void update($, offsets, all => ({ ...all, spells: 0 }))
-        })
-      }
-      const casts = await read($, castCount)
-      subtitle = filter === 'all' ? `${casts} casts` : `${filterSpells(callList, filter).length} of ${casts} casts`
-    }
-
+    const windowKey = (active === 'map' && view.view !== 'map' ? `map:${view.view}` : active) as PageKey
+    const page = await pageFor($, windowKey, { ui, view, inner, now, Raster, callList, petList, progress: progressNow })
+    const items = page.items ?? []
     const offset = (await read($, offsets))[windowKey] ?? 0
-    layout = { rows, total: skills?.length ?? bagRows?.length ?? outpostRows?.length ?? totalRows(items), key: windowKey }
-    let body
-    if (outpostRows !== undefined) {
-      const start = clampOffset(offset, outpostRows.length, rows)
-      const shownRows = outpostRows.slice(start, start + rows)
-      if (e.surface === 'terminal') {
-        const { Client } = $.ui.resolve(e)
-        const outpostsProps: OutpostsProps = { rows: shownRows, width: inner }
-        body = {
-          node: <Client key="outposts" module="./outposts-client.tsx" props={outpostsProps} width={inner} height={rows} />,
-          total: outpostRows.length,
-        }
-      } else {
-        body = {
-          node: (
-            <Box flexDirection="column">
-              {shownRows.map((one, index) =>
-                one.kind === 'back' ? (
-                  <Button key="outposts-back" label="◂ back to the map" plain onPress={() => void update($, mapView, (): MapView => ({ view: 'map' }))} />
-                ) : one.kind === 'outpost' && !one.outpost.isPrunable ? (
-                  <Button key={`outpost-${one.outpost.path}`} label={`⚑ ${one.outpost.name}`} plain onPress={() => void openOutpost($, one.outpost.path)} />
-                ) : (
-                  <Box key={`outpost-${index}`} height={1} />
-                ),
-              )}
-            </Box>
-          ),
-          total: outpostRows.length,
-        }
-      }
-    }
-    if (bagRows !== undefined) {
-      const start = clampOffset(offset, bagRows.length, rows)
-      const shownRows = bagRows.slice(start, start + rows)
-      if (e.surface === 'terminal') {
-        const { Client } = $.ui.resolve(e)
-        const bagProps: BagProps = { rows: shownRows, width: inner }
-        body = { node: <Client key="bag" module="./bag-client.tsx" props={bagProps} width={inner} height={rows} />, total: bagRows.length }
-      } else {
-        body = {
-          node: (
-            <Box flexDirection="column">
-              {shownRows.map((one, index) =>
-                one.kind === 'back' ? (
-                  <Button key="bag-back" label="◂ back" plain onPress={() => void update($, mapView, (): MapView => ({ view: isFromOutposts(view) ? 'outposts' : 'map' }))} />
-                ) : one.kind === 'item' ? (
-                  <Button key={`bag-${one.item.path}`} label={one.item.path} plain onPress={() => void inspectChange($, one.item.path, view)} />
-                ) : (
-                  <Box key={`bag-${index}`} height={1} />
-                ),
-              )}
-            </Box>
-          ),
-          total: bagRows.length,
-        }
-      }
-    }
-    if (skills !== undefined) {
-      const start = clampOffset(offset, skills.length, rows)
-      const shownRows = skills.slice(start, start + rows)
-      if (e.surface === 'terminal') {
-        const { Client } = $.ui.resolve(e)
-        const skillsProps: SkillsProps = { rows: shownRows, width: inner }
-        body = { node: <Client key="skills" module="./skills-client.tsx" props={skillsProps} width={inner} height={rows} />, total: skills.length }
-      } else {
-        // Other surfaces: each skill a button that fills the prompt.
-        body = {
-          node: (
-            <Box flexDirection="column">
-              {shownRows.map((row, index) =>
-                row.kind === 'skill' ? (
-                  <Button key={`cast-${row.name}`} label={`/${row.name}`} plain dimColor={row.uses === 0} onPress={() => void $.prompt.fill({ text: castText(row.name) })} />
-                ) : (
-                  <Box key={`row-${index}`} height={1} />
-                ),
-              )}
-            </Box>
-          ),
-          total: skills.length,
-        }
-      }
-    }
+    layout = { rows, total: page.list?.rows.length ?? totalRows(items), key: windowKey }
+    const body = page.list === undefined ? undefined : pickBody($, e, page.list, offset, rows, inner)
+
     if (active === 'pets') {
       // Only the pets the window shows can take a blit.
       const shown = new Set(pageItems(items, offset, rows).shown.map(item => `pet-${item.key}`))
@@ -1144,15 +1240,15 @@ export const register: Register = on => {
         {status}
         {menu}
         {renderWindow(ui, {
-          title,
-          subtitle,
+          title: page.title ?? entry.title,
+          subtitle: page.subtitle,
           color: entry.color,
           items,
           offset,
           rows,
           width,
           ...(body === undefined ? {} : { body }),
-          ...(actions === undefined ? {} : { actions }),
+          ...(page.actions === undefined ? {} : { actions: page.actions }),
         })}
       </Box>
     )

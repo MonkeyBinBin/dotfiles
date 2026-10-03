@@ -28,6 +28,9 @@ const LOWER_HALF = 0x2584
 const SPACE = 0x20
 const DEFAULT_COLOR = 0x01000000
 const SNORE_COLOR = 0xc8d2ff
+const ALERT_COLOR = 0xffd23c
+// Ticks the '!' stays lit, then dark, while the slime waits on the person.
+const ALERT_TICKS = 5
 
 // The track: the slime's six pixel rows, then a grass row and a soil row.
 export const TRACK_ROWS = SLIME_ROWS + 1
@@ -42,7 +45,9 @@ export const floorAt = (col: number, y: number): number | undefined => {
   return undefined
 }
 
-export const slimePose = (isWorking: boolean, idleMs: number, tick: number): SlimePose => {
+// Waiting on the person (a permission prompt, a question) it sits up, never hopping or napping.
+export const slimePose = (isWorking: boolean, idleMs: number, tick: number, isWaiting = false): SlimePose => {
+  if (isWaiting) return 'sit'
   if (isWorking) return Math.floor(tick / RUN_TICKS) % 2 === 0 ? 'run1' : 'run2'
   return idleMs >= NAP_AFTER_MS ? 'sleep' : 'sit'
 }
@@ -66,7 +71,7 @@ const pixelAt = (pose: SlimePose, row: number, col: number, dir: 1 | -1): number
 // the rest see-through.
 export const composeTrack = (
   trackWidth: number,
-  slime: { x: number; dir: 1 | -1; pose: SlimePose; snore: number },
+  slime: { x: number; dir: 1 | -1; pose: SlimePose; snore: number; alert?: boolean },
   hud: readonly HudPixel[] = [],
 ): string => {
   const lit = new Map(hud.map(pixel => [pixel.y * trackWidth + pixel.x, pixel.rgb]))
@@ -102,6 +107,11 @@ export const composeTrack = (
     const glyph = slime.snore === 1 ? 0x7a : 0x5a
     words.set([glyph, SNORE_COLOR, DEFAULT_COLOR], (0 * trackWidth + col) * 3)
   }
+  // Waiting on the person, a '!' blinks just ahead of its face.
+  if (slime.alert === true) {
+    const col = Math.max(0, Math.min(trackWidth - 1, slime.dir === 1 ? slime.x + SLIME_WIDTH : slime.x - 1))
+    words.set([0x21, ALERT_COLOR, DEFAULT_COLOR], (0 * trackWidth + col) * 3)
+  }
   return toBase64(new Uint8Array(words.buffer))
 }
 
@@ -124,6 +134,10 @@ const slime = {
   tick: 0,
   isWorking: false,
   idleSince: 0,
+  // The tool a permission prompt asks about, or 'AskUserQuestion', while the session waits on the person.
+  waitingFor: undefined as string | undefined,
+  // The loop that tool runs in: a subagent's id, undefined for the main loop.
+  waitingAgent: undefined as string | undefined,
   trackWidth: 0,
   // The columns left of the HUD, where the slime hops.
   areaWidth: 0,
@@ -137,7 +151,9 @@ async function paint($: EngineInterface) {
   if (slime.trackWidth === 0) return
   const now = await $.clock.now()
   slime.tick += 1
-  const pose = slimePose(slime.isWorking, now - slime.idleSince, slime.tick)
+  const isWaiting = slime.waitingFor !== undefined
+  const pose = slimePose(slime.isWorking, now - slime.idleSince, slime.tick, isWaiting)
+  const alert = isWaiting && Math.floor(slime.tick / ALERT_TICKS) % 2 === 0
   // The slime only travels while it is in the air.
   if (pose === 'run2') {
     const moved = stepSlime(slime.x, slime.dir, slime.areaWidth)
@@ -145,7 +161,7 @@ async function paint($: EngineInterface) {
     slime.dir = moved.dir
   }
   const snore = pose === 'sleep' ? Math.floor(slime.tick / SNORE_TICKS) % 3 : 0
-  const cells = composeTrack(slime.trackWidth, { x: slime.x, dir: slime.dir, pose, snore }, slime.hud)
+  const cells = composeTrack(slime.trackWidth, { x: slime.x, dir: slime.dir, pose, snore, alert }, slime.hud)
   if (cells === slime.shown) return
 
   // A refusal and a failed blit both mean the track is not on screen.
@@ -223,8 +239,34 @@ export const register: Register = on => {
     return next(e)
   })
 
+  // A permission prompt is about to ask the person; the slime waits with them until that tool is done. A hook
+  // beneath that decides leaves no prompt to wait on.
+  on('classic.PermissionRequest', async ($, e, next) => {
+    const result = await next(e)
+    if (result.decision === undefined) {
+      slime.waitingFor = e.tool_name
+      slime.waitingAgent = e.agent_id
+    }
+    return result
+  })
+
+  // A question to the person waits on them while it is open; a call of the tool a prompt asked about, in the
+  // same loop, ends the wait once it has run or been refused.
+  on('tool.call', async ($, e, next) => {
+    if (e.tool === 'AskUserQuestion') {
+      slime.waitingFor = e.tool
+      slime.waitingAgent = e.agentId
+    }
+    try {
+      return await next(e)
+    } finally {
+      if (slime.waitingFor === e.tool && slime.waitingAgent === e.agentId) slime.waitingFor = undefined
+    }
+  })
+
   on('prompt.submit', async ($, e, next) => {
     slime.isWorking = true
+    slime.waitingFor = undefined
 
     return next(e)
   })
@@ -233,6 +275,7 @@ export const register: Register = on => {
     // A subagent's turn ends inside the main one; only the main turn rests the slime.
     if (e.agentId === undefined) {
       slime.isWorking = false
+      slime.waitingFor = undefined
       slime.idleSince = await $.clock.now()
       const usage = e.usage
       await update($, info, value => ({
@@ -276,7 +319,7 @@ export const register: Register = on => {
     slime.x = Math.min(slime.x, Math.max(0, hud.areaWidth - SLIME_WIDTH))
     slime.requestId = e.requestId
     slime.ticker ??= $.clock.every(FRAME_MS, () => void paint($))
-    const pose = slimePose(slime.isWorking, (await $.clock.now()) - slime.idleSince, slime.tick)
+    const pose = slimePose(slime.isWorking, (await $.clock.now()) - slime.idleSince, slime.tick, slime.waitingFor !== undefined)
     slime.shown = composeTrack(trackWidth, { x: slime.x, dir: slime.dir, pose, snore: 0 }, hud.pixels)
 
     // Each label sits centred over its big number.

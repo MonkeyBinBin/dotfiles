@@ -153,6 +153,8 @@ declare module 'claude-code' {
       skillCasts: Record<string, number>
       spellFilter: SpellFilter
       tally: Tally
+      // The tool a permission prompt asks about, or AskUserQuestion, while the session waits on the person.
+      waitingFor: string | null
       // When the HUD began watching this session: its start, or the first call it saw. 0 until then.
       startedAt: number
       // The spend, in USD, past which the gold turns red; null when none is set (`/hud budget`).

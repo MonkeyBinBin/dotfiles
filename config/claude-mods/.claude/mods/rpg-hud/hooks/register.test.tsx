@@ -1407,3 +1407,54 @@ test('/hud recap sums up the session', async ($, on) => {
     '🏆 First Spark',
   ])
 })
+
+// --- Waiting on the person ---
+
+for (const surface of ['terminal', 'desktop'] as const) {
+  test(`the panel says when the session waits on the person on ${surface}`, async ($, on) => {
+    world(on)
+    on('classic.PermissionRequest', async () => ({}))
+    const ui = await mountPane($, surface)
+    await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'rm -rf build' } } as never)
+    expect((await texts(ui)).join('|')).toContain('❗ awaiting your word on Bash')
+
+    // Another tool finishing leaves the prompt up; the asked-about one ends it.
+    await $.tool.call({ tool: 'Read', file_path: '/x/a.md' })
+    expect((await texts(ui)).join('|')).toContain('❗ awaiting your word on Bash')
+    await $.tool.call({ tool: 'Bash', command: 'rm -rf build' })
+    expect((await texts(ui)).join('|')).not.toContain('❗')
+  })
+}
+
+test('an open question waits on the person until answered', async ($, on) => {
+  let ui: Awaited<ReturnType<typeof mountPane>> | undefined
+  let whileOpen = ''
+  world(on, {
+    // What the panel shows while the question is still open.
+    tool: async e => {
+      if (e.tool === 'AskUserQuestion' && ui !== undefined) whileOpen = (await texts(ui)).join('|')
+      return undefined
+    },
+  })
+  ui = await mountPane($, 'terminal')
+  await $.tool.call({ tool: 'AskUserQuestion', questions: [] } as never)
+  expect(whileOpen).toContain('❗ awaiting your answer')
+  expect((await texts(ui)).join('|')).not.toContain('❗')
+})
+
+test("a subagent's call of the asked-about tool leaves the prompt up", async ($, on) => {
+  world(on)
+  on('classic.PermissionRequest', async () => ({}))
+  const ui = await mountPane($, 'terminal')
+  await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'rm -rf build' } } as never)
+  await $.tool.call({ tool: 'Bash', command: 'ls', agentId: 'agent-1' } as never)
+  expect((await texts(ui)).join('|')).toContain('❗ awaiting your word on Bash')
+})
+
+test('a permission another hook decides never waits on the person', async ($, on) => {
+  world(on)
+  on('classic.PermissionRequest', async () => ({ decision: { behavior: 'allow' } }))
+  const ui = await mountPane($, 'terminal')
+  await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'ls' } } as never)
+  expect((await texts(ui)).join('|')).not.toContain('❗')
+})

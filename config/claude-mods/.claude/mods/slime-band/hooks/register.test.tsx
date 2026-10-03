@@ -188,3 +188,43 @@ test('the labels sit above the big numbers', async ($, on) => {
   const kinds = (band?.children ?? []).map(child => (child as { type?: string }).type)
   expect(kinds.indexOf('Text')).toBeLessThan(kinds.indexOf('Raster'))
 })
+
+// Whether any cell of the track's top row holds `glyph`.
+const topRowHas = (cells: string, width: number, glyph: number) =>
+  Array.from({ length: width }, (_, col) => cellAt(cells, width, 0, col)[0]).includes(glyph)
+
+test('waiting on the person, the slime sits up with a ! ahead of its face', () => {
+  expect(slimePose(true, 0, 0, true)).toBe('sit')
+  expect(slimePose(false, NAP_AFTER_MS * 2, 0, true)).toBe('sit')
+  const right = composeTrack(40, { x: 10, dir: 1, pose: 'sit', snore: 0, alert: true })
+  expect(cellAt(right, 40, 0, 10 + SLIME_WIDTH)[0]).toBe(0x21)
+  const left = composeTrack(40, { x: 10, dir: -1, pose: 'sit', snore: 0, alert: true })
+  expect(cellAt(left, 40, 0, 9)[0]).toBe(0x21)
+  expect(topRowHas(composeTrack(40, { x: 10, dir: 1, pose: 'sit', snore: 0 }), 40, 0x21)).toBe(false)
+})
+
+test('a permission prompt makes the slime wait until its tool has run', async ($, on) => {
+  const clock = mock.clock(on)
+  const blitted: string[] = []
+  on('ui.blit', async (_$, e) => {
+    if ('cells' in e) blitted.push(e.cells)
+    return { value: {} }
+  })
+  on('session.turns', async () => ({ value: 1 }))
+  on('classic.PermissionRequest', async () => ({}))
+  on('tool.call', async () => ({ result: { text: 'ok' } }))
+  on('ui.render', { component: 'AbovePrompt' }, async ($$, e) => {
+    const { Text } = $$.ui.resolve(e)
+    return <Text> </Text>
+  })
+  await $.ui.mount({ plugin: 'slime-band', surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
+
+  await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'rm -rf build' } } as never)
+  await clock.advance(80 * 12)
+  expect(blitted.some(cells => topRowHas(cells, 40, 0x21))).toBe(true)
+
+  await $.tool.call({ tool: 'Bash', command: 'rm -rf build' })
+  await clock.advance(80 * 12)
+  // Whatever the blink showed last, the track now stands without the '!'.
+  expect(topRowHas(blitted.at(-1) ?? '', 40, 0x21)).toBe(false)
+})

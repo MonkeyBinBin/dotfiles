@@ -19,6 +19,32 @@ export async function listProjectSkills($: EngineInterface): Promise<string[]> {
   return found.sort((a, b) => a.localeCompare(b))
 }
 
+// The most used skills that get a slot beside the project's own.
+export const FAVORITES = 4
+
+// The slots: the project's skills, then the skills cast most (rpg-hud's lifetime count) that the session still
+// has and the project does not already hold, most used first.
+export const slotsFor = (project: readonly string[], uses: Readonly<Record<string, number>>, known: readonly string[]): string[] => {
+  const favorites = Object.entries(uses)
+    .filter(([name, count]) => count > 0 && known.includes(name) && !project.includes(name))
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, FAVORITES)
+    .map(([name]) => name)
+  return [...project, ...favorites]
+}
+
+// rpg-hud's skill counts and the session's skills, when that mod runs; nothing otherwise. Read while drawing, so
+// a cast there redraws the slots here. Another plugin's state is read-only, and typed by its own contract.
+async function readFavorites($: EngineInterface) {
+  const [progress, loadout] = await Promise.all([
+    $.state.get({ plugin: 'rpg-hud', key: 'progress' } as never).catch(() => undefined),
+    $.state.get({ plugin: 'rpg-hud', key: 'loadout' } as never).catch(() => undefined),
+  ])
+  const uses = (progress?.value as { skillUses?: Record<string, number> } | undefined)?.skillUses ?? {}
+  const known = ((loadout?.value as { skills?: { name: string }[] } | undefined)?.skills ?? []).map(skill => skill.name)
+  return { uses, known }
+}
+
 // Pressing a slot puts the command in the prompt box, so arguments (an issue number) can follow.
 export const commandText = (skill: string): string => `/${skill} `
 
@@ -48,7 +74,8 @@ export const register: Register = on => {
   // Under the prompt: the engine's hint line first, the item slots below it.
   on('ui.render', { component: 'PromptHint' }, async ($, e, next) => {
     const engine = await next(e)
-    const names = await read($, skills)
+    const favorites = await readFavorites($)
+    const names = slotsFor(await read($, skills), favorites.uses, favorites.known)
     if (names.length === 0) return engine
 
     const { Box, Button } = $.ui.resolve(e)
@@ -59,7 +86,7 @@ export const register: Register = on => {
     return (
       <Box flexDirection="column">
         {engine}
-        <Box flexDirection="row" columnGap={2} marginY={1}>
+        <Box flexDirection="row" flexWrap="wrap" columnGap={2} marginY={1}>
           {names.map((skill, slot) => (
             <Box key={skill} flexDirection="row" columnGap={1}>
               {Raster ? (

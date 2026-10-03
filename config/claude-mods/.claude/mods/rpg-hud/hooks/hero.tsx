@@ -89,6 +89,8 @@ export type StatusData = {
   width: number
   // The spend past which the gold turns red.
   budget?: number
+  // The tool the session waits on the person for: a permission prompt, or a question.
+  waitingFor?: string
   // Fills the prompt with the boss's fix; the boss row then carries a button for it.
   onFight?: () => void
 }
@@ -189,7 +191,11 @@ export function renderStatus(ui: ElementTable, data: StatusData, Raster?: Elemen
           <Text color="green">  ♣ {data.petsOut}</Text>
           <Text dimColor> in party</Text>
         </Text>
-        {current ? (
+        {data.waitingFor !== undefined ? (
+          <Text bold color="yellow" wrap="truncate">
+            ❗ {data.waitingFor === 'AskUserQuestion' ? 'awaiting your answer' : `awaiting your word on ${data.waitingFor}`}
+          </Text>
+        ) : current ? (
           <Text color="yellow" wrap="truncate">
             {hero.acting} <Text bold>{current.tool}</Text>{' '}
             <Text dimColor>{oneLine(current.summary, statsWidth - hero.acting.length - 2 - current.tool.length)}</Text>

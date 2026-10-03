@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import { ICON_ROWS, ICON_WIDTH, SCROLL, SKILL_COLORS, colorFor, composeIcon, toHex } from './icons'
-import { commandText } from './register'
+import { FAVORITES, commandText, slotsFor } from './register'
 
 const HINT_PROPS = { isDraft: false, isWorking: false, hint: '? for shortcuts' } as const
 
@@ -94,4 +94,35 @@ test('draws one slot per project skill under the engine hint line', async ($, on
   const top = await ui.find({ type: 'Box' })
   const kinds = (top?.children ?? []).map(child => (child as { type?: string }).type)
   expect(kinds).toEqual(['Text', 'Box'])
+})
+
+test('the most used skills join the project ones, most used first', () => {
+  const known = ['commit', 'code-review', 'simplify', 'loop', 'run', 'issue-start', 'never']
+  const uses = { commit: 9, 'code-review': 4, simplify: 4, loop: 1, run: 2, 'issue-start': 30, 'gone-now': 50, never: 0 }
+  // The project's own come first and are not repeated; a skill the session no longer has gets no slot.
+  expect(slotsFor(['issue-start'], uses, known)).toEqual(['issue-start', 'commit', 'code-review', 'simplify', 'run'])
+  expect(FAVORITES).toBe(4)
+  expect(slotsFor([], {}, known)).toEqual([])
+  expect(slotsFor(['issue-start'], {}, [])).toEqual(['issue-start'])
+})
+
+test("reads rpg-hud's skill counts for the favourite slots", async ($, on) => {
+  on('session.start', async (_$, e) => ({ cwd: e.cwd }))
+  on('session.cwd', async () => ({ value: '/proj' }))
+  on('fs.exists', async () => ({ value: false }))
+  on('state.get', async (_$, e, next) => {
+    const ref = e as unknown as { plugin: string; key: string }
+    if (ref.plugin !== 'rpg-hud') return next(e)
+    if (ref.key === 'progress') return { value: { value: { skillUses: { commit: 3, simplify: 5 } }, version: 1 } } as never
+    return { value: { value: { skills: [{ name: 'commit' }, { name: 'simplify' }], gear: [] }, version: 1 } } as never
+  })
+  on('ui.render', { component: 'PromptHint' }, async ($$, e) => {
+    const { Text } = $$.ui.resolve(e)
+    return <Text>engine hint</Text>
+  })
+
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'skill-bar', surface: 'terminal', component: 'PromptHint', props: HINT_PROPS })
+  const buttons = (await ui.findAll({ type: 'Button' })).map(b => b.props?.label)
+  expect(buttons).toEqual(['simplify', 'commit'])
 })
