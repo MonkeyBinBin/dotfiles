@@ -15,11 +15,10 @@ import { MANA_ALARMS, campFor, isRefusal, manaAlarm, returnToast, skillOfPrompt,
 import { formatDuration, recapText, topTools } from './recap'
 import { HELP_COMMANDS, helpText } from './help'
 import { filterSpells, timeColor } from './spellbook'
-import { groupSkills, masteryStars } from './skills'
+import { SKILL_KEYS, groupSkills, masteryStars, skillKeys } from './skills'
 import { EMPTY_PROGRESS, newlyEarned } from './trophies'
 import { barFill, oneLine } from './util'
-import { centre, slotAt, slotLayout } from './menu-client'
-import { sparkleTrail } from './skills-client'
+import { cardWidth } from './menu-client'
 import { pageItems } from './window'
 import { CLASSES, CLASS_IDS, rankOf, rollClass } from './classes'
 import { HERO_CLASS_FRAMES } from './hero-cells'
@@ -100,17 +99,16 @@ const world = (on: On, options: World = {}) => {
 
 const failBash = (text: string): World['tool'] => e => (e.tool === 'Bash' ? fail(text) : undefined)
 
-const SLOTS = ['spells', 'pets', 'map', 'skills', 'feats']
-// A 60-column pane: five borderless slots of 12 columns.
-const SLOT_COLUMNS = 12
-
-// A click in the middle of the slot's icon on the terminal, a button press elsewhere.
+// A click on the card's icon on the terminal, a button press elsewhere.
 const showTab = async ($: Engine, ui: Awaited<ReturnType<typeof mountPane>>, key: string, surface: Surface = 'terminal') => {
   if (surface !== 'terminal') return void (await ui.press({ key: `menu-${key}` }))
-  const x = SLOTS.indexOf(key) * SLOT_COLUMNS + 5
-  await ui.pointer({ type: 'down', x, y: 2, button: 'left', in: 'menu' })
-  await ui.pointer({ type: 'up', x, y: 2, button: 'left', in: 'menu' })
+  await ui.pointer({ type: 'down', x: 4, y: 1, button: 'left', in: `icon-${key}` })
+  await ui.pointer({ type: 'up', x: 4, y: 1, button: 'left', in: `icon-${key}` })
 }
+
+// A menu card's frame, by its tab.
+const cardOf = async (ui: Awaited<ReturnType<typeof mountPane>>, tab: string) =>
+  (await ui.findAll({ type: 'Box' })).find(box => (box as { key?: string }).key === `card-${tab}` || box.props?.key === `card-${tab}`)?.props
 
 for (const surface of ['terminal', 'desktop'] as const) {
   test(`logs calls and loses a heart per failure on ${surface}`, async ($, on) => {
@@ -148,42 +146,59 @@ test('draws the portrait and the icon menu on the terminal', async ($, on) => {
   world(on)
   const ui = await mountPane($, 'terminal')
   expect(await ui.findAll({ type: 'Raster' })).toHaveLength(1)
-  const shown = (await ui.findAll({ type: 'Text', in: 'menu' })).map(row => (row.text ?? '').trim())
-  // Five labels, the active one jewelled, and no hotkey digits.
-  expect(shown).toContain('◆ SPELL ◆')
-  expect(shown).toContain('FEATS')
-  expect(shown.some(row => /^\d: /.test(row))).toBe(false)
+  // Five labels under the icons, buttons carrying their number keys, the active one jewelled.
+  const labels = (await ui.findAll({ type: 'Button' })).filter(b => String(b.props?.key ?? '').startsWith('menu-'))
+  // Plain, so the terminal draws each as `1: SPELL`; the active one at full strength.
+  expect(labels.map(b => b.props?.label)).toEqual(['SPELL', 'PARTY', 'MAP', 'SKILL', 'FEATS'])
+  expect(labels.map(b => b.props?.hotkey)).toEqual(['1', '2', '3', '4', '5'])
+  expect(labels.every(b => b.props?.plain === true)).toBe(true)
+  expect(labels.map(b => b.props?.dimColor)).toEqual([false, true, true, true, true])
+  // Every card framed whole in rounded corners; the selected one gold.
+  expect((await cardOf(ui, 'spells'))).toMatchObject({ borderStyle: 'round', borderColor: 'yellow' })
+  for (const tab of ['pets', 'map', 'skills', 'feats']) expect((await cardOf(ui, tab))).toMatchObject({ borderStyle: 'round', borderColor: 'gray' })
 })
 
-test('a click anywhere in a slot picks it, and arrow keys step through the menu', async ($, on) => {
+test('a label button picks its tab, as its number key does once the pane has the keys', async ($, on) => {
   world(on)
   const ui = await mountPane($, 'terminal')
-  // The slot's right edge, on its label row.
-  const x = 2 * SLOT_COLUMNS + SLOT_COLUMNS - 2
-  await ui.pointer({ type: 'down', x, y: 4, button: 'left', in: 'menu' })
-  await ui.pointer({ type: 'up', x, y: 4, button: 'left', in: 'menu' })
+  await ui.press({ key: 'menu-feats' })
+  expect((await texts(ui)).join('|')).toContain('🏆')
+  // With the help page open, the active tab's button closes it.
+  await ui.press({ key: 'help' })
+  await ui.press({ key: 'menu-feats' })
+  expect((await texts(ui)).join('|')).not.toContain('❓ HELP')
+})
+
+test("a click on a card's icon picks it, and arrow keys step through the menu", async ($, on) => {
+  world(on)
+  const ui = await mountPane($, 'terminal')
+  // The icon's last row, near its edge.
+  await ui.pointer({ type: 'down', x: 7, y: 2, button: 'left', in: 'icon-map' })
+  await ui.pointer({ type: 'up', x: 7, y: 2, button: 'left', in: 'icon-map' })
   expect(await texts(ui)).toContain('🧭 WORLD MAP')
 
-  await ui.key({ key: 'right', in: 'menu' })
+  await ui.key({ key: 'right', in: 'icon-map' })
   expect(await texts(ui)).toContain('📜 SKILLS')
-  await ui.key({ key: 'left', in: 'menu' })
-  await ui.key({ key: 'left', in: 'menu' })
+  await ui.key({ key: 'left', in: 'icon-map' })
+  await ui.key({ key: 'left', in: 'icon-map' })
   expect(await texts(ui)).toContain('🐾 PARTY')
 })
 
-test('the active slot is a card: backdrop, gold brackets, jewelled label', async ($, on) => {
+test('the selected card has a bright gold frame and no backdrop; the others a dim grey one', async ($, on) => {
   world(on)
   const ui = await mountPane($, 'terminal')
   await showTab($, ui, 'skills')
-  const label = await ui.find({ type: 'Text', text: ' ◆ SKILL ◆  ', in: 'menu' })
-  expect(label?.props).toMatchObject({ bold: true, color: 'yellow', backgroundColor: '#2a2342' })
-  const brackets = (await ui.findAll({ type: 'Text', in: 'menu' })).filter(row => row.text === '╭─' || row.text === '─╯')
-  expect(brackets).toHaveLength(2)
-  const idle = await ui.find({ type: 'Text', text: '   SPELL    ', in: 'menu' })
-  expect(idle?.props).toMatchObject({ color: 'gray' })
-  // No separators between the slots.
-  const shown = (await ui.findAll({ type: 'Text', in: 'menu' })).map(row => row.text ?? '')
-  expect(shown.some(row => /[│┬┴]/.test(row))).toBe(false)
+  const label = (await ui.findAll({ type: 'Button' })).find(b => b.props?.key === 'menu-skills')
+  expect(label?.props).toMatchObject({ label: 'SKILL', plain: true, dimColor: false })
+  const selected = await cardOf(ui, 'skills')
+  expect(selected).toMatchObject({ borderStyle: 'round', borderColor: 'yellow', borderDimColor: false })
+  expect(selected?.backgroundColor).toBeUndefined()
+  // An idle card: a dim grey frame, no backdrop. (Its hover colours are the surface's; the test tree omits them.)
+  const idle = await cardOf(ui, 'spells')
+  expect(idle).toMatchObject({ borderStyle: 'round', borderColor: 'gray', borderDimColor: true })
+  expect(idle?.backgroundColor).toBeUndefined()
+  const idleLabel = (await ui.findAll({ type: 'Button' })).find(b => b.props?.key === 'menu-spells')
+  expect(idleLabel?.props).toMatchObject({ label: 'SPELL', dimColor: true })
 })
 
 test('a narrow, short pane drops the portrait and folds the menu into one line', async ($, on) => {
@@ -217,27 +232,17 @@ test('scrolls the spell book window under the fixed panel and menu', async ($, o
   expect(await shown()).toContain('f1.md')
 })
 
-test('the menu fills the pane exactly, slots differing by one column at most', () => {
-  for (const width of [56, 60, 63, 80]) {
-    const { widths, starts } = slotLayout(width, 5)
-    expect(widths.reduce((sum, one) => sum + one, 0)).toBe(width)
-    expect(Math.max(...widths) - Math.min(...widths)).toBeLessThanOrEqual(1)
-    expect(starts[0]).toBe(0)
+test('every card is as wide as the others, its icon centred inside the frame', () => {
+  for (const width of [50, 56, 57, 58, 59, 60, 63, 80]) {
+    const card = cardWidth(width, 5, 8)
+    expect(card * 5).toBeLessThanOrEqual(width)
+    // An even number of columns around the 8-column icon: one share, or one column less.
+    expect((card - 2 - 8) % 2).toBe(0)
+    expect(Math.floor(width / 5) - card).toBeLessThanOrEqual(1)
   }
-  const { starts } = slotLayout(60, 5)
-  expect(starts).toEqual([0, 12, 24, 36, 48])
-  expect(slotAt(0, starts, 60)).toBe(0)
-  expect(slotAt(11, starts, 60)).toBe(0)
-  expect(slotAt(12, starts, 60)).toBe(1)
-  expect(slotAt(59, starts, 60)).toBe(4)
-  expect(slotAt(60, starts, 60)).toBeUndefined()
+  expect(cardWidth(60, 5, 8)).toBe(12)
+  expect(cardWidth(57, 5, 8)).toBe(10)
 })
-
-test('centres a label with the odd column on the right', () => {
-  expect(centre('MAP', 10)).toBe('   MAP    ')
-  expect(centre('SPELL', 11)).toBe('   SPELL   ')
-})
-
 test('pages whole items and never cuts one', () => {
   const items = [1, 2, 3].map(n => ({ key: `k${n}`, rows: 4, node: null }))
   expect(pageItems(items, 0, 9).shown.map(item => item.key)).toEqual(['k1', 'k2'])
@@ -409,8 +414,11 @@ const ONE_SKILL = {
   },
 }
 
-const skillTexts = async (ui: Awaited<ReturnType<typeof mountPane>>) =>
-  (await ui.findAll({ type: 'Text', in: 'skills' })).map(row => row.text ?? '').join('|')
+// The skills page's buttons, in order: what each casts and its key.
+const skillButtons = async (ui: Awaited<ReturnType<typeof mountPane>>) =>
+  (await ui.findAll({ type: 'Button' }))
+    .filter(b => String(b.props?.key ?? '').startsWith('cast-'))
+    .map(b => ({ label: b.props?.label, hotkey: b.props?.hotkey, dimColor: b.props?.dimColor }))
 
 test('casting a skill raises its mastery on the skills page', async ($, on) => {
   world(on, { usage: ONE_SKILL })
@@ -419,44 +427,45 @@ test('casting a skill raises its mastery on the skills page', async ($, on) => {
 
   const ui = await mountPane($, 'terminal', 40)
   await showTab($, ui, 'skills')
-  expect((await texts(ui)).join('|')).toContain('1/1 learned')
-  const shown = await skillTexts(ui)
+  const shown = (await texts(ui)).join('|')
+  expect(shown).toContain('1/1 learned · a letter casts')
   expect(shown).toContain('❖ Personal')
-  expect(shown).toContain('commit')
-  expect(shown).toContain(' ×1')
+  expect(shown).toContain('★☆☆')
+  expect(shown).toContain('×1')
+  // Cast in the last five minutes: it glows.
+  expect(shown).toContain('✦')
   expect(shown).toContain('context7')
+  expect(await skillButtons(ui)).toEqual([{ label: 'commit', hotkey: 'a', dimColor: false }])
 })
 
-test('clicking a skill puts it in the prompt box with a cast effect', async ($, on) => {
+test("a skill's button, or its letter, puts it in the prompt box", async ($, on) => {
   const { fills } = world(on, { usage: ONE_SKILL })
   await $.turn.complete({ answer: '', durationMs: 5, isAborted: false, turnId: 't' } as never)
-  const ui = await mountPane($, 'terminal', 40)
-  await showTab($, ui, 'skills')
-
-  // Row 0 is the school, row 1 the skill.
-  await ui.pointer({ type: 'move', x: 10, y: 1, in: 'skills' })
-  expect(await skillTexts(ui)).toContain('⏎ cast')
-  await ui.pointer({ type: 'down', x: 10, y: 1, button: 'left', in: 'skills' })
-  await ui.pointer({ type: 'up', x: 10, y: 1, button: 'left', in: 'skills' })
-  expect(fills).toEqual(['/commit '])
-  expect(await skillTexts(ui)).toContain('CAST!')
-
-  await ui.advance(400)
-  expect(await skillTexts(ui)).toContain('→ prompt')
-  await ui.advance(2000)
-  const settled = await skillTexts(ui)
-  expect(settled).not.toContain('CAST!')
-  expect(settled).not.toContain('→ prompt')
-
-  // A click on the school's row casts nothing.
-  await ui.pointer({ type: 'up', x: 10, y: 0, button: 'left', in: 'skills' })
-  expect(fills).toHaveLength(1)
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await mountPane($, surface, 40)
+    await showTab($, ui, 'skills', surface)
+    await ui.press({ key: 'cast-commit' })
+  }
+  expect(fills).toEqual(['/commit ', '/commit '])
 })
 
-test('the sparkle sweeps from left to right', () => {
-  expect(sparkleTrail(10, 2)).toBe('✦' + ' '.repeat(9))
-  expect(sparkleTrail(10, 5).trim().length).toBeGreaterThan(0)
-  expect(sparkleTrail(10, 5).indexOf('✦')).toBeLessThan(sparkleTrail(10, 8).indexOf('✦'))
+test('the letters go to the skills in view, a from the top', () => {
+  const skill = (name: string) => ({ kind: 'skill' as const, name, uses: 0, isGlowing: false })
+  const rows = [{ kind: 'school' as const, text: 'Personal' }, skill('a1'), skill('a2'), { kind: 'gap' as const }, skill('b1'), skill('b2')]
+  expect([...skillKeys(rows, 0, 10)]).toEqual([
+    [1, 'a'],
+    [2, 'b'],
+    [4, 'c'],
+    [5, 'd'],
+  ])
+  // Scrolled two rows down with room for three: a2 and b1 are in view.
+  expect([...skillKeys(rows, 2, 3)]).toEqual([
+    [2, 'a'],
+    [4, 'b'],
+  ])
+  // Past the alphabet, the rest have no key.
+  const many = Array.from({ length: 30 }, (_, at) => skill(`s${at}`))
+  expect(skillKeys(many, 0, 30).size).toBe(SKILL_KEYS.length)
 })
 
 test('the first cast unlocks a feat and saves the progress', async ($, on) => {
@@ -1509,4 +1518,42 @@ test('a failure auto mode never denied is still a failure', async ($, on) => {
   await $.tool.call({ tool: 'Bash', tool_use_id: 'tu-1', command: 'false' } as never)
   const ui = await mountPane($, 'terminal')
   expect((await texts(ui)).join('|')).toContain('4/5')
+})
+
+// --- Menu keys ---
+
+test('the number keys pick a tab and ? toggles the help page', async ($, on) => {
+  world(on)
+  const ui = await mountPane($, 'terminal')
+  await ui.key({ key: '5', in: 'icon-spells' })
+  expect((await texts(ui)).join('|')).toContain('🏆')
+  await ui.key({ key: '3', in: 'icon-spells' })
+  expect((await texts(ui)).join('|')).toContain('🧭 WORLD MAP')
+
+  await ui.key({ key: '?', in: 'icon-spells' })
+  expect((await texts(ui)).join('|')).toContain('❓ HELP')
+  await ui.key({ key: '?', in: 'icon-spells' })
+  expect((await texts(ui)).join('|')).not.toContain('❓ HELP')
+
+  // The help page open, the active tab's own key closes it.
+  await ui.key({ key: '?', in: 'icon-spells' })
+  await ui.key({ key: '3', in: 'icon-spells' })
+  expect((await texts(ui)).join('|')).not.toContain('❓ HELP')
+})
+
+test('desktop menu buttons carry their number as a hotkey', async ($, on) => {
+  world(on)
+  const ui = await mountPane($, 'desktop')
+  const buttons = (await ui.findAll({ type: 'Button' })).filter(b => String(b.props?.key ?? '').startsWith('menu-'))
+  expect(buttons.map(b => b.props?.hotkey)).toEqual(['1', '2', '3', '4', '5'])
+})
+
+test("a card's icon sits centred inside its frame", async ($, on) => {
+  world(on)
+  const ui = await mountPane($, 'terminal')
+  // A 60-column pane: 12-column cards, 10 inside the frame, the 8-column icon with one column each side.
+  const icon = (await ui.findAll({ type: 'Client' })).find(one => (one as { key?: string }).key === 'icon-map' || one.props?.key === 'icon-map')
+  expect((icon?.props as { width?: number } | undefined)?.width).toBe(10)
+  const rows = (await ui.findAll({ type: 'Text', in: 'icon-map' })).map(row => row.text ?? '')
+  expect(rows.filter(text => text === ' ')).toHaveLength(6)
 })
