@@ -1,6 +1,7 @@
 import type { ElementTable } from 'claude-code'
 
 import type { Loadout, Progress, SkillSlot } from '../types'
+import { SCROLL_DOWN_KEY, SCROLL_UP_KEY } from './window'
 import type { Item } from './window'
 
 // Uses to reach each mastery star.
@@ -92,7 +93,7 @@ export const castText = (name: string): string => `/${name} `
 
 // The keys the skills on screen answer to, top to bottom: the alphabet less j and k, which scroll the window.
 // The menu's tabs keep the digits.
-export const SKILL_KEYS = 'abcdefghilmnopqrstuvwxyz'
+export const SKILL_KEYS = [...'abcdefghijklmnopqrstuvwxyz'].filter(key => key !== SCROLL_UP_KEY && key !== SCROLL_DOWN_KEY).join('')
 
 // Each on-screen skill's key: the window shows `count` rows from `start`, and only what it shows is drawn, so
 // the letters go to the skills in view, a from the top, and move with the scroll.

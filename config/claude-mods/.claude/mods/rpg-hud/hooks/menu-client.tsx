@@ -1,6 +1,7 @@
 import type { ClientModule } from 'claude-code'
 
 import type { TextCell } from './menu'
+import { SCROLL_DOWN_KEY, SCROLL_UP_KEY } from './window'
 
 // One menu card's icon: the plugin draws the card's frame and label button around it, and this Client takes
 // the clicks on the icon and the keys once a click has given it the focus.
@@ -67,8 +68,8 @@ const MenuIcon: ClientModule<MenuIconProps, IconState> = (props, surface) => {
     if (numbered >= 0) return pick(props.ids[numbered])
     if (e.key === '?') return surface.post({ help: true })
     // j and k, or the up and down arrows, scroll the window under the menu.
-    if (e.key === 'j' || e.key === 'down') return surface.post({ scroll: 1 })
-    if (e.key === 'k' || e.key === 'up') return surface.post({ scroll: -1 })
+    if (e.key === SCROLL_DOWN_KEY || e.key === 'down') return surface.post({ scroll: 1 })
+    if (e.key === SCROLL_UP_KEY || e.key === 'up') return surface.post({ scroll: -1 })
     // Another letter is a skill's key on the skills page, whose buttons hear no keys while this Client holds them.
     if (/^[a-z]$/.test(e.key)) return surface.post({ letter: e.key })
     if (e.key === 'right') pick(props.ids[(activeIndex + 1) % count])
@@ -86,8 +87,9 @@ const MenuIcon: ClientModule<MenuIconProps, IconState> = (props, surface) => {
           <Box key={`row-${y}`} flexDirection="row" height={1}>
             <Text>{' '.repeat(left)}</Text>
             {dimCells.map((dim, x) => {
-              const [glyph, color, background] = isActive ? (props.icon[y]?.[x] ?? dim) : dim
-              const [, brightColor, brightBackground] = props.icon[y]?.[x] ?? dim
+              const bright = props.icon[y]?.[x] ?? dim
+              const [glyph, color, background] = isActive ? bright : dim
+              const [, brightColor, brightBackground] = bright
               const lit = {
                 scope: props.scope,
                 ...(brightColor === null ? {} : { color: brightColor }),

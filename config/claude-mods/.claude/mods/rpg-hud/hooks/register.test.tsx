@@ -81,6 +81,7 @@ const world = (on: On, options: World = {}) => {
     return { value: undefined }
   })
   on('turn.complete', async () => ({ text: '' }))
+  on('prompt.submit', async (_$, e) => ({ text: (e as { text: string }).text }) as never)
   const fills: string[] = []
   on('prompt.fill', async (_$, e) => {
     fills.push(e.text)
@@ -421,9 +422,11 @@ const skillButtons = async (ui: Awaited<ReturnType<typeof mountPane>>) =>
     .map(b => ({ label: b.props?.label, hotkey: b.props?.hotkey, dimColor: b.props?.dimColor }))
 
 test('casting a skill raises its mastery on the skills page', async ($, on) => {
-  world(on, { usage: ONE_SKILL })
+  const { clock } = world(on, { usage: ONE_SKILL })
   await $.turn.complete({ answer: '', durationMs: 5, isAborted: false, turnId: 't' } as never)
   await $.tool.call({ tool: 'Skill', skill: 'commit' } as never)
+  // The lifetime count saves beside the call.
+  await clock.advance(0)
 
   const ui = await mountPane($, 'terminal', 40)
   await showTab($, ui, 'skills')
@@ -1573,6 +1576,7 @@ test("a pointer passing over a card's icon leaves nothing lit behind it", async 
   expect(await colours('map')).toEqual(before)
   // The selected card's icon is the bright one.
   expect(await colours('pets')).not.toEqual(await colours('feats'))
+  // (The hover group that lights the pixels is the surface's; the test tree omits hover props.)
 })
 
 test("a letter heard by a menu icon casts the skill shown under it", async ($, on) => {
@@ -1624,4 +1628,116 @@ test('a window that shows all it has carries no scroll buttons', async ($, on) =
   await $.tool.call({ tool: 'Read', file_path: '/x/a.md' })
   const ui = await mountPane($, 'terminal')
   expect((await ui.findAll({ type: 'Button' })).filter(b => String(b.props?.key ?? '').startsWith('scroll-'))).toHaveLength(0)
+})
+
+test('the down button dims once the window can scroll no further, tall items or not', async ($, on) => {
+  world(on)
+  let spawned = 0
+  on('agent.spawn', async () => ({ model: 'claude-haiku-4-5', agentId: `agent-${(spawned += 1)}` }))
+  const ui = await mountPane($, 'terminal')
+  await showTab($, ui, 'pets')
+  // Enough pets that their four-row cards outgrow the window.
+  for (let n = 1; n <= 6; n += 1) {
+    await $.agent.spawn({ prompt: 'go', description: `Task ${n}`, subagentType: 'Explore', tool_use_id: `tu-${n}` } as never)
+  }
+  const down = async () => (await ui.findAll({ type: 'Button' })).find(b => b.props?.key === 'scroll-down')?.props?.dimColor
+  expect(await down()).toBe(false)
+  for (let n = 0; n < 40; n += 1) await ui.press({ key: 'scroll-down' })
+  expect(await down()).toBe(true)
+})
+
+// --- Following the action ---
+
+test('the window follows a sent message to the tab of what happens', async ($, on) => {
+  world(on, { usage: ONE_SKILL, git: argv => (argv[0] === 'git' ? { stdout: '' } : undefined) })
+  on('agent.spawn', async () => ({ model: 'claude-haiku-4-5', agentId: 'agent-1' }))
+  await $.turn.complete({ answer: '', durationMs: 5, isAborted: false, turnId: 't' } as never)
+  const ui = await mountPane($, 'terminal', 40)
+  const shown = async () => (await texts(ui)).join('|')
+
+  await $.tool.call({ tool: 'Skill', skill: 'commit' } as never)
+  expect(await shown()).toContain('📜 SKILLS')
+  await $.agent.spawn({ prompt: 'go', description: 'Scout', subagentType: 'Explore', tool_use_id: 'tu-1' } as never)
+  expect(await shown()).toContain('🐾 PARTY')
+  await $.tool.call({ tool: 'Bash', command: 'git status' })
+  expect(await shown()).toContain('🧭 WORLD MAP')
+  // A read or an edit stays where the window is.
+  await $.tool.call({ tool: 'Read', file_path: '/x/a.md' })
+  expect(await shown()).toContain('🧭 WORLD MAP')
+})
+
+test('a typed /skill turns to the skills', async ($, on) => {
+  world(on, { usage: ONE_SKILL })
+  await $.turn.complete({ answer: '', durationMs: 5, isAborted: false, turnId: 't' } as never)
+  const ui = await mountPane($, 'terminal', 40)
+  await $.prompt.submit({ text: '/commit fix the typo' } as never)
+  expect((await texts(ui)).join('|')).toContain('📜 SKILLS')
+})
+
+test('a tab the person picks holds the window until their next message', async ($, on) => {
+  world(on, { usage: ONE_SKILL })
+  await $.turn.complete({ answer: '', durationMs: 5, isAborted: false, turnId: 't' } as never)
+  const ui = await mountPane($, 'terminal', 40)
+  await ui.press({ key: 'menu-feats' })
+  await $.tool.call({ tool: 'Skill', skill: 'commit' } as never)
+  expect((await texts(ui)).join('|')).toContain('🏆')
+  // The next message lets it follow again.
+  await $.prompt.submit({ text: 'and now?' } as never)
+  await $.tool.call({ tool: 'Skill', skill: 'commit' } as never)
+  expect((await texts(ui)).join('|')).toContain('📜 SKILLS')
+})
+
+test('/hud follow turns the following off, and on again', async ($, on) => {
+  const { store } = world(on, { usage: ONE_SKILL })
+  await $.turn.complete({ answer: '', durationMs: 5, isAborted: false, turnId: 't' } as never)
+  expect(await $.command.run({ command: 'hud', args: 'follow' } as never)).toMatchObject({ text: 'The HUD stays on the tab you pick.' })
+  expect(store.get('follow')).toBe(false)
+  const ui = await mountPane($, 'terminal', 40)
+  await $.tool.call({ tool: 'Skill', skill: 'commit' } as never)
+  expect((await texts(ui)).join('|')).toContain('📖 SPELL BOOK')
+  expect(await $.command.run({ command: 'hud', args: 'follow' } as never)).toMatchObject({ text: 'The HUD follows the action to its tab.' })
+  await $.tool.call({ tool: 'Skill', skill: 'commit' } as never)
+  expect((await texts(ui)).join('|')).toContain('📜 SKILLS')
+})
+
+test('a sent message turns the window to the spell book, where its calls show', async ($, on) => {
+  world(on, { usage: ONE_SKILL })
+  await $.turn.complete({ answer: '', durationMs: 5, isAborted: false, turnId: 't' } as never)
+  const ui = await mountPane($, 'terminal', 40)
+  await showTab($, ui, 'feats')
+  await $.prompt.submit({ text: 'what changed?' } as never)
+  expect((await texts(ui)).join('|')).toContain('📖 SPELL BOOK')
+  // With the help page open it stays put.
+  await showTab($, ui, 'feats')
+  await ui.press({ key: 'help' })
+  await $.prompt.submit({ text: 'again' } as never)
+  expect((await texts(ui)).join('|')).toContain('❓ HELP')
+})
+
+test("/hud with a tab's number opens that tab", async ($, on) => {
+  world(on)
+  on('ui.open', async () => ({ value: undefined }) as never)
+  const ui = await mountPane($, 'terminal')
+  await $.command.run({ command: 'hud', args: '5' } as never)
+  expect((await texts(ui)).join('|')).toContain('🏆')
+  await $.command.run({ command: 'hud', args: '3' } as never)
+  expect((await texts(ui)).join('|')).toContain('🧭 WORLD MAP')
+  // A number past the menu only opens the HUD.
+  await $.command.run({ command: 'hud', args: '9' } as never)
+  expect((await texts(ui)).join('|')).toContain('🧭 WORLD MAP')
+})
+
+test('/hud names a tab as its card shows it, in any case', async ($, on) => {
+  world(on)
+  on('ui.open', async () => ({ value: undefined }) as never)
+  const ui = await mountPane($, 'terminal')
+  await $.command.run({ command: 'hud', args: 'party' } as never)
+  expect((await texts(ui)).join('|')).toContain('🐾 PARTY')
+  await $.command.run({ command: 'hud', args: 'SKILL' } as never)
+  expect((await texts(ui)).join('|')).toContain('📜 SKILLS')
+  await $.command.run({ command: 'hud', args: 'Spell' } as never)
+  expect((await texts(ui)).join('|')).toContain('📖 SPELL BOOK')
+  // The ids still work.
+  await $.command.run({ command: 'hud', args: 'pets' } as never)
+  expect((await texts(ui)).join('|')).toContain('🐾 PARTY')
 })

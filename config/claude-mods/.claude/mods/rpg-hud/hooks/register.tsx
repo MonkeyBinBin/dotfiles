@@ -353,6 +353,17 @@ async function inspectChange($: EngineInterface, path: string, from: Pick<MapVie
 
 // Adds a pet to the party and counts the summon; a pet already there under the same agent (one met through its
 // tool calls before its spawn answered) is replaced, keeping what it has done, and not counted twice.
+// Following: a sent message turns the window to the spell book, where its tool calls show, and then to the tab
+// of what the session does: a skill cast to the skills, a summoned pet to the party, a git command to the map. A tab the person picks holds the
+// window until their next message; `/hud follow` turns it off, kept across sessions.
+const FOLLOW_KEY = 'follow'
+const follow = { isOn: true, isHeld: false }
+
+async function followTo($: EngineInterface, to: Tab) {
+  if (!follow.isOn || follow.isHeld || (await read($, isHelpOpen))) return
+  await update($, tab, current => (current === to ? current : to))
+}
+
 async function joinParty($: EngineInterface, pet: Pet) {
   const before = (await read($, pets)).find(one => one.agentId !== undefined && one.agentId === pet.agentId)
   const joined = before === undefined ? pet : { ...pet, actions: before.actions, lastTool: before.lastTool, lastSummary: before.lastSummary, startedAt: before.startedAt }
@@ -364,6 +375,7 @@ async function joinParty($: EngineInterface, pet: Pet) {
   await update($, tally, t => ({ ...t, petsSummoned: t.petsSummoned + 1 }))
   void advance($, p => ({ ...p, petsSummoned: p.petsSummoned + 1, maxPetsAtOnce: Math.max(p.maxPetsAtOnce, out) }))
   $.ui.toast(`🐾 ${speciesFor(pet.kind).name} summoned: ${pet.description}`)
+  await followTo($, 'pets')
 }
 
 // A subagent met through its tool calls with no spawn of its own seen: a skill's fork, a teammate, or one whose
@@ -690,12 +702,15 @@ const bagPage = async ($: EngineInterface, { view }: PageContext): Promise<Page>
   }
 }
 
-// Fills the prompt with a skill's command, or says how to cast it when the prompt cannot take it.
-const castFromPage = ($: EngineInterface, name: string) =>
+// Fills the prompt with `text`, or toasts `fallback` when the prompt cannot take it.
+const fillPrompt = ($: EngineInterface, text: string, fallback: string) =>
   void $.prompt
-    .fill({ text: castText(name) })
-    .then(filled => (filled.isFilled ? undefined : $.ui.toast(`Type /${name} to cast it`)))
+    .fill({ text })
+    .then(filled => (filled.isFilled ? undefined : $.ui.toast(fallback)))
     .catch(() => undefined)
+
+// Fills the prompt with a skill's command, or says how to cast it when the prompt cannot take it.
+const castFromPage = ($: EngineInterface, name: string) => fillPrompt($, castText(name), `Type /${name} to cast it`)
 
 // The skills page's letters as last drawn, letter to skill. A click on a menu icon gives that Client the keys,
 // and the skills' buttons then hear no letters; the icon hands them on and they are looked up here.
@@ -779,8 +794,11 @@ async function recap($: EngineInterface) {
 }
 
 // Moves a window `by` rows within its items: `view` is the window as last drawn, its key, rows in all and room.
-const scrollWindow = ($: EngineInterface, view: { key: string; total: number; rows: number }, by: number) =>
-  update($, offsets, all => ({ ...all, [view.key]: clampOffset((all[view.key] ?? 0) + by, view.total, view.rows) }))
+// A window that shows all it has is left alone, so a scroll key there writes nothing.
+const scrollWindow = async ($: EngineInterface, view: { key: string; total: number; rows: number }, by: number) => {
+  if (view.total <= view.rows) return
+  await update($, offsets, all => ({ ...all, [view.key]: clampOffset((all[view.key] ?? 0) + by, view.total, view.rows) }))
+}
 
 export const register: Register = on => {
   // The last drawn log window; scrolling clamps against it.
@@ -803,10 +821,11 @@ export const register: Register = on => {
     await $.command.register({
       name: COMMAND,
       description:
-        'Open the adventure HUD (args: spells, pets, map, skills, feats; class [name] rerolls; cards toggles edit cards; recap sums up the session; help lists them all)',
+        'Open the adventure HUD (args: spell, party, map, skill, feats or 1-5; class [name] rerolls; cards toggles edit cards; follow toggles turning to the tab of what happens; recap sums up the session; help lists them all)',
     })
     await markStart($)
     await loadProgress($)
+    follow.isOn = (await $.store.get(FOLLOW_KEY).catch(() => undefined)) !== false
     // Each session plays a class at random; a reload of the mod keeps the one rolled.
     if ((await read($, heroClass)) === '') await chooseClass($, rollClass(Math.random()))
     void refreshAll($).catch(() => undefined)
@@ -822,7 +841,10 @@ export const register: Register = on => {
   })
 
   on('command.run', { command: COMMAND }, async ($, e) => {
-    const arg = e.args.trim()
+    // A tab is named as its card shows it (`/hud party`, any case) or by its number there (`/hud 2`); its id
+    // (`pets`) still works.
+    const typed = e.args.trim()
+    const arg = MENU.find((entry, index) => slotKey(index) === typed || entry.label.toLowerCase() === typed.toLowerCase())?.id ?? typed
     if (arg === 'class' || arg.startsWith('class ')) {
       const asked = arg.slice('class'.length).trim()
       if (asked !== '' && !isClassId(asked)) return { text: `No such class. Pick one of: ${CLASS_IDS.join(', ')}.` }
@@ -838,7 +860,13 @@ export const register: Register = on => {
       return { text: isOn ? 'Edit cards off: edits draw as before.' : 'Edit cards on.' }
     }
     if (arg === 'help') return { text: helpText() }
+    if (arg === 'follow') {
+      follow.isOn = !follow.isOn
+      await $.store.set(FOLLOW_KEY, follow.isOn)
+      return { text: follow.isOn ? 'The HUD follows the action to its tab.' : 'The HUD stays on the tab you pick.' }
+    }
     if (isTab(arg)) {
+      follow.isHeld = true
       await update($, tab, () => arg)
       await update($, isHelpOpen, () => false)
     }
@@ -867,9 +895,12 @@ export const register: Register = on => {
 
   on('prompt.submit', async ($, e, next) => {
     await update($, waitingFor, () => null)
+    // A new message lets the window follow again, whatever tab was picked during the last.
+    follow.isHeld = false
     const known = (await read($, loadout)).skills.map(slot => slot.name)
     const skill = skillOfPrompt(e.text, known)
     if (skill !== undefined) await castSkill($, skill)
+    await followTo($, skill === undefined ? 'spells' : 'skills')
     return next(e)
   })
 
@@ -1002,7 +1033,10 @@ export const register: Register = on => {
         await update($, tally, t => ({ ...t, bossesDefeated: t.bossesDefeated + 1 }))
         void advance($, p => ({ ...p, bossesDefeated: p.bossesDefeated + 1 }))
       }
-      if (runsGit(command)) void refreshMap($).catch(() => undefined)
+      if (runsGit(command)) {
+        void refreshMap($).catch(() => undefined)
+        if (isMain) await followTo($, 'map')
+      }
     }
 
     if (!isMain) return ran
@@ -1027,7 +1061,10 @@ export const register: Register = on => {
     }
     if (e.tool === 'Skill' && !isRefused) {
       const skill = (e as { skill?: unknown }).skill
-      if (typeof skill === 'string') await castSkill($, skill)
+      if (typeof skill === 'string') {
+        await castSkill($, skill)
+        await followTo($, 'skills')
+      }
     }
 
     // A refused call never ran: it gives back the cast counted at its start and earns no lifetime count or level.
@@ -1073,8 +1110,9 @@ export const register: Register = on => {
     // A letter a menu icon heard while it had the keys: on the skills page, the skill shown under that letter.
     if (isMenu && typeof data.letter === 'string') {
       const name = shownSkillKeys.get(data.letter)
-      const isOnSkills = (await read($, tab)) === 'skills' && !(await read($, isHelpOpen))
-      if (isOnSkills && name !== undefined) castFromPage($, name)
+      if (name === undefined) return {}
+      const [tabNow, helpOpen] = await Promise.all([read($, tab), read($, isHelpOpen)])
+      if (tabNow === 'skills' && !helpOpen) castFromPage($, name)
       return {}
     }
     if (isMenu && data.help === true) {
@@ -1083,6 +1121,7 @@ export const register: Register = on => {
       return {}
     }
     if (isMenu && typeof data.select === 'string' && isTab(data.select)) {
+      follow.isHeld = true
       const picked = data.select
       await update($, tab, () => picked)
       await update($, isHelpOpen, () => false)
@@ -1172,12 +1211,7 @@ export const register: Register = on => {
         ...(bossNow === null
           ? {}
           : {
-              onFight: () => {
-                void $.prompt
-                  .fill({ text: fightText(bossNow) })
-                  .then(filled => (filled.isFilled ? undefined : $.ui.toast(`Ask Claude: ${fightText(bossNow)}`)))
-                  .catch(() => undefined)
-              },
+              onFight: () => fillPrompt($, fightText(bossNow), `Ask Claude: ${fightText(bossNow)}`),
             }),
       },
       Raster,
@@ -1194,6 +1228,7 @@ export const register: Register = on => {
     // Each slot's label is a button carrying its number as a hotkey, so once the pane has the keys (a click,
     // ctrl+x tab) the number picks the tab; Tab and Enter reach it as well.
     const pickTab = (id: Tab) => {
+      follow.isHeld = true
       void update($, tab, () => id)
       void update($, isHelpOpen, () => false)
     }
