@@ -832,14 +832,14 @@ export const register: Register = on => {
     return { text: 'Adventure HUD opened.' }
   })
 
-  // A permission prompt is about to ask the person; the panel says so until that tool is done. A hook beneath
-  // that decides leaves no prompt to wait on.
   // Auto mode's classifier denied a call: a refusal, known by the call's id rather than by its wording.
   on('classic.PermissionDenied', async ($, e, next) => {
     autoDenied.add(e.tool_use_id)
     return next(e)
   })
 
+  // A permission prompt is about to ask the person; the panel says so until that tool is done. A hook beneath
+  // that decides leaves no prompt to wait on.
   on('classic.PermissionRequest', async ($, e, next) => {
     const result = await next(e)
     if (result.decision === undefined) {
