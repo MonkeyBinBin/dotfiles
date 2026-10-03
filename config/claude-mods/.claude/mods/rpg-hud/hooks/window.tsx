@@ -32,6 +32,10 @@ export const pageItems = (items: readonly Item[], offset: number, rows: number) 
   return { shown, start, total, end: start + used }
 }
 
+// The keys that scroll a window, as vim's: the pane's buttons for them carry these as hotkeys.
+export const SCROLL_UP_KEY = 'k'
+export const SCROLL_DOWN_KEY = 'j'
+
 export type WindowProps = {
   title: string
   subtitle?: string
@@ -44,11 +48,13 @@ export type WindowProps = {
   offset: number
   rows: number
   width: number
+  // Scrolls the window a step; given, a window with more than it shows carries ▲ and ▼ buttons keyed k and j.
+  scroll?: { up: () => void; down: () => void }
 }
 
 // A framed RPG window: the title bar, a rule, and the items that fit, with a scroll gauge when they do not all fit.
 export function renderWindow(ui: ElementTable, props: WindowProps) {
-  const { Box, Text } = ui
+  const { Box, Button, Text } = ui
   const paged = pageItems(props.items, props.offset, props.rows)
   const { shown } = paged
   let { start, total, end } = paged
@@ -58,7 +64,10 @@ export function renderWindow(ui: ElementTable, props: WindowProps) {
     end = Math.min(total, start + props.rows)
   }
   const inner = Math.max(0, props.width - WINDOW_CHROME_COLUMNS)
-  const gauge = total > props.rows ? `${start > 0 ? '▲' : ' '}${end < total ? '▼' : ' '} ${start + 1}–${end}/${total}` : ''
+  const isScrolling = total > props.rows
+  const range = `${start + 1}–${end}/${total}`
+  // With buttons the arrows are theirs, dimmed at either end; without, the gauge draws them.
+  const gauge = !isScrolling ? '' : props.scroll === undefined ? `${start > 0 ? '▲' : ' '}${end < total ? '▼' : ' '} ${range}` : range
   return (
     <Box
       flexDirection="column"
@@ -76,6 +85,12 @@ export function renderWindow(ui: ElementTable, props: WindowProps) {
           </Text>
         </Box>
         {props.actions}
+        {isScrolling && props.scroll !== undefined && (
+          <Box flexDirection="row" columnGap={1} marginLeft={1}>
+            <Button key="scroll-up" label="▲" plain hotkey={SCROLL_UP_KEY} dimColor={start === 0} onPress={props.scroll.up} />
+            <Button key="scroll-down" label="▼" plain hotkey={SCROLL_DOWN_KEY} dimColor={end >= total} onPress={props.scroll.down} />
+          </Box>
+        )}
         {gauge !== '' && <Text color={props.color}> {gauge}</Text>}
       </Box>
       <Text color={props.color} dimColor>

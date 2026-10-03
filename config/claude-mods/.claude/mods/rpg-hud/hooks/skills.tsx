@@ -90,8 +90,9 @@ export function skillRows(data: SkillsData): SkillRow[] {
 // What a cast puts in the prompt box: the command and a space for its arguments.
 export const castText = (name: string): string => `/${name} `
 
-// The keys the skills on screen answer to, top to bottom; the menu's tabs keep the digits.
-export const SKILL_KEYS = 'abcdefghijklmnopqrstuvwxyz'
+// The keys the skills on screen answer to, top to bottom: the alphabet less j and k, which scroll the window.
+// The menu's tabs keep the digits.
+export const SKILL_KEYS = 'abcdefghilmnopqrstuvwxyz'
 
 // Each on-screen skill's key: the window shows `count` rows from `start`, and only what it shows is drawn, so
 // the letters go to the skills in view, a from the top, and move with the scroll.

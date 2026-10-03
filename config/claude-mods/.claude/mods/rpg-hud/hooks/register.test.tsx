@@ -463,7 +463,9 @@ test('the letters go to the skills in view, a from the top', () => {
     [2, 'a'],
     [4, 'b'],
   ])
-  // Past the alphabet, the rest have no key.
+  // j and k scroll the window, so no skill takes them; past the rest of the alphabet, a skill has no key.
+  expect(SKILL_KEYS).not.toContain('j')
+  expect(SKILL_KEYS).not.toContain('k')
   const many = Array.from({ length: 30 }, (_, at) => skill(`s${at}`))
   expect(skillKeys(many, 0, 30).size).toBe(SKILL_KEYS.length)
 })
@@ -1556,4 +1558,70 @@ test("a card's icon sits centred inside its frame", async ($, on) => {
   expect((icon?.props as { width?: number } | undefined)?.width).toBe(10)
   const rows = (await ui.findAll({ type: 'Text', in: 'icon-map' })).map(row => row.text ?? '')
   expect(rows.filter(text => text === ' ')).toHaveLength(6)
+})
+
+test("a pointer passing over a card's icon leaves nothing lit behind it", async ($, on) => {
+  world(on)
+  const ui = await mountPane($, 'terminal')
+  const colours = async (tab: string) =>
+    (await ui.findAll({ type: 'Text', in: `icon-${tab}` })).map(row => `${row.props?.color ?? ''}/${row.props?.backgroundColor ?? ''}`)
+  const before = await colours('map')
+  // A move with no leave after it, as a terminal may report a fast pointer: the icon draws the same.
+  await ui.pointer({ type: 'enter', x: 3, y: 1, in: 'icon-map' })
+  await ui.pointer({ type: 'move', x: 3, y: 1, in: 'icon-map' })
+  await showTab($, ui, 'pets')
+  expect(await colours('map')).toEqual(before)
+  // The selected card's icon is the bright one.
+  expect(await colours('pets')).not.toEqual(await colours('feats'))
+})
+
+test("a letter heard by a menu icon casts the skill shown under it", async ($, on) => {
+  const { fills } = world(on, { usage: ONE_SKILL })
+  await $.turn.complete({ answer: '', durationMs: 5, isAborted: false, turnId: 't' } as never)
+  const ui = await mountPane($, 'terminal', 40)
+  // The click that opens the skills page leaves its icon holding the keys.
+  await showTab($, ui, 'skills')
+  await ui.key({ key: 'a', in: 'icon-skills' })
+  // A letter with no skill under it, and one heard on another tab, cast nothing.
+  await ui.key({ key: 'z', in: 'icon-skills' })
+  await ui.key({ key: '1', in: 'icon-skills' })
+  await ui.key({ key: 'a', in: 'icon-spells' })
+  expect(fills).toEqual(['/commit '])
+})
+
+test('j and k scroll the window: its buttons, or keys a menu icon hears', async ($, on) => {
+  world(on)
+  for (let n = 1; n <= 15; n += 1) {
+    await $.tool.call({ tool: 'Read', file_path: `/x/f${n}.md` })
+  }
+  const ui = await mountPane($, 'terminal', 30)
+  const shown = async () => (await texts(ui)).join('|')
+  const scrollButtons = async () => (await ui.findAll({ type: 'Button' })).filter(b => String(b.props?.key ?? '').startsWith('scroll-'))
+  // Keyed as vim's, the up one dim at the top.
+  expect((await scrollButtons()).map(b => [b.props?.label, b.props?.hotkey, b.props?.dimColor])).toEqual([
+    ['▲', 'k', true],
+    ['▼', 'j', false],
+  ])
+  expect(await shown()).toContain('1–8/15')
+
+  await ui.press({ key: 'scroll-down' })
+  await ui.press({ key: 'scroll-down' })
+  expect(await shown()).toContain('3–10/15')
+  await ui.press({ key: 'scroll-up' })
+  expect(await shown()).toContain('2–9/15')
+
+  // A click on a menu icon leaves it the keys: j, k and the up and down arrows still scroll.
+  await ui.key({ key: 'j', in: 'icon-spells' })
+  await ui.key({ key: 'down', in: 'icon-spells' })
+  expect(await shown()).toContain('4–11/15')
+  await ui.key({ key: 'k', in: 'icon-spells' })
+  await ui.key({ key: 'up', in: 'icon-spells' })
+  expect(await shown()).toContain('2–9/15')
+})
+
+test('a window that shows all it has carries no scroll buttons', async ($, on) => {
+  world(on)
+  await $.tool.call({ tool: 'Read', file_path: '/x/a.md' })
+  const ui = await mountPane($, 'terminal')
+  expect((await ui.findAll({ type: 'Button' })).filter(b => String(b.props?.key ?? '').startsWith('scroll-'))).toHaveLength(0)
 })

@@ -690,13 +690,30 @@ const bagPage = async ($: EngineInterface, { view }: PageContext): Promise<Page>
   }
 }
 
+// Fills the prompt with a skill's command, or says how to cast it when the prompt cannot take it.
+const castFromPage = ($: EngineInterface, name: string) =>
+  void $.prompt
+    .fill({ text: castText(name) })
+    .then(filled => (filled.isFilled ? undefined : $.ui.toast(`Type /${name} to cast it`)))
+    .catch(() => undefined)
+
+// The skills page's letters as last drawn, letter to skill. A click on a menu icon gives that Client the keys,
+// and the skills' buttons then hear no letters; the icon hands them on and they are looked up here.
+let shownSkillKeys = new Map<string, string>()
+
 const skillsPage = async ($: EngineInterface, { ui, inner, now, progress: progressNow, offset, rows: room }: PageContext): Promise<Page> => {
   const gear = await read($, loadout)
   const rows = skillRows({ loadout: gear, progress: progressNow, casts: await read($, skillCasts), now })
-  const start = clampOffset(offset, rows.length, room)
+  const keys = skillKeys(rows, clampOffset(offset, rows.length, room), room)
+  shownSkillKeys = new Map(
+    [...keys].flatMap(([index, key]) => {
+      const row = rows[index]
+      return row?.kind === 'skill' ? [[key, row.name] as const] : []
+    }),
+  )
   return {
     subtitle: skillsSubtitle(gear, progressNow),
-    items: skillItems(ui, rows, inner, skillKeys(rows, start, room), name => void $.prompt.fill({ text: castText(name) })),
+    items: skillItems(ui, rows, inner, keys, name => castFromPage($, name)),
   }
 }
 
@@ -760,6 +777,10 @@ async function recap($: EngineInterface) {
     trophies: since === 0 ? [] : TROPHIES.filter(t => (unlocked[t.id] ?? 0) >= since).map(t => t.title),
   })
 }
+
+// Moves a window `by` rows within its items: `view` is the window as last drawn, its key, rows in all and room.
+const scrollWindow = ($: EngineInterface, view: { key: string; total: number; rows: number }, by: number) =>
+  update($, offsets, all => ({ ...all, [view.key]: clampOffset((all[view.key] ?? 0) + by, view.total, view.rows) }))
 
 export const register: Register = on => {
   // The last drawn log window; scrolling clamps against it.
@@ -1042,9 +1063,20 @@ export const register: Register = on => {
   // A card's icon Client posts `{ select }` when clicked, `{ help }` on ?; the bag and outposts Clients their rows.
   on('ui.message', async ($, e, next) => {
     if (e.requestId !== PANE) return next(e)
-    const data = (e.data ?? {}) as { select?: unknown; help?: unknown }
+    const data = (e.data ?? {}) as { select?: unknown; help?: unknown; letter?: unknown; scroll?: unknown }
     // Each card's icon Client is keyed `icon-<tab>`.
     const isMenu = e.element?.startsWith('icon-') === true
+    if (isMenu && typeof data.scroll === 'number') {
+      await scrollWindow($, layout, data.scroll)
+      return {}
+    }
+    // A letter a menu icon heard while it had the keys: on the skills page, the skill shown under that letter.
+    if (isMenu && typeof data.letter === 'string') {
+      const name = shownSkillKeys.get(data.letter)
+      const isOnSkills = (await read($, tab)) === 'skills' && !(await read($, isHelpOpen))
+      if (isOnSkills && name !== undefined) castFromPage($, name)
+      return {}
+    }
     if (isMenu && data.help === true) {
       await update($, isHelpOpen, open => !open)
       await update($, offsets, all => ({ ...all, help: 0 }))
@@ -1087,11 +1119,7 @@ export const register: Register = on => {
   // the wheel and scroll keys move the active window's items instead.
   on('ui.scroll', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
     if (layout.total <= layout.rows) return next(e)
-    const { key } = layout
-    await update($, offsets, all => ({
-      ...all,
-      [key]: clampOffset((all[key] ?? 0) + e.by, layout.total, layout.rows),
-    }))
+    await scrollWindow($, layout, e.by)
     return {}
   })
 
@@ -1180,7 +1208,7 @@ export const register: Register = on => {
           hotkey={slotKey(index)}
           {...(isTerminal ? { plain: true as const } : { variant: isActive ? ('primary' as const) : ('secondary' as const) })}
           dimColor={!isActive}
-          {...(isActive ? {} : { hover: { color: slot.color } })}
+          {...(isActive ? {} : { hover: { scope: `card-${slot.id}`, color: slot.color } })}
           onPress={() => pickTab(slot.id)}
         />
       )
@@ -1188,19 +1216,20 @@ export const register: Register = on => {
 
     // A card a slot: a rounded frame, the icon (a Client, so a click on it picks the tab) and the label button,
     // centred in a row as wide as the card.
-    // The frame lights in the slot's colour under the pointer, the surface's own hover, so the whole card
-    // lights at once; the selected card's frame is bright gold. (Heavy lines have no rounded corners.) Too narrow or short for icons,
+    // The frame, the icon's pixels and the label share the card's hover group, the surface's own hover, so the
+    // whole card lights in the slot's colour at once and goes dark when the pointer leaves; the selected card's
+    // frame is bright gold. (Heavy lines have no rounded corners.) Too narrow or short for icons,
     // and elsewhere, one row of the buttons alone.
     let menu
     if (isIconMenu) {
       const { Client } = $.ui.resolve(e)
       const ids = MENU.map(slot => slot.id)
+      // Inside the frame's two columns.
+      const inside = Math.max(0, card - 2)
       menu = (
         <Box flexDirection="row" width={width} height={menuRows} justifyContent="space-between">
           {MENU.map((slot, index) => {
             const isActive = slot.id === active
-            // Inside the frame's two columns.
-            const inside = Math.max(0, card - 2)
             const iconProps = {
               id: slot.id,
               ids,
@@ -1209,6 +1238,7 @@ export const register: Register = on => {
               icon: iconText(slot, true),
               dimIcon: iconText(slot, false),
               width: inside,
+              scope: `card-${slot.id}`,
             } satisfies MenuIconProps
             return (
               <Box
@@ -1220,7 +1250,7 @@ export const register: Register = on => {
                 borderStyle="round"
                 borderColor={isActive ? 'yellow' : 'gray'}
                 borderDimColor={!isActive}
-                {...(isActive ? {} : { hover: { borderColor: slot.color, borderDimColor: false } })}
+                {...(isActive ? {} : { hover: { scope: `card-${slot.id}`, borderColor: slot.color, borderDimColor: false } })}
               >
                 <Client key={`icon-${slot.id}`} module="./menu-client.tsx" props={iconProps} width={inside} height={ICON_ROWS} />
                 <Box flexDirection="row" width={inside} height={1} justifyContent="center">
@@ -1232,8 +1262,11 @@ export const register: Register = on => {
         </Box>
       )
     } else {
+      // The terminal's `1: SPELL` labels close up as the pane narrows, so the last ones stay on screen.
+      const labelColumns = MENU.reduce((sum, slot) => sum + slot.label.length + 3, 0)
+      const labelGap = isTerminal ? Math.max(0, Math.min(2, Math.floor((width - labelColumns) / (MENU.length - 1)))) : 2
       menu = (
-        <Box key="menu-labels" flexDirection="row" columnGap={2} height={1} width={width}>
+        <Box key="menu-labels" flexDirection="row" columnGap={labelGap} height={1} width={width}>
           {MENU.map((slot, index) => labelButton(slot, index))}
         </Box>
       )
@@ -1270,6 +1303,10 @@ export const register: Register = on => {
           width,
           ...(body === undefined ? {} : { body }),
           ...(page.actions === undefined ? {} : { actions: page.actions }),
+          scroll: {
+            up: () => void scrollWindow($, layout, -1),
+            down: () => void scrollWindow($, layout, 1),
+          },
         })}
       </Box>
     )

@@ -19,7 +19,7 @@ export const HELP_TIPS: readonly string[] = [
   '⚔ fix on a boss fills the prompt with its fix',
   '✗ and ◷ in the spell book keep the fizzled or slow casts',
   'A skill, or its letter on the skill tab, fills the prompt with its /name',
-  'The wheel scrolls the window under the menu',
+  'j and k, or the wheel, scroll the window under the menu',
 ]
 
 // The help as text, for `/hud help`.
