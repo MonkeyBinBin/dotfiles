@@ -1741,3 +1741,26 @@ test('/hud names a tab as its card shows it, in any case', async ($, on) => {
   await $.command.run({ command: 'hud', args: 'pets' } as never)
   expect((await texts(ui)).join('|')).toContain('🐾 PARTY')
 })
+
+test('reading a diff holds the window: a pick or a press in the pane stops the following', async ($, on) => {
+  world(on, { usage: ONE_SKILL })
+  // Beneath the plugin, the engine's own scroll of a window that has nothing more to show.
+  on('ui.scroll', async () => ({}) as never)
+  await $.turn.complete({ answer: '', durationMs: 5, isAborted: false, turnId: 't' } as never)
+  const ui = await mountPane($, 'terminal', 40)
+  await $.prompt.submit({ text: 'look' } as never)
+  // A press on any button in the pane, here the help page's, holds it.
+  await ui.press({ key: 'help' })
+  await ui.press({ key: 'help-back' })
+  await $.tool.call({ tool: 'Skill', skill: 'commit' } as never)
+  expect((await texts(ui)).join('|')).toContain('📖 SPELL BOOK')
+  // The wheel too, after the next message.
+  await $.prompt.submit({ text: 'again' } as never)
+  await $.ui.scroll({ component: 'Pane', requestId: 'rpg-hud', offset: 0, by: 1, bodyRows: 40, contentRows: 40, origin: { kind: 'person' } } as never)
+  await $.tool.call({ tool: 'Skill', skill: 'commit' } as never)
+  expect((await texts(ui)).join('|')).toContain('📖 SPELL BOOK')
+  // Left alone after a message, it follows.
+  await $.prompt.submit({ text: 'and again' } as never)
+  await $.tool.call({ tool: 'Skill', skill: 'commit' } as never)
+  expect((await texts(ui)).join('|')).toContain('📜 SKILLS')
+})

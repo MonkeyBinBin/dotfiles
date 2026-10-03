@@ -66,9 +66,10 @@ export function renderWindow(ui: ElementTable, props: WindowProps) {
   const inner = Math.max(0, props.width - WINDOW_CHROME_COLUMNS)
   const isScrolling = total > props.rows
   const range = `${start + 1}–${end}/${total}`
-  // With buttons the arrows are theirs, dimmed at either end: the bottom is where the offset can go no further,
-  // since tall items can leave the last rows unfilled there. Without, the gauge draws them.
-  const gauge = !isScrolling ? '' : props.scroll === undefined ? `${start > 0 ? '▲' : ' '}${end < total ? '▼' : ' '} ${range}` : range
+  // The bottom is where the offset can go no further, since tall items can leave the last rows unfilled there.
+  const isAtBottom = start >= total - props.rows
+  // With buttons the arrows are theirs, dimmed at either end; without, the gauge draws them.
+  const gauge = !isScrolling ? '' : props.scroll === undefined ? `${start > 0 ? '▲' : ' '}${isAtBottom ? ' ' : '▼'} ${range}` : range
   return (
     <Box
       flexDirection="column"
@@ -89,7 +90,7 @@ export function renderWindow(ui: ElementTable, props: WindowProps) {
         {isScrolling && props.scroll !== undefined && (
           <Box flexDirection="row" columnGap={1} marginLeft={1}>
             <Button key="scroll-up" label="▲" plain hotkey={SCROLL_UP_KEY} dimColor={start === 0} onPress={props.scroll.up} />
-            <Button key="scroll-down" label="▼" plain hotkey={SCROLL_DOWN_KEY} dimColor={start >= total - props.rows} onPress={props.scroll.down} />
+            <Button key="scroll-down" label="▼" plain hotkey={SCROLL_DOWN_KEY} dimColor={isAtBottom} onPress={props.scroll.down} />
           </Box>
         )}
         {gauge !== '' && <Text color={props.color}> {gauge}</Text>}

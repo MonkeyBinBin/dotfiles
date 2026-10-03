@@ -351,19 +351,21 @@ async function inspectChange($: EngineInterface, path: string, from: Pick<MapVie
   await update($, inspect, () => ({ path, lines: lines.slice(0, DIFF_LINES), isCut: lines.length > DIFF_LINES }))
 }
 
-// Adds a pet to the party and counts the summon; a pet already there under the same agent (one met through its
-// tool calls before its spawn answered) is replaced, keeping what it has done, and not counted twice.
 // Following: a sent message turns the window to the spell book, where its tool calls show, and then to the tab
-// of what the session does: a skill cast to the skills, a summoned pet to the party, a git command to the map. A tab the person picks holds the
-// window until their next message; `/hud follow` turns it off, kept across sessions.
+// of what the session does: a skill cast to the skills, a summoned pet to the party, a git command to the map.
+// A tab the person picks, or anything they do in the pane, holds the window until their next message;
+// `/hud follow` turns it off, kept across sessions.
 const FOLLOW_KEY = 'follow'
 const follow = { isOn: true, isHeld: false }
 
 async function followTo($: EngineInterface, to: Tab) {
   if (!follow.isOn || follow.isHeld || (await read($, isHelpOpen))) return
-  await update($, tab, current => (current === to ? current : to))
+  // A tab picked while the help check was pending still holds the window.
+  await update($, tab, current => (follow.isHeld ? current : to))
 }
 
+// Adds a pet to the party and counts the summon; a pet already there under the same agent (one met through its
+// tool calls before its spawn answered) is replaced, keeping what it has done, and not counted twice.
 async function joinParty($: EngineInterface, pet: Pet) {
   const before = (await read($, pets)).find(one => one.agentId !== undefined && one.agentId === pet.agentId)
   const joined = before === undefined ? pet : { ...pet, actions: before.actions, lastTool: before.lastTool, lastSummary: before.lastSummary, startedAt: before.startedAt }
@@ -895,6 +897,8 @@ export const register: Register = on => {
 
   on('prompt.submit', async ($, e, next) => {
     await update($, waitingFor, () => null)
+    // The HUD's own command is no message: `/hud map` and the like set the window themselves.
+    if (skillOfPrompt(e.text, [COMMAND]) === COMMAND) return next(e)
     // A new message lets the window follow again, whatever tab was picked during the last.
     follow.isHeld = false
     const known = (await read($, loadout)).skills.map(slot => slot.name)
@@ -1098,8 +1102,16 @@ export const register: Register = on => {
   })
 
   // A card's icon Client posts `{ select }` when clicked, `{ help }` on ?; the bag and outposts Clients their rows.
+  // The person at work in the pane, a press on any of its buttons (their hotkeys too), a row picked in a Client
+  // or the wheel, holds the window where they are until their next message: a diff being read stays put.
+  on('ui.press', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
+    follow.isHeld = true
+    return next(e)
+  })
+
   on('ui.message', async ($, e, next) => {
     if (e.requestId !== PANE) return next(e)
+    follow.isHeld = true
     const data = (e.data ?? {}) as { select?: unknown; help?: unknown; letter?: unknown; scroll?: unknown }
     // Each card's icon Client is keyed `icon-<tab>`.
     const isMenu = e.element?.startsWith('icon-') === true
@@ -1121,7 +1133,6 @@ export const register: Register = on => {
       return {}
     }
     if (isMenu && typeof data.select === 'string' && isTab(data.select)) {
-      follow.isHeld = true
       const picked = data.select
       await update($, tab, () => picked)
       await update($, isHelpOpen, () => false)
@@ -1157,6 +1168,7 @@ export const register: Register = on => {
   // Every window draws only what fits, so the engine has nothing to scroll:
   // the wheel and scroll keys move the active window's items instead.
   on('ui.scroll', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
+    follow.isHeld = true
     if (layout.total <= layout.rows) return next(e)
     await scrollWindow($, layout, e.by)
     return {}
@@ -1228,7 +1240,6 @@ export const register: Register = on => {
     // Each slot's label is a button carrying its number as a hotkey, so once the pane has the keys (a click,
     // ctrl+x tab) the number picks the tab; Tab and Enter reach it as well.
     const pickTab = (id: Tab) => {
-      follow.isHeld = true
       void update($, tab, () => id)
       void update($, isHelpOpen, () => false)
     }
