@@ -12,6 +12,7 @@ export const STATUS_MARKS: Record<ToolCallStatus, { glyph: string; color: string
   run: { glyph: '✦', color: 'yellow' },
   ok: { glyph: '✓', color: 'green' },
   err: { glyph: '✗', color: 'red' },
+  deny: { glyph: '⊘', color: 'gray' },
 }
 
 // Each tool is a school of magic: its rune and colour.

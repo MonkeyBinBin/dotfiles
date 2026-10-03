@@ -1,4 +1,5 @@
-export type ToolCallStatus = 'run' | 'ok' | 'err'
+// `deny`: refused before it ran (a permission answered no); shown, but no fizzle.
+export type ToolCallStatus = 'run' | 'ok' | 'err' | 'deny'
 
 export type ToolCall = {
   id: string
@@ -20,13 +21,16 @@ export type Pet = {
   description: string
   startedAt: number
   endedAt?: number
-  status: ToolCallStatus
+  // A pet is only spawned by a call that ran, so it is never refused.
+  status: Exclude<ToolCallStatus, 'deny'>
   actions: number
   lastTool?: string
   lastSummary?: string
   loot?: string
   // The outpost (worktree) the pet works in, when not the session's own folder.
   camp?: string
+  // Sent with run_in_background: its return is announced, since nothing waits on it.
+  isBackground?: boolean
 }
 
 // Context window and spend, as the status line reports them.

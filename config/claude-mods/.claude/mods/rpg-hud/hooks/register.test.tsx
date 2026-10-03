@@ -3,7 +3,7 @@ import type { Engine } from 'claude-code/testing'
 
 import { HERO_FRAMES } from './hero-cells'
 import { HURT_MS, pickFrame, pickMood } from './anim'
-import { bossFor, countFailures, fightBoss } from './boss'
+import { bossFor, countFailures, fightBoss, runsGit } from './boss'
 import { GIT_STATUS, diffArgv, isLinear, parseBag, parseGraphLine, parseStatus, parseWorktrees, shortAge } from './git'
 import { campsOn } from './map'
 import { parseDiff, rarityOf, splitBar } from './diff'
@@ -11,7 +11,7 @@ import { countPatch, patchSource } from './edit-card'
 import { trailStops } from './map'
 import { gaugeColor, heroStats, manaLeft, normalizeCall, rankFor, statusLayout } from './hero'
 import { rosterOrder } from './pets'
-import { campFor, skillOfPrompt, touchFile } from './register'
+import { MANA_ALARMS, campFor, isRefusal, manaAlarm, returnToast, skillOfPrompt, touchFile } from './register'
 import { groupSkills, masteryStars } from './skills'
 import { EMPTY_PROGRESS, newlyEarned } from './trophies'
 import { barFill, oneLine } from './util'
@@ -49,9 +49,11 @@ const NO_GIT = { exitCode: 128, stdout: '', stderr: 'not a git repository', isSt
 
 const fail = (text: string) => ({ result: text, text, isError: true as const })
 
+type ToolAnswer = ReturnType<typeof fail> | { deny: string } | { result: { text: string } }
+
 type World = {
   // Answers each tool call; every call succeeds when absent.
-  tool?: (e: { tool: string; command?: string }) => ReturnType<typeof fail> | undefined
+  tool?: (e: { tool: string; command?: string; tool_use_id?: string; description?: string }) => ToolAnswer | undefined | Promise<ToolAnswer | undefined>
   git?: (argv: readonly string[]) => { stdout: string } | undefined
   usage?: unknown
   // What the store holds at the start: another session's progress.
@@ -89,7 +91,7 @@ const world = (on: On, options: World = {}) => {
     const answer = options.git?.(argv)
     return { value: answer === undefined ? NO_GIT : { ...NO_GIT, exitCode: 0, stderr: '', ...answer } }
   })
-  on('tool.call', async (_$, e) => options.tool?.(e as never) ?? { result: { text: 'ok' } })
+  on('tool.call', async (_$, e) => ((await options.tool?.(e as never)) ?? { result: { text: 'ok' } }) as never)
   return { clock, store, fills, toasts }
 }
 
@@ -455,8 +457,10 @@ test('the sparkle sweeps from left to right', () => {
 })
 
 test('the first cast unlocks a feat and saves the progress', async ($, on) => {
-  const { store } = world(on)
+  const { clock, store } = world(on)
   await $.tool.call({ tool: 'Read', file_path: '/x/a.md' })
+  // The save runs beside the call, never in its way.
+  await clock.advance(0)
   expect(Object.keys((store.get('progress') as { unlocked: Record<string, number> }).unlocked)).toContain('first-cast')
 
   const ui = await mountPane($, 'desktop')
@@ -1013,8 +1017,9 @@ test('git prints paths as written, and a control character in one cannot break t
 })
 
 test("progress adds to what other sessions saved, never overwrites it", async ($, on) => {
-  const { store } = world(on, { stored: { progress: { ...EMPTY_PROGRESS, totalCalls: 50, unlocked: { 'first-cast': 1 } } } })
+  const { clock, store } = world(on, { stored: { progress: { ...EMPTY_PROGRESS, totalCalls: 50, unlocked: { 'first-cast': 1 } } } })
   await $.tool.call({ tool: 'Read', file_path: '/x/a.md' })
+  await clock.advance(0)
   const saved = store.get('progress') as { totalCalls: number; unlocked: Record<string, number> }
   expect(saved.totalCalls).toBe(51)
   expect(saved.unlocked['first-cast']).toBe(1)
@@ -1123,4 +1128,106 @@ test('a store that cannot be read is never overwritten', async ($, on) => {
   const ui = await mountPane($, 'desktop')
   await showTab($, ui, 'feats', 'desktop')
   expect((await texts(ui)).join('|')).toContain('1/15 earned')
+})
+
+test('only a command that starts git refreshes the map', () => {
+  expect(runsGit('git status')).toBe(true)
+  expect(runsGit('cd app && git commit -m "x"')).toBe(true)
+  expect(runsGit('GIT_PAGER=cat /usr/bin/git log')).toBe(true)
+  expect(runsGit('if git diff --quiet; then echo clean; fi')).toBe(true)
+  expect(runsGit('for f in a b; do git add "$f"; done')).toBe(true)
+  expect(runsGit('(cd app && git pull)')).toBe(true)
+  expect(runsGit('! git merge-base --is-ancestor a b')).toBe(true)
+  expect(runsGit('grep git README.md')).toBe(false)
+  expect(runsGit('cat .gitignore')).toBe(false)
+  expect(runsGit('echo "use git"')).toBe(false)
+})
+
+test("a refusal is the person's choice, not a fizzle", () => {
+  expect(isRefusal({ deny: 'blocked by a hook' })).toBe(true)
+  const no = "The user doesn't want to proceed with this tool use. The tool use was rejected."
+  expect(isRefusal({ isError: true, text: no })).toBe(true)
+  expect(isRefusal({ isError: true, text: 'Exit code 1' })).toBe(false)
+  expect(isRefusal({ text: no })).toBe(false)
+})
+
+for (const surface of ['terminal', 'desktop'] as const) {
+  test(`a refused call costs no heart and keeps the combo on ${surface}`, async ($, on) => {
+    world(on, { tool: e => (e.tool === 'Bash' ? { deny: 'not now' } : undefined) })
+    await $.tool.call({ tool: 'Read', file_path: '/x/a.md' })
+    await $.tool.call({ tool: 'Bash', command: 'npm test' })
+    await $.tool.call({ tool: 'Read', file_path: '/x/b.md' })
+
+    const ui = await mountPane($, surface)
+    const shown = (await texts(ui)).join('|')
+    expect(shown).toContain('5/5')
+    expect(shown).toContain('⊘')
+    // A refused check run summons no boss.
+    expect(shown).not.toContain('☠')
+  })
+}
+
+test('a refused call earns no XP and no lifetime count', async ($, on) => {
+  const { clock, store } = world(on, { tool: e => (e.tool === 'Bash' ? { deny: 'not now' } : undefined) })
+  await $.tool.call({ tool: 'Read', file_path: '/x/a.md' })
+  await $.tool.call({ tool: 'Bash', command: 'rm -rf build' })
+  await $.tool.call({ tool: 'Read', file_path: '/x/b.md' })
+  await clock.advance(0)
+  const saved = store.get('progress') as { totalCalls: number; bashCalls: number }
+  expect(saved.totalCalls).toBe(2)
+  expect(saved.bashCalls).toBe(0)
+
+  const ui = await mountPane($, 'desktop')
+  expect((await texts(ui)).join('|')).toContain('2 casts')
+})
+
+test('a burst of calls all count, however the saves batch them', async ($, on) => {
+  const { clock, store } = world(on)
+  await Promise.all([1, 2, 3, 4, 5].map(n => $.tool.call({ tool: 'Read', file_path: `/x/${n}.md` })))
+  await clock.advance(0)
+  expect((store.get('progress') as { totalCalls: number }).totalCalls).toBe(5)
+})
+
+test('mana alarms sound once each, and again after a compact', () => {
+  expect(MANA_ALARMS).toEqual([80, 90])
+  expect(manaAlarm(50, 0)).toEqual({ warned: 0 })
+  expect(manaAlarm(82, 0)).toEqual({ alarm: 80, warned: 80 })
+  expect(manaAlarm(85, 80)).toEqual({ warned: 80 })
+  expect(manaAlarm(95, 80)).toEqual({ alarm: 90, warned: 90 })
+  // Straight past both: the higher one alone.
+  expect(manaAlarm(93, 0)).toEqual({ alarm: 90, warned: 90 })
+  // A compact empties the context; filling it again warns again.
+  expect(manaAlarm(30, 90)).toEqual({ warned: 0 })
+  expect(manaAlarm(81, 0)).toEqual({ alarm: 80, warned: 80 })
+})
+
+test('the mana alarm toasts when the context fills', async ($, on) => {
+  const { toasts } = world(on, { usage: { startedAt: 0, rateLimits: [], context: { window: 200000, percent: 84 } } })
+  await $.tool.call({ tool: 'Read', file_path: '/x/a.md' })
+  await $.tool.call({ tool: 'Read', file_path: '/x/b.md' })
+  expect(toasts.filter(text => text.startsWith('🔮'))).toEqual(['🔮 Mana low: context 80% full. /compact to restore it'])
+})
+
+test('a background pet announces its return; a foreground one does not', async ($, on) => {
+  let spawned = 0
+  const { toasts } = world(on, {
+    // The Agent tool spawns its pet before it answers, as core's does.
+    tool: async e => {
+      if (e.tool !== 'Agent') return undefined
+      spawned += 1
+      await $.agent.spawn({ prompt: 'go', description: e.description, subagentType: 'Explore', tool_use_id: e.tool_use_id } as never)
+      return { result: { text: 'ok' } }
+    },
+  })
+  on('agent.spawn', async () => ({ model: 'claude-haiku-4-5', agentId: `agent-${spawned}` }))
+  await $.tool.call({ tool: 'Agent', tool_use_id: 'tu-1', description: 'Map the repo', prompt: 'go', run_in_background: true } as never)
+  await $.tool.call({ tool: 'Agent', tool_use_id: 'tu-2', description: 'Read docs', prompt: 'go' } as never)
+  await $.turn.complete({ agentId: 'agent-1', answer: 'Mapped 12 modules', durationMs: 5, isAborted: false, turnId: 't' } as never)
+  await $.turn.complete({ agentId: 'agent-2', answer: 'Docs read', durationMs: 5, isAborted: false, turnId: 't' } as never)
+  expect(toasts.filter(text => text.includes('returned'))).toEqual(['🐾 Scout Hawk returned: Mapped 12 modules'])
+})
+
+test('a fallen pet says what it was sent to do', () => {
+  expect(returnToast({ kind: 'Explore', description: 'Map the repo', loot: '' }, 'err')).toBe('🐾 Scout Hawk fell: Map the repo')
+  expect(returnToast({ kind: 'Explore', description: 'Map the repo' }, 'ok')).toBe('🐾 Scout Hawk returned: Map the repo')
 })

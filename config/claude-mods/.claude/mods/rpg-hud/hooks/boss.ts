@@ -29,6 +29,8 @@ const PACKAGE_MANAGERS = new Set(['npm', 'pnpm', 'yarn', 'bun'])
 const LAUNCHERS = new Set(['npx', 'bunx', 'pnpx', 'time', 'env', 'sudo', 'nice'])
 // Environment managers that start the program after `run`: `uv run pytest`, `poetry run pytest`.
 const RUN_WRAPPERS = new Set(['uv', 'poetry', 'pipenv', 'hatch', 'pdm', 'rye'])
+// Shell words a simple command may start with before its program: `if git diff --quiet`, `do git add "$f"`.
+const SHELL_WORDS = new Set(['if', 'then', 'else', 'elif', 'while', 'until', 'do', '!', '{', '(', 'exec', 'command'])
 // Flags that take the next word as their value: `pnpm --filter web test`, `npm --prefix app test`.
 const VALUED_FLAGS = new Set(['--filter', '-F', '-C', '--cwd', '--dir', '--prefix', '-w', '--workspace', '-p', '--package'])
 
@@ -51,19 +53,31 @@ const scriptKind = (script: string): string | undefined => {
   return undefined
 }
 
-// The check one simple command runs, read from the program it starts, never from words in its arguments:
-// `grep test` or `ls tests/` run no check.
-export const kindOf = (segment: string): string | undefined => {
-  let words = segment.trim().split(/\s+/).filter(word => word.length > 0 && !/^\w+=/.test(word))
+// The program one simple command starts and its arguments, past env assignments, launchers and wrappers.
+export const programOf = (segment: string): { program: string; rest: string[] } => {
+  // A subshell or group opener glued to the program, `(git status`, is dropped.
+  let words = segment.trim().replace(/^[({]+/, '').split(/\s+/).filter(word => word.length > 0 && !/^\w+=/.test(word))
   for (;;) {
     const [head = '', next = ''] = words
-    if (LAUNCHERS.has(head)) words = dropFlags(words.slice(1))
+    if (SHELL_WORDS.has(head)) words = words.slice(1)
+    else if (LAUNCHERS.has(head)) words = dropFlags(words.slice(1))
     else if (RUN_WRAPPERS.has(head) && next === 'run') words = dropFlags(words.slice(2))
     else if (PACKAGE_MANAGERS.has(head) && (next === 'exec' || next === 'dlx')) words = dropFlags(words.slice(2))
     else break
   }
-  const program = (words[0] ?? '').replace(/^.*\//, '')
-  const rest = words.slice(1)
+  return { program: (words[0] ?? '').replace(/^.*\//, ''), rest: words.slice(1) }
+}
+
+// A shell command's simple commands: its `&&`, `||`, `;`, `|` and newline-separated parts.
+const segmentsOf = (command: string): string[] => command.split(/&&|\|\||;|\||\n/)
+
+// Whether any part of a shell command starts `git` itself: `grep git` or `cat .gitignore` do not.
+export const runsGit = (command: string): boolean => segmentsOf(command).some(segment => programOf(segment).program === 'git')
+
+// The check one simple command runs, read from the program it starts, never from words in its arguments:
+// `grep test` or `ls tests/` run no check.
+export const kindOf = (segment: string): string | undefined => {
+  const { program, rest } = programOf(segment)
   if (RUNNERS[program] !== undefined) return RUNNERS[program]
   if (/^python3?$/.test(program) && rest[0] === '-m') return RUNNERS[rest[1] ?? '']
   if (program === 'make') return scriptKind(dropFlags(rest)[0] ?? '')
@@ -79,7 +93,7 @@ export const kindOf = (segment: string): string | undefined => {
 
 // The check a shell command runs, if any: the first one among its `&&`, `||`, `;` and `|` parts.
 export const bossFor = (command: string): { kind: string; name: string } | undefined => {
-  for (const segment of command.split(/&&|\|\||;|\||\n/)) {
+  for (const segment of segmentsOf(command)) {
     const kind = kindOf(segment)
     if (kind !== undefined) return { kind, name: BOSS_NAMES[kind] ?? 'Bug Hydra' }
   }

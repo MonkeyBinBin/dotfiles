@@ -20,7 +20,7 @@ import type {
   Vitals,
 } from '../types'
 import { FRAME_MS, HERO_CELLS, HURT_MS, PET_TICKS, anim, pickFrame, pickMood } from './anim'
-import { fightBoss } from './boss'
+import { fightBoss, runsGit } from './boss'
 import type { BagRow, BagProps } from './bag-client'
 import { GIT_LOG, GIT_NUMSTAT, GIT_REMOTES, GIT_STATUS, GIT_WORKTREES, diffArgv, outpostArgv, parseBag, parseStatus, parseWorktrees, shortAge } from './git'
 import type { OutpostRow, OutpostsProps } from './outposts-client'
@@ -103,6 +103,13 @@ const NIGHT_HOURS = 4
 
 const firstLine = (text: string): string => text.split('\n').find(line => line.trim().length > 0)?.trim() ?? ''
 
+// Claude Code's answer when the person says no at a permission prompt.
+const REFUSAL = /^The user doesn't want to (?:proceed|take this action)/
+
+// A call refused before it ran: a hook's deny, or the person's no at a permission prompt. A choice, not a fizzle.
+export const isRefusal = (ran: { deny?: string; isError?: boolean; text?: string }): boolean =>
+  ran.deny !== undefined || (ran.isError === true && REFUSAL.test(ran.text ?? ''))
+
 // A tool's touch on a file, counted under the path relative to the session's folder.
 export const touchFile = (list: readonly TouchedFile[], path: string, isEdit: boolean): TouchedFile[] => {
   const found = list.find(file => file.path === path) ?? { path, reads: 0, edits: 0 }
@@ -116,32 +123,46 @@ export const skillOfPrompt = (text: string, known: readonly string[]): string | 
   return name !== undefined && known.includes(name) ? name : undefined
 }
 
-// Applies `change` to the lifetime progress, saves it, and celebrates any trophy it earns.
-// One change after another: each reads what the last one wrote.
+// Changes waiting to be saved, and the saves, one after another: each reads what the last one wrote.
+let pendingChanges: ((p: Progress) => Progress)[] = []
 let progressQueue: Promise<void> = Promise.resolve()
 
-// Applies `change` to the lifetime progress and celebrates any trophy it earns. The store is shared by every
-// session, so the change applies to what the store holds now, other sessions' work included, never to this
-// session's copy; this session's copy then follows the store.
+// Applies every waiting change to the lifetime progress in one store read and write, and celebrates any trophy
+// they earn. The store is shared by every session, so the changes apply to what the store holds now, other
+// sessions' work included, never to this session's copy; this session's copy then follows the store.
+async function saveProgress($: EngineInterface) {
+  if (pendingChanges.length === 0) return
+  const changes = pendingChanges
+  pendingChanges = []
+  const now = await $.clock.now()
+  // A store that cannot be read is never written: building on nothing would erase every session's progress.
+  // This session's copy takes the changes alone until the store answers again.
+  const read_ = await $.store.get(PROGRESS_KEY).then(
+    value => ({ isRead: true, value: value as Partial<Progress> | undefined }),
+    () => ({ isRead: false, value: undefined }),
+  )
+  const base = read_.isRead ? read_.value : await read($, progress)
+  let next = changes.reduce((p, change) => change(p), { ...EMPTY_PROGRESS, ...base })
+  const fresh = newlyEarned(next)
+  if (fresh.length > 0) next = { ...next, unlocked: { ...next.unlocked, ...Object.fromEntries(fresh.map(t => [t.id, now])) } }
+  if (read_.isRead) {
+    // A failed write keeps the changes for the next save rather than dropping the whole batch.
+    const isSaved = await $.store.set(PROGRESS_KEY, next).then(() => true, () => false)
+    if (!isSaved) {
+      pendingChanges = [...changes, ...pendingChanges]
+      return
+    }
+  }
+  await update($, progress, () => next)
+  for (const trophy of fresh) $.ui.toast(`🏆 Trophy unlocked: ${trophy.title}`)
+}
+
+// Queues `change` to the lifetime progress. Changes made while a save runs wait for the next one, which takes
+// them all at once, so a burst of tool calls costs one store round trip, not one each. Never rejects: a caller
+// on the tool path need not wait.
 function advance($: EngineInterface, change: (p: Progress) => Progress): Promise<void> {
-  progressQueue = progressQueue
-    .then(async () => {
-      const now = await $.clock.now()
-      // A store that cannot be read is never written: building on nothing would erase every session's progress.
-      // This session's copy takes the change alone until the store answers again.
-      const read_ = await $.store.get(PROGRESS_KEY).then(
-        value => ({ isRead: true, value: value as Partial<Progress> | undefined }),
-        () => ({ isRead: false, value: undefined }),
-      )
-      const base = read_.isRead ? read_.value : await read($, progress)
-      let next = change({ ...EMPTY_PROGRESS, ...base })
-      const fresh = newlyEarned(next)
-      if (fresh.length > 0) next = { ...next, unlocked: { ...next.unlocked, ...Object.fromEntries(fresh.map(t => [t.id, now])) } }
-      if (read_.isRead) await $.store.set(PROGRESS_KEY, next)
-      await update($, progress, () => next)
-      for (const trophy of fresh) $.ui.toast(`🏆 Trophy unlocked: ${trophy.title}`)
-    })
-    .catch(() => undefined)
+  pendingChanges.push(change)
+  progressQueue = progressQueue.then(() => saveProgress($)).catch(() => undefined)
   return progressQueue
 }
 
@@ -150,14 +171,29 @@ async function loadProgress($: EngineInterface) {
   await update($, progress, () => ({ ...EMPTY_PROGRESS, ...stored }))
 }
 
+// How full the context gets before mana runs low, warned once each until a compact or /clear empties it again.
+export const MANA_ALARMS = [80, 90] as const
+
+// The alarm `percent` sounds after `warned` (the last alarm sounded), and the alarm to remember next. Falling
+// below an alarm forgets it, so a context filled again after a compact warns again.
+export const manaAlarm = (percent: number, warned: number): { alarm?: number; warned: number } => {
+  const reached = MANA_ALARMS.filter(level => percent >= level).at(-1) ?? 0
+  return reached > warned ? { alarm: reached, warned: reached } : { warned: Math.min(warned, reached) }
+}
+
+// The last alarm this session sounded.
+let manaWarned = 0
+
 async function refreshVitals($: EngineInterface) {
   const usage = await $.session.usage().catch(() => undefined)
   if (usage === undefined) return
   const contextPercent = usage.context.percent
   await update($, vitals, () => ({ contextPercent, usd: usage.cost?.usd }))
-  if (contextPercent !== undefined) {
-    await advance($, p => ({ ...p, peakContext: Math.max(p.peakContext, Math.round(contextPercent)) }))
-  }
+  if (contextPercent === undefined) return
+  const { alarm, warned } = manaAlarm(contextPercent, manaWarned)
+  manaWarned = warned
+  if (alarm !== undefined) $.ui.toast(`🔮 Mana low: context ${alarm}% full. /compact to restore it`)
+  void advance($, p => ({ ...p, peakContext: Math.max(p.peakContext, Math.round(contextPercent)) }))
 }
 
 // The skills and MCP servers the context lists, from the free local estimate of /context.
@@ -307,7 +343,7 @@ async function joinParty($: EngineInterface, pet: Pet) {
   )
   if (before !== undefined) return
   const out = (await read($, pets)).filter(one => one.status === 'run').length
-  await advance($, p => ({ ...p, petsSummoned: p.petsSummoned + 1, maxPetsAtOnce: Math.max(p.maxPetsAtOnce, out) }))
+  void advance($, p => ({ ...p, petsSummoned: p.petsSummoned + 1, maxPetsAtOnce: Math.max(p.maxPetsAtOnce, out) }))
   $.ui.toast(`🐾 ${speciesFor(pet.kind).name} summoned: ${pet.description}`)
 }
 
@@ -369,18 +405,31 @@ async function chooseClass($: EngineInterface, id: string) {
 async function castSkill($: EngineInterface, name: string) {
   const now = await $.clock.now()
   await update($, skillCasts, casts => ({ ...casts, [name]: now }))
-  await advance($, p => ({ ...p, skillUses: { ...p.skillUses, [name]: (p.skillUses[name] ?? 0) + 1 } }))
+  void advance($, p => ({ ...p, skillUses: { ...p.skillUses, [name]: (p.skillUses[name] ?? 0) + 1 } }))
 }
 
-async function finishPet($: EngineInterface, match: (pet: Pet) => boolean, status: ToolCallStatus, answer: string) {
+// The toast a background pet's return raises: what it brought back, or that it fell.
+export const returnToast = (pet: Pick<Pet, 'kind' | 'description' | 'loot'>, status: Pet['status']): string => {
+  const name = speciesFor(pet.kind).name
+  if (status !== 'ok') return `🐾 ${name} fell: ${pet.description}`
+  return `🐾 ${name} returned: ${pet.loot || pet.description}`
+}
+
+async function finishPet($: EngineInterface, match: (pet: Pet) => boolean, status: Pet['status'], answer: string) {
   const now = await $.clock.now()
-  await update($, pets, list =>
-    list.map(pet =>
-      match(pet) && pet.status === 'run'
-        ? { ...pet, status, endedAt: now, loot: firstLine(answer) || pet.loot }
-        : pet,
-    ),
-  )
+  const finished: Pet[] = []
+  await update($, pets, list => {
+    // An update may run its change more than once; only the last run's pets count.
+    finished.length = 0
+    return list.map(pet => {
+      if (!match(pet) || pet.status !== 'run') return pet
+      const done = { ...pet, status, endedAt: now, loot: firstLine(answer) || pet.loot }
+      finished.push(done)
+      return done
+    })
+  })
+  // A foreground pet's answer arrives as the call's result; only a background one needs announcing.
+  for (const pet of finished) if (pet.isBackground === true) $.ui.toast(returnToast(pet, status))
 }
 
 // The pane's animation: blits each tick, stops once a Raster refuses.
@@ -452,6 +501,8 @@ export const register: Register = on => {
   let turnHadError = false
   // Agent calls asked to run in a worktree of their own, by tool_use_id, until their spawn.
   const isolated = new Set<string>()
+  // Agent calls sent to run in the background, by tool_use_id, until their spawn.
+  const background = new Set<string>()
   // Subagents being looked up in the agent list, so parallel tool calls of one add it once.
   const discovering = new Set<string>()
 
@@ -532,6 +583,7 @@ export const register: Register = on => {
   on('agent.spawn', async ($, e, next) => {
     const ran = await next(e)
     const isIsolated = isolated.delete(e.tool_use_id)
+    const isBackground = background.delete(e.tool_use_id)
     if (ran.agentId === undefined) return ran
     const now = await $.clock.now()
     // A pet sent to its own worktree, or to a folder outside the repository, camps there.
@@ -545,6 +597,7 @@ export const register: Register = on => {
       status: 'run',
       actions: 0,
       ...(camp === undefined ? {} : { camp }),
+      ...(isBackground ? { isBackground } : {}),
     }
     await joinParty($, pet)
     return ran
@@ -556,7 +609,10 @@ export const register: Register = on => {
     const summary = summarize(e)
     const call: ToolCall = { id: e.tool_use_id, tool: e.tool, summary, startedAt, status: 'run' }
 
+    // A foreground Agent call returns with its pet's answer; a background one returns at once.
+    const isBackground = (e as { run_in_background?: unknown }).run_in_background === true
     if (e.tool === 'Agent' && (e as { isolation?: unknown }).isolation === 'worktree') isolated.add(e.tool_use_id)
+    if (e.tool === 'Agent' && isBackground) background.add(e.tool_use_id)
     if (isMain) {
       await update($, calls, list => [...list, call].slice(-200))
       await update($, castCount, count => count + 1)
@@ -579,35 +635,39 @@ export const register: Register = on => {
       ran = await next(e)
     } finally {
       if (isMain) anim.running -= 1
-      // An Agent call that never spawned (refused, interrupted) leaves no isolation mark behind.
-      if (e.tool === 'Agent') isolated.delete(e.tool_use_id)
+      // An Agent call that never spawned (refused, interrupted) leaves no mark behind.
+      if (e.tool === 'Agent') {
+        isolated.delete(e.tool_use_id)
+        background.delete(e.tool_use_id)
+      }
     }
-    const isError = ran.deny !== undefined || ran.isError === true
-    const status: ToolCallStatus = isError ? 'err' : 'ok'
+    // A refused call never ran: the hero takes no hurt, the combo and the turn's streak stand.
+    const isRefused = isRefusal(ran)
+    const isError = !isRefused && ran.isError === true
+    const status: ToolCallStatus = isRefused ? 'deny' : isError ? 'err' : 'ok'
 
     // The world reacts to every loop's calls: files explored, bosses fought.
     // NotebookEdit names its file `notebook_path`.
     const fields = e as { file_path?: unknown; notebook_path?: unknown }
     const filePath = fields.file_path ?? fields.notebook_path
-    if (typeof filePath === 'string' && (e.tool === 'Read' || EDIT_TOOLS.has(e.tool))) {
+    if (typeof filePath === 'string' && !isRefused && (e.tool === 'Read' || EDIT_TOOLS.has(e.tool))) {
       const cwd = await $.session.cwd()
       const path = filePath.startsWith(`${cwd}/`) ? filePath.slice(cwd.length + 1) : filePath
       await update($, touched, list => touchFile(list, path, EDIT_TOOLS.has(e.tool)))
       if (EDIT_TOOLS.has(e.tool)) void refreshMap($, 'files').catch(() => undefined)
     }
-    if (e.tool === 'Bash') {
+    if (e.tool === 'Bash' && !isRefused) {
       const command = e.command
-      const output = ran.deny ?? ran.text ?? ''
-      const fight = fightBoss(await read($, boss), command, isError, output)
+      const fight = fightBoss(await read($, boss), command, isError, ran.text ?? '')
       await update($, boss, () => fight.boss)
       if (fight.event === 'appear' && fight.boss !== null) {
         $.ui.toast(`☠ ${fight.boss.name} appears! HP ${fight.boss.hp}`)
       }
       if (fight.event === 'defeat') {
         $.ui.toast('⚔ Boss defeated!')
-        await advance($, p => ({ ...p, bossesDefeated: p.bossesDefeated + 1 }))
+        void advance($, p => ({ ...p, bossesDefeated: p.bossesDefeated + 1 }))
       }
-      if (/\bgit\b/.test(command)) void refreshMap($).catch(() => undefined)
+      if (runsGit(command)) void refreshMap($).catch(() => undefined)
     }
 
     if (!isMain) return ran
@@ -619,25 +679,29 @@ export const register: Register = on => {
       turnHadError = true
     }
     await update($, calls, list => list.map(one => (one.id === call.id ? { ...normalizeCall(one), ms, status } : one)))
-    await update($, combo, current => {
+    if (!isRefused) await update($, combo, current => {
       const streak = isError ? 0 : current.current + 1
       return { current: streak, best: Math.max(current.best, streak) }
     })
 
-    // A foreground Agent call returns with its pet's answer; a background one returns at once.
-    const isBackground = (e as { run_in_background?: unknown }).run_in_background === true
-    if (e.tool === 'Agent' && !isBackground) {
-      await finishPet($, pet => pet.id === call.id, status, ran.deny ?? ran.text ?? '')
+    if (e.tool === 'Agent' && !isBackground && !isRefused) {
+      await finishPet($, pet => pet.id === call.id, isError ? 'err' : 'ok', ran.text ?? '')
     }
-    if (e.tool === 'Skill') {
+    if (e.tool === 'Skill' && !isRefused) {
       const skill = (e as { skill?: unknown }).skill
       if (typeof skill === 'string') await castSkill($, skill)
+    }
+
+    // A refused call never ran: it gives back the cast counted at its start and earns no lifetime count or level.
+    if (isRefused) {
+      await update($, castCount, count => count - 1)
+      return ran
     }
 
     const total = await read($, castCount)
     const best = (await read($, combo)).best
     const isNight = new Date(endedAt).getHours() < NIGHT_HOURS
-    await advance($, p => ({
+    void advance($, p => ({
       ...p,
       totalCalls: p.totalCalls + 1,
       bashCalls: p.bashCalls + (e.tool === 'Bash' ? 1 : 0),
