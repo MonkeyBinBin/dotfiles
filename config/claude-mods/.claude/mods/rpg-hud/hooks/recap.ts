@@ -14,7 +14,6 @@ export type RecapData = {
   boss: Boss | null
   touched: readonly TouchedFile[]
   usd?: number
-  budget?: number
   contextPercent?: number
   // Titles of the trophies unlocked since the session started.
   trophies: readonly string[]
@@ -61,10 +60,7 @@ export const recapText = (data: RecapData): string => {
   }
 
   const purse: string[] = []
-  if (data.usd !== undefined) {
-    const spent = `⛁ $${data.usd.toFixed(2)}`
-    purse.push(data.budget === undefined ? spent : `${spent} of $${data.budget.toFixed(2)}`)
-  }
+  if (data.usd !== undefined) purse.push(`⛁ $${data.usd.toFixed(2)}`)
   if (data.contextPercent !== undefined) purse.push(`🔮 context ${Math.round(data.contextPercent)}% full`)
   if (purse.length > 0) lines.push(purse.join(' · '))
 

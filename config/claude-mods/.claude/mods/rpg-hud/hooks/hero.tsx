@@ -87,18 +87,17 @@ export type StatusData = {
   camp?: string
   isFlashing: boolean
   width: number
-  // The spend past which the gold turns red.
-  budget?: number
   // The tool the session waits on the person for: a permission prompt, or a question.
   waitingFor?: string
+  // Opens or closes the help page; the name row then carries a ? for it.
+  onHelp?: () => void
   // Fills the prompt with the boss's fix; the boss row then carries a button for it.
   onFight?: () => void
 }
 
 const FIGHT_LABEL = '⚔ fix'
 
-// The gold's colour: red once the spend reaches the budget.
-export const goldColor = (usd: number, budget?: number): string => (budget !== undefined && usd >= budget ? 'red' : 'yellow')
+
 
 const Bar = (ui: ElementTable, label: string, color: string, value: number, max: number, note: string, width: number) => {
   const { Text } = ui
@@ -125,7 +124,8 @@ export function renderStatus(ui: ElementTable, data: StatusData, Raster?: Elemen
   const { hero } = data
   const frame = data.isFlashing ? 'yellow' : hero.color
   const fullName = `CLAUDE THE ${hero.title}`
-  const name = statsWidth >= fullName.length + 6 ? fullName : 'CLAUDE'
+  // Room for `Lv.NN` beside the name, and for the ? after it.
+  const name = statsWidth >= fullName.length + 6 + (data.onHelp === undefined ? 0 : 2) ? fullName : 'CLAUDE'
   const { usd } = vitals
   anim.hasHero = hasPortrait
 
@@ -163,6 +163,8 @@ export function renderStatus(ui: ElementTable, data: StatusData, Raster?: Elemen
           <Text bold color="yellow">
             Lv.{level}
           </Text>
+          {data.onHelp !== undefined && <Text> </Text>}
+          {data.onHelp !== undefined && <Button key="help" label="?" plain onPress={data.onHelp} />}
         </Box>
         <Text wrap="truncate">
           <Text italic color="cyan">{rankOf(hero, level)}</Text>
@@ -183,7 +185,7 @@ export function renderStatus(ui: ElementTable, data: StatusData, Raster?: Elemen
               <Text dimColor> best {combo.best}</Text>
             </Text>
           </Box>
-          {usd !== undefined && <Text color={goldColor(usd, data.budget)}>⛁ {usd.toFixed(2)}</Text>}
+          {usd !== undefined && <Text color="yellow">⛁ {usd.toFixed(2)}</Text>}
         </Box>
         <Text wrap="truncate">
           <Text color="yellow">★ {data.trophies.earned}/{data.trophies.total}</Text>

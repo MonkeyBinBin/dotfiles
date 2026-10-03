@@ -11,8 +11,9 @@ import { countPatch, patchSource } from './edit-card'
 import { trailStops } from './map'
 import { gaugeColor, heroStats, manaLeft, normalizeCall, rankFor, statusLayout } from './hero'
 import { rosterOrder } from './pets'
-import { BUDGET_ALARMS, MANA_ALARMS, alarmFor, budgetToast, campFor, isRefusal, manaAlarm, returnToast, skillOfPrompt, touchFile } from './register'
+import { MANA_ALARMS, campFor, isRefusal, manaAlarm, returnToast, skillOfPrompt, touchFile } from './register'
 import { formatDuration, recapText, topTools } from './recap'
+import { HELP_COMMANDS, helpText } from './help'
 import { filterSpells, timeColor } from './spellbook'
 import { groupSkills, masteryStars } from './skills'
 import { EMPTY_PROGRESS, newlyEarned } from './trophies'
@@ -1334,32 +1335,6 @@ test('slow casts are kept by the slow filter and coloured by how slow', () => {
   expect(timeColor(undefined)).toBeUndefined()
 })
 
-// --- Budget ---
-
-test('budget alarms sound at 80% and at the limit', () => {
-  expect(BUDGET_ALARMS).toEqual([80, 100])
-  expect(alarmFor(BUDGET_ALARMS, 85, 0)).toEqual({ alarm: 80, warned: 80 })
-  expect(alarmFor(BUDGET_ALARMS, 120, 80)).toEqual({ alarm: 100, warned: 100 })
-  expect(budgetToast(80, 4, 5)).toBe('⛁ Gold running low: $4.00 of $5.00 spent (80%)')
-  expect(budgetToast(100, 5.5, 5)).toBe('⛁ Budget spent: $5.50 of $5.00')
-})
-
-test('/hud budget sets, tells and lifts the gold limit, warning once past it', async ($, on) => {
-  const { store, toasts } = world(on, { usage: { startedAt: 0, rateLimits: [], context: { window: 200000 }, cost: { usd: 4.2 } } })
-  expect(await $.command.run({ command: 'hud', args: 'budget' } as never)).toMatchObject({ text: 'No budget set. /hud budget <usd> sets one.' })
-  expect(await $.command.run({ command: 'hud', args: 'budget nope' } as never)).toMatchObject({ text: 'A budget is a positive amount in USD: /hud budget 5' })
-  expect(await $.command.run({ command: 'hud', args: 'budget $5' } as never)).toMatchObject({ text: 'Budget set: $5.00 a session.' })
-  expect(store.get('budget')).toBe(5)
-  expect(toasts).toContain('⛁ Gold running low: $4.20 of $5.00 spent (80%)')
-
-  await $.tool.call({ tool: 'Read', file_path: '/x/a.md' })
-  expect(toasts.filter(text => text.startsWith('⛁'))).toHaveLength(1)
-
-  expect(await $.command.run({ command: 'hud', args: 'budget' } as never)).toMatchObject({ text: 'Budget: $5.00 a session.' })
-  expect(await $.command.run({ command: 'hud', args: 'budget off' } as never)).toMatchObject({ text: 'Budget lifted.' })
-  expect(store.get('budget')).toBeNull()
-})
-
 // --- Recap ---
 
 test('the recap leaves out what the session never did', () => {
@@ -1457,4 +1432,48 @@ test('a permission another hook decides never waits on the person', async ($, on
   const ui = await mountPane($, 'terminal')
   await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'ls' } } as never)
   expect((await texts(ui)).join('|')).not.toContain('❗')
+})
+
+// --- Help ---
+
+for (const surface of ['terminal', 'desktop'] as const) {
+  test(`the ? opens the help page and closes it again on ${surface}`, async ($, on) => {
+    world(on)
+    const ui = await mountPane($, surface)
+    await ui.press({ key: 'help' })
+    let shown = (await texts(ui)).join('|')
+    expect(shown).toContain('❓ HELP')
+    expect(shown).toContain('/hud class [name]')
+    expect(shown).not.toContain('budget')
+
+    await ui.press({ key: 'help' })
+    shown = (await texts(ui)).join('|')
+    expect(shown).not.toContain('❓ HELP')
+    expect(shown).toContain('📖 SPELL BOOK')
+
+    // Back on the page, or a pick from the menu, closes it too.
+    await ui.press({ key: 'help' })
+    await ui.press({ key: 'help-back' })
+    expect((await texts(ui)).join('|')).toContain('📖 SPELL BOOK')
+    await ui.press({ key: 'help' })
+    await showTab($, ui, 'feats', surface)
+    shown = (await texts(ui)).join('|')
+    expect(shown).not.toContain('❓ HELP')
+  })
+}
+
+test('/hud help lists every command and tip', async ($, on) => {
+  world(on)
+  const answer = (await $.command.run({ command: 'hud', args: 'help' } as never)) as { text: string }
+  expect(answer.text).toBe(helpText())
+  for (const one of HELP_COMMANDS) expect(answer.text).toContain(one.usage)
+  expect(answer.text).toContain('/hud class [name]  Reroll the hero')
+  expect(answer.text).not.toContain('budget')
+})
+
+test('a window stops at the first item that does not fit', () => {
+  const item = (key: string, rows: number) => ({ key, rows, node: null })
+  const { shown, end } = pageItems([item('a', 1), item('b', 2), item('c', 1)], 0, 2)
+  expect(shown.map(one => one.key)).toEqual(['a'])
+  expect(end).toBe(1)
 })

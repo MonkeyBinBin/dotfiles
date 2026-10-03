@@ -42,6 +42,7 @@ import { castText, skillRows, skillsSubtitle } from './skills'
 import type { SkillRow } from './skills'
 import type { SkillsProps } from './skills-client'
 import { filterSpells, spellFilters, spellItems } from './spellbook'
+import { HELP_COMMANDS, helpItems, helpText } from './help'
 import { EMPTY_PROGRESS, TROPHIES, newlyEarned } from './trophies'
 import { featItems, featsSubtitle } from './trophy-room'
 import { summarize } from './util'
@@ -79,8 +80,8 @@ const skillCasts = atom({ plugin: 'rpg-hud', key: 'skillCasts' } as const, {} as
 const spellFilter = atom({ plugin: 'rpg-hud', key: 'spellFilter' } as const, 'all' as SpellFilter)
 const EMPTY_TALLY: Tally = { failures: 0, refusals: 0, bossesDefeated: 0, petsSummoned: 0 }
 const tally = atom({ plugin: 'rpg-hud', key: 'tally' } as const, EMPTY_TALLY)
-const budget = atom({ plugin: 'rpg-hud', key: 'budget' } as const, null as number | null)
 const startedAt = atom({ plugin: 'rpg-hud', key: 'startedAt' } as const, 0)
+const isHelpOpen = atom({ plugin: 'rpg-hud', key: 'isHelpOpen' } as const, false)
 const waitingFor = atom({ plugin: 'rpg-hud', key: 'waitingFor' } as const, null as string | null)
 
 // Starts the HUD's watch of the session, once; a reload keeps it.
@@ -97,8 +98,6 @@ const PANE = 'rpg-hud'
 const TITLE = 'Adventure'
 const COMMAND = 'hud'
 const PROGRESS_KEY = 'progress'
-// The spend, in USD, past which the gold turns red; kept across sessions.
-const BUDGET_KEY = 'budget'
 // Set to false by `/hud cards` to give Edit and Write results back to the engine's own drawing.
 const CARDS_KEY = 'editCards'
 const CARD_TOOLS = new Set(['Edit', 'Write'])
@@ -194,40 +193,21 @@ async function loadProgress($: EngineInterface) {
 // How full the context gets before mana runs low, warned once each until a compact or /clear empties it again.
 export const MANA_ALARMS = [80, 90] as const
 
-// The share of the budget spent at which the gold warns, once each.
-export const BUDGET_ALARMS = [80, 100] as const
-
-// The alarm of `levels` that `percent` sounds after `warned` (the last alarm sounded), and the alarm to remember
-// next. Falling below an alarm forgets it, so a context filled again after a compact warns again.
-export const alarmFor = (levels: readonly number[], percent: number, warned: number): { alarm?: number; warned: number } => {
-  const reached = levels.filter(level => percent >= level).at(-1) ?? 0
+// The alarm `percent` sounds after `warned` (the last alarm sounded), and the alarm to remember next. Falling
+// below an alarm forgets it, so a context filled again after a compact warns again.
+export const manaAlarm = (percent: number, warned: number): { alarm?: number; warned: number } => {
+  const reached = MANA_ALARMS.filter(level => percent >= level).at(-1) ?? 0
   return reached > warned ? { alarm: reached, warned: reached } : { warned: Math.min(warned, reached) }
 }
 
-export const manaAlarm = (percent: number, warned: number) => alarmFor(MANA_ALARMS, percent, warned)
-
-// The toast a budget alarm raises.
-export const budgetToast = (alarm: number, usd: number, limit: number): string =>
-  alarm >= 100
-    ? `⛁ Budget spent: $${usd.toFixed(2)} of $${limit.toFixed(2)}`
-    : `⛁ Gold running low: $${usd.toFixed(2)} of $${limit.toFixed(2)} spent (${alarm}%)`
-
-// The last alarm of each kind this session sounded.
+// The last alarm this session sounded.
 let manaWarned = 0
-let budgetWarned = 0
 
 async function refreshVitals($: EngineInterface) {
   const usage = await $.session.usage().catch(() => undefined)
   if (usage === undefined) return
   const contextPercent = usage.context.percent
-  const usd = usage.cost?.usd
-  await update($, vitals, () => ({ contextPercent, usd }))
-  const limit = await read($, budget)
-  if (usd !== undefined && limit !== null && limit > 0) {
-    const spent = alarmFor(BUDGET_ALARMS, (usd / limit) * 100, budgetWarned)
-    budgetWarned = spent.warned
-    if (spent.alarm !== undefined) $.ui.toast(budgetToast(spent.alarm, usd, limit))
-  }
+  await update($, vitals, () => ({ contextPercent, usd: usage.cost?.usd }))
   if (contextPercent === undefined) return
   const { alarm, warned } = manaAlarm(contextPercent, manaWarned)
   manaWarned = warned
@@ -536,7 +516,7 @@ const campOf = (list: readonly Outpost[]): { camp?: string } => {
 // --- The menu windows ---
 
 // Every window the menu can show: a tab, or a view inside the map tab.
-type PageKey = Tab | 'map:bag' | 'map:diff' | 'map:outposts'
+type PageKey = Tab | 'map:bag' | 'map:diff' | 'map:outposts' | 'help'
 
 // `$` goes beside it as an argument of its own: the engine never lets it ride in an object.
 type PageContext = {
@@ -730,7 +710,13 @@ const featsPage = async (_$: EngineInterface, { ui, inner, progress: progressNow
   subtitle: featsSubtitle(progressNow),
 })
 
-// The window a menu entry, or a view inside the map tab, shows.
+const helpPage = async ($: EngineInterface, { ui }: PageContext): Promise<Page> => ({
+  title: '❓ HELP',
+  subtitle: `${HELP_COMMANDS.length} commands`,
+  items: helpItems(ui, () => void update($, isHelpOpen, () => false)),
+})
+
+// The window a menu entry, a view inside the map tab, or the help page shows.
 function pageFor($: EngineInterface, key: PageKey, ctx: PageContext): Promise<Page> {
   switch (key) {
     case 'spells':
@@ -749,6 +735,8 @@ function pageFor($: EngineInterface, key: PageKey, ctx: PageContext): Promise<Pa
       return skillsPage($, ctx)
     case 'feats':
       return featsPage($, ctx)
+    case 'help':
+      return helpPage($, ctx)
   }
 }
 
@@ -762,7 +750,6 @@ async function recap($: EngineInterface) {
   const unlocked = (await read($, progress)).unlocked
   const since = await read($, startedAt)
   const vitalsNow = await read($, vitals)
-  const limit = await read($, budget)
   return recapText({
     hero: classOf(await read($, heroClass)),
     level: heroStats(callList, casts).level,
@@ -774,32 +761,9 @@ async function recap($: EngineInterface) {
     boss: await read($, boss),
     touched: await read($, touched),
     ...(vitalsNow.usd === undefined ? {} : { usd: vitalsNow.usd }),
-    ...(limit === null ? {} : { budget: limit }),
     ...(vitalsNow.contextPercent === undefined ? {} : { contextPercent: vitalsNow.contextPercent }),
     trophies: since === 0 ? [] : TROPHIES.filter(t => (unlocked[t.id] ?? 0) >= since).map(t => t.title),
   })
-}
-
-// `/hud budget 5` sets the gold limit, `/hud budget off` lifts it, `/hud budget` tells it.
-async function setBudget($: EngineInterface, asked: string) {
-  if (asked === '') {
-    const limit = await read($, budget)
-    return limit === null ? 'No budget set. /hud budget <usd> sets one.' : `Budget: $${limit.toFixed(2)} a session.`
-  }
-  if (asked === 'off') {
-    await $.store.set(BUDGET_KEY, null)
-    await update($, budget, () => null)
-    budgetWarned = 0
-    return 'Budget lifted.'
-  }
-  const limit = Number(asked.replace(/^\$/, ''))
-  if (!Number.isFinite(limit) || limit <= 0) return 'A budget is a positive amount in USD: /hud budget 5'
-  await $.store.set(BUDGET_KEY, limit)
-  await update($, budget, () => limit)
-  // A new limit warns afresh, at once if the spend is already past it.
-  budgetWarned = 0
-  await refreshVitals($).catch(() => undefined)
-  return `Budget set: $${limit.toFixed(2)} a session.`
 }
 
 export const register: Register = on => {
@@ -821,12 +785,10 @@ export const register: Register = on => {
     await $.command.register({
       name: COMMAND,
       description:
-        'Open the adventure HUD (args: spells, pets, map, skills, feats; class [name] rerolls; cards toggles edit cards; recap sums up the session; budget <usd>|off sets the gold limit)',
+        'Open the adventure HUD (args: spells, pets, map, skills, feats; class [name] rerolls; cards toggles edit cards; recap sums up the session; help lists them all)',
     })
     await markStart($)
     await loadProgress($)
-    const stored = await $.store.get(BUDGET_KEY).catch(() => undefined)
-    await update($, budget, () => (typeof stored === 'number' && stored > 0 ? stored : null))
     // Each session plays a class at random; a reload of the mod keeps the one rolled.
     if ((await read($, heroClass)) === '') await chooseClass($, rollClass(Math.random()))
     void refreshAll($).catch(() => undefined)
@@ -852,13 +814,16 @@ export const register: Register = on => {
       return { text: `Claude is now a ${classOf(next).title.toLowerCase()}.` }
     }
     if (arg === 'recap') return { text: await recap($) }
-    if (arg === 'budget' || arg.startsWith('budget ')) return { text: await setBudget($, arg.slice('budget'.length).trim()) }
     if (arg === 'cards') {
       const isOn = (await $.store.get(CARDS_KEY)) !== false
       await $.store.set(CARDS_KEY, !isOn)
       return { text: isOn ? 'Edit cards off: edits draw as before.' : 'Edit cards on.' }
     }
-    if (isTab(arg)) await update($, tab, () => arg)
+    if (arg === 'help') return { text: helpText() }
+    if (isTab(arg)) {
+      await update($, tab, () => arg)
+      await update($, isHelpOpen, () => false)
+    }
     await $.ui.open({ id: PANE, title: TITLE })
 
     return { text: 'Adventure HUD opened.' }
@@ -1075,6 +1040,7 @@ export const register: Register = on => {
     if (e.element === 'menu' && typeof data.select === 'string' && isTab(data.select)) {
       const picked = data.select
       await update($, tab, () => picked)
+      await update($, isHelpOpen, () => false)
       return {}
     }
     if (e.element === 'bag') {
@@ -1136,8 +1102,8 @@ export const register: Register = on => {
     const progressNow = await read($, progress)
     const hero = classOf(await read($, heroClass))
     const bossNow = await read($, boss)
-    const limit = await read($, budget)
     const waiting = await read($, waitingFor)
+    const helpOpen = await read($, isHelpOpen)
     if (anim.heroClass !== hero.id) {
       // A new class: the portrait starts over from its first idle frame.
       anim.heroClass = hero.id
@@ -1163,7 +1129,10 @@ export const register: Register = on => {
         isFlashing: (await read($, flashUntil)) > now,
         width,
         ...(waiting === null ? {} : { waitingFor: waiting }),
-        ...(limit === null ? {} : { budget: limit }),
+        onHelp: () => {
+          void update($, isHelpOpen, open => !open)
+          void update($, offsets, all => ({ ...all, help: 0 }))
+        },
         ...(bossNow === null
           ? {}
           : {
@@ -1212,7 +1181,10 @@ export const register: Register = on => {
               label={slot.label}
               variant={slot.id === active ? 'primary' : 'secondary'}
               dimColor={slot.id !== active}
-              onPress={() => void update($, tab, () => slot.id)}
+              onPress={() => {
+                void update($, tab, () => slot.id)
+                void update($, isHelpOpen, () => false)
+              }}
             />
           ))}
         </Box>
@@ -1221,7 +1193,8 @@ export const register: Register = on => {
 
     const inner = Math.max(0, width - WINDOW_CHROME_COLUMNS)
     const view = active === 'map' ? await read($, mapView) : { view: 'map' as const }
-    const windowKey = (active === 'map' && view.view !== 'map' ? `map:${view.view}` : active) as PageKey
+    const tabKey = (active === 'map' && view.view !== 'map' ? `map:${view.view}` : active) as PageKey
+    const windowKey: PageKey = helpOpen ? 'help' : tabKey
     const page = await pageFor($, windowKey, { ui, view, inner, now, Raster, callList, petList, progress: progressNow })
     const items = page.items ?? []
     const offset = (await read($, offsets))[windowKey] ?? 0

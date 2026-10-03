@@ -13,7 +13,8 @@ export const totalRows = (items: readonly Item[]): number => items.reduce((sum, 
 export const clampOffset = (offset: number, total: number, rows: number): number =>
   Math.max(0, Math.min(offset, total - rows))
 
-// The items that fit `rows` from `offset` down, starting at the first item that begins there or later.
+// The items that fit `rows` from `offset` down, starting at the first item that begins there or later and
+// stopping at the first that does not fit: a later, shorter item never jumps ahead of it.
 export const pageItems = (items: readonly Item[], offset: number, rows: number) => {
   const total = totalRows(items)
   const start = clampOffset(offset, total, rows)
@@ -21,7 +22,8 @@ export const pageItems = (items: readonly Item[], offset: number, rows: number) 
   let top = 0
   let used = 0
   for (const item of items) {
-    if (top >= start && used + item.rows <= rows) {
+    if (top >= start) {
+      if (used + item.rows > rows) break
       shown.push(item)
       used += item.rows
     }
