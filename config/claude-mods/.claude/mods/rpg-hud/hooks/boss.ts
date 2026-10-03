@@ -91,14 +91,70 @@ export const kindOf = (segment: string): string | undefined => {
   return undefined
 }
 
-// The check a shell command runs, if any: the first one among its `&&`, `||`, `;` and `|` parts.
-export const bossFor = (command: string): { kind: string; name: string } | undefined => {
+type Guard = { kind: string; name: string }
+
+// Every check a shell command runs, in order, each kind once: `npm test && npm run lint` runs two.
+export const bossesFor = (command: string): Guard[] => {
+  const found: Guard[] = []
   for (const segment of segmentsOf(command)) {
     const kind = kindOf(segment)
-    if (kind !== undefined) return { kind, name: BOSS_NAMES[kind] ?? 'Bug Hydra' }
+    if (kind !== undefined && !found.some(one => one.kind === kind)) found.push({ kind, name: BOSS_NAMES[kind] ?? 'Bug Hydra' })
   }
-  return undefined
+  return found
 }
+
+// The check a shell command runs, if any: the first one among its `&&`, `||`, `;` and `|` parts.
+export const bossFor = (command: string): Guard | undefined => bossesFor(command)[0]
+
+// What each kind of check prints when it fails, to tell which of several checks in one command did. Counts start
+// at 1, so a passing run's `0 failed` is no sign; lint's warnings alone are none either.
+const FAILURE_SIGNS: Record<string, RegExp> = {
+  types: /\berror TS\d+|\berror\[E\d+\]|^\S+:\d+: error:/m,
+  lint: /\([1-9]\d* errors?\b|^\s*\d+:\d+\s+error\s/m,
+  test: /\b[1-9]\d* (?:failed|failing)\b|^\s*FAIL\s|\bFAILED\b/m,
+  e2e: /\b[1-9]\d* failed\b|^\s*✘/m,
+}
+
+// Programs that only set the scene for a check: `cd app && npm test` fails at the test or not at all.
+// The shell's closing words (`fi`, `done`) are no work either.
+const SETUP = new Set(['', 'cd', 'pushd', 'popd', 'export', 'source', '.', 'set', 'unset', 'nvm', 'echo', 'true', 'fi', 'done', 'esac', '}', ')'])
+
+// Whether the command's parts all run in an `&&` chain, where exit 0 vouches for every one of them; after `;`,
+// `||` or a pipe it vouches for the last part alone.
+const isAndChain = (command: string): boolean => !/\|\||;|\||\n/.test(command.trim().replace(/&&/g, ''))
+
+// The check a failed run failed at, and where its output starts. The first check whose failure shows: in an
+// `a && b` chain a failed `a` stops `b` from running at all, so a later check matching too is only alike in its
+// wording. With no sign the first check, unless the command does other work (`npm test && git push`) that may
+// be what failed.
+export const failedGuard = (command: string, output: string): { guard: Guard; from: number } | undefined => {
+  const found = bossesFor(command)
+  for (const guard of found) {
+    const at = FAILURE_SIGNS[guard.kind]?.exec(output)?.index
+    if (at !== undefined) return { guard, from: output.lastIndexOf('\n', at) + 1 }
+  }
+  const hasOtherWork = segmentsOf(command).some(part => kindOf(part) === undefined && !SETUP.has(programOf(part).program))
+  const first = found[0]
+  return first === undefined || hasOtherWork ? undefined : { guard: first, from: 0 }
+}
+
+// The kinds of check a passing command vouches for.
+const passedKinds = (command: string): string[] => {
+  if (isAndChain(command)) return bossesFor(command).map(one => one.kind)
+  const kind = kindOf(segmentsOf(command).filter(part => part.trim() !== '').at(-1) ?? '')
+  return kind === undefined ? [] : [kind]
+}
+
+const WHAT_FAILED: Record<string, string> = {
+  e2e: 'end-to-end tests',
+  types: 'type errors',
+  lint: 'lint errors',
+  test: 'failing tests',
+}
+
+// The prompt a click on the boss fills in: fix what its command reported.
+export const fightText = (boss: Pick<Boss, 'kind' | 'command'>): string =>
+  `Fix the ${WHAT_FAILED[boss.kind] ?? 'failures'} from \`${boss.command}\` and run it again until it passes`
 
 const COUNT = /(\d+)\s+(?:failed|failing|failures?|errors?|problems?)\b/gi
 
@@ -113,15 +169,17 @@ export const countFailures = (output: string): number => {
 
 export type BossTurn = { boss: Boss | null; event?: 'appear' | 'hit' | 'defeat' }
 
-// One guarded run against the current boss: a failure spawns or heals it, a pass of the same kind slays it.
+// One guarded run against the current boss: a failure spawns or heals it, its HP counted from the failed check's
+// own output on. A passing command slays the boss when it vouches for that boss's kind of check.
 export const fightBoss = (current: Boss | null, command: string, isError: boolean, output: string): BossTurn => {
-  const found = bossFor(command)
-  if (found === undefined) return { boss: current }
   if (!isError) {
-    if (current !== null && current.kind === found.kind) return { boss: null, event: 'defeat' }
+    if (current !== null && passedKinds(command).includes(current.kind)) return { boss: null, event: 'defeat' }
     return { boss: current }
   }
-  const hp = countFailures(output)
+  const failed = failedGuard(command, output)
+  if (failed === undefined) return { boss: current }
+  const found = failed.guard
+  const hp = countFailures(output.slice(failed.from))
   if (current === null || current.kind !== found.kind) {
     return { boss: { ...found, hp, maxHp: hp, command }, event: 'appear' }
   }

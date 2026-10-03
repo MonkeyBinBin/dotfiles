@@ -87,7 +87,16 @@ export type StatusData = {
   camp?: string
   isFlashing: boolean
   width: number
+  // The spend past which the gold turns red.
+  budget?: number
+  // Fills the prompt with the boss's fix; the boss row then carries a button for it.
+  onFight?: () => void
 }
+
+const FIGHT_LABEL = '⚔ fix'
+
+// The gold's colour: red once the spend reaches the budget.
+export const goldColor = (usd: number, budget?: number): string => (budget !== undefined && usd >= budget ? 'red' : 'yellow')
 
 const Bar = (ui: ElementTable, label: string, color: string, value: number, max: number, note: string, width: number) => {
   const { Text } = ui
@@ -104,7 +113,7 @@ const Bar = (ui: ElementTable, label: string, color: string, value: number, max:
 
 // The hero's status window: always on top, whatever the menu shows below.
 export function renderStatus(ui: ElementTable, data: StatusData, Raster?: ElementTable<'terminal'>['Raster']) {
-  const { Box, Text } = ui
+  const { Box, Text, Button } = ui
   const { list, vitals, combo, boss, width } = data
   const { level, xp, hp } = heroStats(list, data.casts)
   const mp = manaLeft(vitals)
@@ -115,17 +124,24 @@ export function renderStatus(ui: ElementTable, data: StatusData, Raster?: Elemen
   const frame = data.isFlashing ? 'yellow' : hero.color
   const fullName = `CLAUDE THE ${hero.title}`
   const name = statsWidth >= fullName.length + 6 ? fullName : 'CLAUDE'
-  const gold = vitals.usd === undefined ? '' : `⛁ ${vitals.usd.toFixed(2)}`
+  const { usd } = vitals
   anim.hasHero = hasPortrait
 
+  const fightRoom = data.onFight === undefined ? 0 : FIGHT_LABEL.length + 1
+  const bossBar = barParts(boss?.hp ?? 0, boss?.maxHp ?? 0, Math.max(4, Math.min(10, statsWidth - (boss?.name.length ?? 0) - 9 - fightRoom)))
   const bossRow =
     boss === null ? null : (
-      <Text wrap="truncate">
-        <Text bold color="red">☠ {boss.name} </Text>
-        <Text color="red">{barParts(boss.hp, boss.maxHp, Math.max(4, Math.min(10, statsWidth - boss.name.length - 9))).filled}</Text>
-        <Text dimColor>{barParts(boss.hp, boss.maxHp, Math.max(4, Math.min(10, statsWidth - boss.name.length - 9))).empty}</Text>
-        <Text color="red"> {boss.hp}/{boss.maxHp}</Text>
-      </Text>
+      <Box height={1}>
+        <Box flexGrow={1}>
+          <Text wrap="truncate">
+            <Text bold color="red">☠ {boss.name} </Text>
+            <Text color="red">{bossBar.filled}</Text>
+            <Text dimColor>{bossBar.empty}</Text>
+            <Text color="red"> {boss.hp}/{boss.maxHp}</Text>
+          </Text>
+        </Box>
+        {data.onFight !== undefined && <Button key="fight" label={FIGHT_LABEL} plain onPress={data.onFight} />}
+      </Box>
     )
 
   return (
@@ -165,7 +181,7 @@ export function renderStatus(ui: ElementTable, data: StatusData, Raster?: Elemen
               <Text dimColor> best {combo.best}</Text>
             </Text>
           </Box>
-          {gold !== '' && <Text color="yellow">{gold}</Text>}
+          {usd !== undefined && <Text color={goldColor(usd, data.budget)}>⛁ {usd.toFixed(2)}</Text>}
         </Box>
         <Text wrap="truncate">
           <Text color="yellow">★ {data.trophies.earned}/{data.trophies.total}</Text>

@@ -3,7 +3,7 @@ import type { Engine } from 'claude-code/testing'
 
 import { HERO_FRAMES } from './hero-cells'
 import { HURT_MS, pickFrame, pickMood } from './anim'
-import { bossFor, countFailures, fightBoss, runsGit } from './boss'
+import { bossFor, bossesFor, countFailures, failedGuard, fightBoss, fightText, runsGit } from './boss'
 import { GIT_STATUS, diffArgv, isLinear, parseBag, parseGraphLine, parseStatus, parseWorktrees, shortAge } from './git'
 import { campsOn } from './map'
 import { parseDiff, rarityOf, splitBar } from './diff'
@@ -11,7 +11,9 @@ import { countPatch, patchSource } from './edit-card'
 import { trailStops } from './map'
 import { gaugeColor, heroStats, manaLeft, normalizeCall, rankFor, statusLayout } from './hero'
 import { rosterOrder } from './pets'
-import { MANA_ALARMS, campFor, isRefusal, manaAlarm, returnToast, skillOfPrompt, touchFile } from './register'
+import { BUDGET_ALARMS, MANA_ALARMS, alarmFor, budgetToast, campFor, isRefusal, manaAlarm, returnToast, skillOfPrompt, touchFile } from './register'
+import { formatDuration, recapText, topTools } from './recap'
+import { filterSpells, timeColor } from './spellbook'
 import { groupSkills, masteryStars } from './skills'
 import { EMPTY_PROGRESS, newlyEarned } from './trophies'
 import { barFill, oneLine } from './util'
@@ -1230,4 +1232,178 @@ test('a background pet announces its return; a foreground one does not', async (
 test('a fallen pet says what it was sent to do', () => {
   expect(returnToast({ kind: 'Explore', description: 'Map the repo', loot: '' }, 'err')).toBe('🐾 Scout Hawk fell: Map the repo')
   expect(returnToast({ kind: 'Explore', description: 'Map the repo' }, 'ok')).toBe('🐾 Scout Hawk returned: Map the repo')
+})
+
+// --- Bosses in chains ---
+
+test('a chain of checks fails at the one its output shows', () => {
+  const chain = 'npm test && npm run lint && npx tsc --noEmit'
+  expect(bossesFor(chain).map(one => one.kind)).toEqual(['test', 'lint', 'types'])
+  expect(bossesFor('npm test; npm test').map(one => one.kind)).toEqual(['test'])
+  const kindAt = (command: string, output: string) => failedGuard(command, output)?.guard.kind
+
+  expect(kindAt(chain, 'Tests  12 passed\n✖ 3 problems (3 errors, 0 warnings)')).toBe('lint')
+  expect(kindAt(chain, 'Tests  2 failed | 10 passed')).toBe('test')
+  expect(kindAt(chain, 'Tests  12 passed\nsrc/a.ts(3,1): error TS2322: nope')).toBe('types')
+  // Nothing telling: the first check, as before.
+  expect(kindAt(chain, 'exit 1')).toBe('test')
+  expect(kindAt('cd app && npm test', 'exit 1')).toBe('test')
+})
+
+test("a check that never ran is not blamed for its neighbour's wording", () => {
+  // Playwright failed, so `&&` never ran the tests; both print `N failed`.
+  expect(failedGuard('npx playwright test && npm test', '  3 failed\n  10 passed')?.guard.kind).toBe('e2e')
+  // A passing run's `0 failed` is no sign of failure; clippy's own output matched nothing.
+  expect(failedGuard('cargo test && cargo clippy -- -D warnings', 'test result: ok. 12 passed; 0 failed\nwarning: unused')?.guard.kind).toBe('test')
+  // Lint warnings alone are no lint failure.
+  expect(failedGuard('npm run lint && npm test', '✖ 30 problems (0 errors, 30 warnings)\nTests  2 failed')?.guard.kind).toBe('test')
+  // Other work in the chain may be what failed: no boss on a guess.
+  expect(failedGuard('npm test && git push', 'Tests  12 passed\n! [rejected] main -> main')).toBeUndefined()
+})
+
+test("the boss's HP counts the failed check's own output", () => {
+  const fought = fightBoss(null, 'npm run lint && npm test', true, '✖ 30 problems (0 errors, 30 warnings)\nFAIL src/a.test.ts\nTests  2 failed')
+  expect(fought.boss?.name).toBe('Bug Hydra')
+  expect(fought.boss?.hp).toBe(2)
+})
+
+test('only what the exit code vouches for slays a boss', () => {
+  const goblin = fightBoss(null, 'npm run lint', true, '✖ 3 problems (3 errors, 0 warnings)').boss
+  // After `;` or a pipe the exit code is the last part's alone.
+  expect(fightBoss(goblin, 'npm run lint; npm test', false, '').event).toBeUndefined()
+  expect(fightBoss(goblin, 'npm run lint | tee lint.log', false, '').event).toBeUndefined()
+  expect(fightBoss(goblin, 'npm test; npm run lint', false, '').event).toBe('defeat')
+  expect(fightBoss(goblin, 'cd web && npm run lint && npm test', false, '').event).toBe('defeat')
+})
+
+test('a failing lint after passing tests summons the lint goblin, and the passing chain slays it', () => {
+  const command = 'npm test && npm run lint'
+  const fought = fightBoss(null, command, true, 'Tests  12 passed\n✖ 3 problems (3 errors, 0 warnings)')
+  expect(fought.boss?.name).toBe('Lint Goblin')
+  expect(fought.boss?.hp).toBe(3)
+  expect(fightBoss(fought.boss, command, false, '').event).toBe('defeat')
+  // A pass that never ran the boss's check leaves it standing.
+  expect(fightBoss(fought.boss, 'npm test', false, '').event).toBeUndefined()
+})
+
+test("the boss's fix names what failed and the command that showed it", () => {
+  expect(fightText({ kind: 'lint', command: 'pnpm lint' })).toBe('Fix the lint errors from `pnpm lint` and run it again until it passes')
+  expect(fightText({ kind: 'weird', command: 'make check' })).toBe('Fix the failures from `make check` and run it again until it passes')
+})
+
+for (const surface of ['terminal', 'desktop'] as const) {
+  test(`pressing fix on the boss fills the prompt on ${surface}`, async ($, on) => {
+    const { fills } = world(on, { tool: failBash('Found 4 errors in 2 files.') })
+    await $.tool.call({ tool: 'Bash', command: 'npx tsc --noEmit' })
+    const ui = await mountPane($, surface)
+    await ui.press({ key: 'fight' })
+    expect(fills).toEqual(['Fix the type errors from `npx tsc --noEmit` and run it again until it passes'])
+  })
+}
+
+// --- Spell book filters ---
+
+test('the spell book filters fizzles and slow casts', async ($, on) => {
+  world(on, { tool: failBash('boom') })
+  await $.tool.call({ tool: 'Read', file_path: '/x/a.md' })
+  await $.tool.call({ tool: 'Bash', command: 'make broken' })
+  await $.tool.call({ tool: 'Read', file_path: '/x/b.md' })
+
+  const ui = await mountPane($, 'terminal')
+  await ui.press({ key: 'filter-errors' })
+  let shown = (await texts(ui)).join('|')
+  expect(shown).toContain('1 of 3 casts')
+  expect(shown).toContain('make broken')
+  expect(shown).not.toContain('a.md')
+
+  await ui.press({ key: 'filter-slow' })
+  shown = (await texts(ui)).join('|')
+  expect(shown).toContain('0 of 3 casts')
+  expect(shown).toContain('Nothing took 5s or more.')
+
+  await ui.press({ key: 'filter-all' })
+  expect((await texts(ui)).join('|')).toContain('a.md')
+})
+
+test('slow casts are kept by the slow filter and coloured by how slow', () => {
+  const call = (id: string, ms: number) => ({ id, tool: 'Bash', summary: '', startedAt: 0, ms, status: 'ok' as const })
+  expect(filterSpells([call('a', 200), call('b', 5000), call('c', 40000)], 'slow').map(one => one.id)).toEqual(['b', 'c'])
+  expect(timeColor(200)).toBeUndefined()
+  expect(timeColor(5000)).toBe('yellow')
+  expect(timeColor(40000)).toBe('red')
+  expect(timeColor(undefined)).toBeUndefined()
+})
+
+// --- Budget ---
+
+test('budget alarms sound at 80% and at the limit', () => {
+  expect(BUDGET_ALARMS).toEqual([80, 100])
+  expect(alarmFor(BUDGET_ALARMS, 85, 0)).toEqual({ alarm: 80, warned: 80 })
+  expect(alarmFor(BUDGET_ALARMS, 120, 80)).toEqual({ alarm: 100, warned: 100 })
+  expect(budgetToast(80, 4, 5)).toBe('⛁ Gold running low: $4.00 of $5.00 spent (80%)')
+  expect(budgetToast(100, 5.5, 5)).toBe('⛁ Budget spent: $5.50 of $5.00')
+})
+
+test('/hud budget sets, tells and lifts the gold limit, warning once past it', async ($, on) => {
+  const { store, toasts } = world(on, { usage: { startedAt: 0, rateLimits: [], context: { window: 200000 }, cost: { usd: 4.2 } } })
+  expect(await $.command.run({ command: 'hud', args: 'budget' } as never)).toMatchObject({ text: 'No budget set. /hud budget <usd> sets one.' })
+  expect(await $.command.run({ command: 'hud', args: 'budget nope' } as never)).toMatchObject({ text: 'A budget is a positive amount in USD: /hud budget 5' })
+  expect(await $.command.run({ command: 'hud', args: 'budget $5' } as never)).toMatchObject({ text: 'Budget set: $5.00 a session.' })
+  expect(store.get('budget')).toBe(5)
+  expect(toasts).toContain('⛁ Gold running low: $4.20 of $5.00 spent (80%)')
+
+  await $.tool.call({ tool: 'Read', file_path: '/x/a.md' })
+  expect(toasts.filter(text => text.startsWith('⛁'))).toHaveLength(1)
+
+  expect(await $.command.run({ command: 'hud', args: 'budget' } as never)).toMatchObject({ text: 'Budget: $5.00 a session.' })
+  expect(await $.command.run({ command: 'hud', args: 'budget off' } as never)).toMatchObject({ text: 'Budget lifted.' })
+  expect(store.get('budget')).toBeNull()
+})
+
+// --- Recap ---
+
+test('the recap leaves out what the session never did', () => {
+  const text = recapText({
+    hero: CLASSES.knight,
+    level: 1,
+    casts: 0,
+    calls: [],
+    tally: { failures: 0, refusals: 0, bossesDefeated: 0, petsSummoned: 0 },
+    bestCombo: 0,
+    boss: null,
+    touched: [],
+    trophies: [],
+  })
+  expect(text).toBe('⚔ Claude the knight · Lv.1 Squire\n✦ 0 casts · ✗ 0 blows parried · ⚡ best combo 0')
+})
+
+test('the recap durations and most cast tools', () => {
+  expect(formatDuration(40_000)).toBe('40s')
+  expect(formatDuration(14 * 60_000)).toBe('14m')
+  expect(formatDuration(125 * 60_000)).toBe('2h 05m')
+  const call = (tool: string) => ({ id: tool, tool, summary: '', startedAt: 0, status: 'ok' as const })
+  expect(topTools(['Read', 'Bash', 'Read', 'Edit', 'Bash', 'Read', 'Grep'].map(call))).toBe('Read 3 · Bash 2 · Edit 1')
+})
+
+test('/hud recap sums up the session', async ($, on) => {
+  const { clock } = world(on, {
+    tool: e => (e.tool === 'Bash' && e.command === 'npm test' ? fail('2 failed') : e.tool === 'Write' ? { deny: 'no' } : undefined),
+    usage: { startedAt: 0, rateLimits: [], context: { window: 200000, percent: 42 }, cost: { usd: 1.5 } },
+  })
+  await $.command.run({ command: 'hud', args: 'class knight' } as never)
+  await $.tool.call({ tool: 'Read', file_path: '/x/a.md' })
+  await $.tool.call({ tool: 'Edit', file_path: '/x/a.md' })
+  await $.tool.call({ tool: 'Bash', command: 'npm test' })
+  await $.tool.call({ tool: 'Write', file_path: '/x/c.md' })
+  await clock.advance(30 * 60_000)
+  const answer = (await $.command.run({ command: 'hud', args: 'recap' } as never)) as { text: string }
+  expect(answer.text.split('\n')).toEqual([
+    '⚔ Claude the knight · Lv.1 Squire · 30m',
+    '✦ 3 casts · ✗ 1 blows parried · ⊘ 1 refused · ⚡ best combo 2',
+    '📖 most cast: Bash 1 · Edit 1 · Read 1',
+    '☠ 0 bosses defeated · Bug Hydra still stands (HP 2)',
+    '🗺 1 file explored · ✎ 1 edited',
+    '⛁ $1.50 · 🔮 context 42% full',
+    '🏆 First Spark',
+  ])
 })

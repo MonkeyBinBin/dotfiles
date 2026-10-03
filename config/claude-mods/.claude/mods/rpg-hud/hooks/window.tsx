@@ -35,6 +35,8 @@ export type WindowProps = {
   subtitle?: string
   color: string
   items: readonly Item[]
+  // Controls on the title row, right of the title: they stay put while the items scroll.
+  actions?: RenderChildren
   // A body that scrolls itself (a Client), in place of the items: what it draws and how many rows it has in all.
   body?: { node: RenderChildren; total: number }
   offset: number
@@ -71,7 +73,8 @@ export function renderWindow(ui: ElementTable, props: WindowProps) {
             {props.subtitle !== undefined && <Text dimColor>  {props.subtitle}</Text>}
           </Text>
         </Box>
-        {gauge !== '' && <Text color={props.color}>{gauge}</Text>}
+        {props.actions}
+        {gauge !== '' && <Text color={props.color}> {gauge}</Text>}
       </Box>
       <Text color={props.color} dimColor>
         {'─'.repeat(inner)}

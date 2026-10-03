@@ -10,6 +10,13 @@ export type ToolCall = {
   status: ToolCallStatus
 }
 
+// Which calls the spell book lists: every one, the fizzles, or the slow ones.
+export type SpellFilter = 'all' | 'errors' | 'slow'
+
+// This session's own figures since the HUD's watch began (`startedAt`), for /hud recap; the lifetime ones live
+// in Progress.
+export type Tally = { failures: number; refusals: number; bossesDefeated: number; petsSummoned: number }
+
 // The command menu's entries; the hero's status panel above them never changes.
 export type Tab = 'spells' | 'pets' | 'map' | 'skills' | 'feats'
 
@@ -144,6 +151,12 @@ declare module 'claude-code' {
       loadout: Loadout
       // Skill name to the time it was last cast this session.
       skillCasts: Record<string, number>
+      spellFilter: SpellFilter
+      tally: Tally
+      // When the HUD began watching this session: its start, or the first call it saw. 0 until then.
+      startedAt: number
+      // The spend, in USD, past which the gold turns red; null when none is set (`/hud budget`).
+      budget: number | null
       progress: Progress
     }
   }
