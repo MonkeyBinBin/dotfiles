@@ -122,7 +122,8 @@ const NIGHT_HOURS = 4
 
 const firstLine = (text: string): string => text.split('\n').find(line => line.trim().length > 0)?.trim() ?? ''
 
-// Claude Code's answer when the person says no at a permission prompt.
+// Claude Code's answer when the person says no at a permission prompt. No event names that call, so its text is
+// the only sign; auto mode's denials come as `classic.PermissionDenied` with the call's id instead.
 const REFUSAL = /^The user doesn't want to (?:proceed|take this action)/
 
 // A call refused before it ran: a hook's deny, or the person's no at a permission prompt. A choice, not a fizzle.
@@ -778,6 +779,8 @@ export const register: Register = on => {
   const background = new Set<string>()
   // Subagents being looked up in the agent list, so parallel tool calls of one add it once.
   const discovering = new Set<string>()
+  // Calls auto mode denied, by tool_use_id, until their tool.call answers.
+  const autoDenied = new Set<string>()
   // The loop whose tool `waitingFor` names: a subagent's id, undefined for the main loop.
   let waitingAgent: string | undefined
 
@@ -831,6 +834,12 @@ export const register: Register = on => {
 
   // A permission prompt is about to ask the person; the panel says so until that tool is done. A hook beneath
   // that decides leaves no prompt to wait on.
+  // Auto mode's classifier denied a call: a refusal, known by the call's id rather than by its wording.
+  on('classic.PermissionDenied', async ($, e, next) => {
+    autoDenied.add(e.tool_use_id)
+    return next(e)
+  })
+
   on('classic.PermissionRequest', async ($, e, next) => {
     const result = await next(e)
     if (result.decision === undefined) {
@@ -935,10 +944,13 @@ export const register: Register = on => {
     }
 
     let ran: Awaited<ReturnType<typeof next>>
+    let isAutoDenied = false
     try {
       ran = await next(e)
     } finally {
       if (isMain) anim.running -= 1
+      // Auto mode denies while the call is under way; answered or not, its mark goes with it.
+      isAutoDenied = autoDenied.delete(e.tool_use_id)
       // An Agent call that never spawned (refused, interrupted) leaves no mark behind.
       if (e.tool === 'Agent') {
         isolated.delete(e.tool_use_id)
@@ -949,7 +961,7 @@ export const register: Register = on => {
       if (waitingAgent === e.agentId && (await read($, waitingFor)) === e.tool) await update($, waitingFor, () => null)
     }
     // A refused call never ran: the hero takes no hurt, the combo and the turn's streak stand.
-    const isRefused = isRefusal(ran)
+    const isRefused = isAutoDenied || isRefusal(ran)
     const isError = !isRefused && ran.isError === true
     const status: ToolCallStatus = isRefused ? 'deny' : isError ? 'err' : 'ok'
 

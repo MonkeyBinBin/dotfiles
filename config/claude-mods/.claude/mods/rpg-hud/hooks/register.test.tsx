@@ -1477,3 +1477,36 @@ test('a window stops at the first item that does not fit', () => {
   expect(shown.map(one => one.key)).toEqual(['a'])
   expect(end).toBe(1)
 })
+
+test("auto mode's denial is a refusal, whatever its wording", async ($, on) => {
+  const { clock, store } = world(on, {
+    // The classifier denies the Bash call while it is under way; the model reads its own wording.
+    tool: async e => {
+      if (e.tool !== 'Bash') return undefined
+      await $.classic.PermissionDenied({ tool_name: 'Bash', tool_input: {}, tool_use_id: e.tool_use_id, reason: 'risky' } as never)
+      return fail('Permission for this action has been denied by auto mode.')
+    },
+  })
+  on('classic.PermissionDenied', async () => ({}))
+  await $.tool.call({ tool: 'Read', file_path: '/x/a.md' })
+  await $.tool.call({ tool: 'Bash', tool_use_id: 'tu-auto', command: 'npm test' } as never)
+  await $.tool.call({ tool: 'Bash', tool_use_id: 'tu-auto-2', command: 'npm test' } as never)
+  await clock.advance(0)
+
+  const ui = await mountPane($, 'terminal')
+  const shown = (await texts(ui)).join('|')
+  expect(shown).toContain('5/5')
+  expect(shown).toContain('⊘')
+  expect(shown).not.toContain('☠')
+  expect((store.get('progress') as { totalCalls: number }).totalCalls).toBe(1)
+})
+
+test('a failure auto mode never denied is still a failure', async ($, on) => {
+  world(on, { tool: failBash('Exit code 1') })
+  on('classic.PermissionDenied', async () => ({}))
+  // A denial for another call leaves this one's failure standing.
+  await $.classic.PermissionDenied({ tool_name: 'Bash', tool_input: {}, tool_use_id: 'someone-else', reason: 'risky' } as never)
+  await $.tool.call({ tool: 'Bash', tool_use_id: 'tu-1', command: 'false' } as never)
+  const ui = await mountPane($, 'terminal')
+  expect((await texts(ui)).join('|')).toContain('4/5')
+})
