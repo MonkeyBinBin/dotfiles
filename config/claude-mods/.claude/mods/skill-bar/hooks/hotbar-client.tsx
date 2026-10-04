@@ -5,8 +5,12 @@ export type HotbarSlot = {
   name: string
   // What the slot shows: the name past any `plugin:` prefix.
   label: string
-  // The slot's own colour, as hex.
+  // The rune on the slot's keycap: the label's first letter or digit.
+  rune: string
+  // The slot's own colour, and its cell at rest and under the pointer, as hex.
   color: string
+  tint: string
+  glow: string
 }
 
 export type HotbarProps = { slots: HotbarSlot[] }
@@ -15,26 +19,25 @@ type HotbarState = {
   tick: number
   // The slot under the pointer.
   hover?: number
-  // The slot just cast and the tick its flash began.
+  // The slot just cast and the tick its cooldown began.
   cast?: { index: number; start: number }
 }
 
 const FRAME_MS = 80
-const FLASH_TICKS = 4
-// A slot is one row: `▕ ⚡ label ▏`, its inside on a dark backdrop like a hotbar cell.
+// How long a cast slot cools down, dark to lit, left to right.
+export const COOLDOWN_TICKS = 15
+// Ticks between the hover sparks' twinkles.
+const TWINKLE_TICKS = 4
+// A slot is one row: `✦▐C▌ label ✦`, the sparks lit only under the pointer.
 export const SLOT_ROWS = 1
-const GAP = 1
-// Every slot's icon: an emoji draws more than a few pixel blocks could. Two columns wide.
-export const ICON = '⚡'
-const ICON_COLUMNS = 2
+const GAP = 2
 // The longest label a slot shows whole.
 const MAX_LABEL = 18
-// Around the label: edge, padding, icon, space, padding, edge.
-const CHROME = 1 + 1 + ICON_COLUMNS + 1 + 1 + 1
-// The cell's backdrop at rest, under the pointer and while it flashes (the last as rpg-hud's selected card).
-const CELL = '#1e1a2b'
-const CELL_HOVER = '#2a2342'
-const CELL_FLASH = '#3a2f5c'
+// Around the label: spark, keycap (▐ rune ▌), space, space, spark.
+const CHROME = 1 + 3 + 1 + 1 + 1
+// The rune's ink on its coloured keycap, and the cooling cell's.
+const INK = '#14111c'
+const COOLING = '#2a2533'
 // The width laid out before the first layout reports the region's.
 const FALLBACK_COLUMNS = 80
 
@@ -44,7 +47,16 @@ export const labelOf = (name: string): string => {
   return bare.length > MAX_LABEL ? `${bare.slice(0, MAX_LABEL - 1)}…` : bare
 }
 
+export const runeOf = (label: string): string => (label.match(/[a-z0-9]/i)?.[0] ?? '?').toUpperCase()
+
 export const slotWidth = (slot: Pick<HotbarSlot, 'label'>): number => slot.label.length + CHROME
+
+// The cell's text while it cools: what has come back shows, the rest is shade, lightest at the sweep's front.
+export const cooldownText = (text: string, elapsed: number): string => {
+  const chars = [...text]
+  const lit = Math.min(chars.length, Math.floor((elapsed / COOLDOWN_TICKS) * chars.length))
+  return chars.map((ch, at) => (at < lit ? ch : at === lit ? '░' : at === lit + 1 ? '▒' : '▓')).join('')
+}
 
 // The slots in lines that fit `columns`: each line as many as fit, a slot wider than the whole bar alone on one.
 export const hotbarLines = (widths: readonly number[], columns: number): { index: number; x: number }[][] => {
@@ -69,10 +81,10 @@ const Hotbar: ClientModule<HotbarProps, HotbarState> = (props, surface) => {
   if (surface.state === undefined) {
     surface.every(FRAME_MS, () => {
       const now = surface.state
-      // Only a flash moves on the clock; at rest nothing redraws.
-      if (now?.cast === undefined) return
-      const isOver = now.tick + 1 - now.cast.start >= FLASH_TICKS
-      surface.setState({ ...now, tick: now.tick + 1, ...(isOver ? { cast: undefined } : {}) })
+      // Only a cooldown or a hovered slot's sparks move; at rest nothing redraws.
+      if (now === undefined || (now.cast === undefined && now.hover === undefined)) return
+      const isCool = now.cast !== undefined && now.tick + 1 - now.cast.start >= COOLDOWN_TICKS
+      surface.setState({ ...now, tick: now.tick + 1, ...(isCool ? { cast: undefined } : {}) })
     })
     surface.setState({ tick: 0 })
   }
@@ -97,25 +109,28 @@ const Hotbar: ClientModule<HotbarProps, HotbarState> = (props, surface) => {
   })
 
   const drawSlot = (slot: HotbarSlot, index: number) => {
-    const isFlash = state.cast?.index === index
-    const isHover = !isFlash && state.hover === index
-    const edge = isFlash ? 'yellow' : isHover ? slot.color : 'gray'
-    const isDim = !isFlash && !isHover
-    const back = { backgroundColor: isFlash ? CELL_FLASH : isHover ? CELL_HOVER : CELL }
+    const elapsed = state.cast?.index === index ? state.tick - state.cast.start : undefined
+    const isCooling = elapsed !== undefined
+    const isHover = !isCooling && state.hover === index
+    const spark = isHover ? (Math.floor(state.tick / TWINKLE_TICKS) % 2 === 0 ? '✦' : '✧') : ' '
+    const cap = isCooling ? COOLING : slot.color
+    const cell = isCooling ? COOLING : isHover ? slot.glow : slot.tint
+    const text = ` ${slot.label} `
 
     return (
       <Box key={slot.name} flexDirection="row" width={widths[index] ?? 0} height={1}>
-        <Text color={edge} dimColor={isDim}>
-          ▕
+        <Text color={slot.color}>{spark}</Text>
+        <Text color={cap}>▐</Text>
+        <Text bold color={isCooling ? slot.color : INK} backgroundColor={cap}>
+          {slot.rune}
         </Text>
-        <Text {...back}> {ICON} </Text>
-        <Text bold={!isDim} color={isFlash ? 'yellow' : isHover ? slot.color : 'white'} {...back}>
-          {slot.label}
+        <Text color={cap} backgroundColor={cell}>
+          ▌
         </Text>
-        <Text {...back}> </Text>
-        <Text color={edge} dimColor={isDim}>
-          ▏
+        <Text bold={isHover} color={isCooling ? slot.color : isHover ? slot.color : 'white'} dimColor={isCooling} backgroundColor={cell}>
+          {isCooling ? cooldownText(text, elapsed) : text}
         </Text>
+        <Text color={slot.color}>{spark}</Text>
       </Box>
     )
   }

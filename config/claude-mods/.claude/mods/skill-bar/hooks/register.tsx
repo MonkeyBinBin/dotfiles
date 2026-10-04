@@ -2,9 +2,9 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { SkillNames } from '../types'
-import { ICON, labelOf } from './hotbar-client'
+import { labelOf, runeOf } from './hotbar-client'
 import type { HotbarProps, HotbarSlot } from './hotbar-client'
-import { colorFor, toHex } from './colors'
+import { PANEL, colorFor, mix, toHex } from './colors'
 
 const skills = atom({ plugin: 'skill-bar', key: 'skills' } as const, [] as SkillNames)
 
@@ -47,12 +47,19 @@ async function readFavorites($: EngineInterface) {
   return { uses, known }
 }
 
-// One hotbar slot in its own colour.
-export const hotbarSlot = (name: string, slot: number): HotbarSlot => ({
-  name,
-  label: labelOf(name),
-  color: toHex(colorFor(slot)),
-})
+// One hotbar slot in its own colour: the keycap in full, the cell a dark tint of it that deepens under the pointer.
+export const hotbarSlot = (name: string, slot: number): HotbarSlot => {
+  const label = labelOf(name)
+  const color = colorFor(slot)
+  return {
+    name,
+    label,
+    rune: runeOf(label),
+    color: toHex(color),
+    tint: toHex(mix(color, PANEL, 0.18)),
+    glow: toHex(mix(color, PANEL, 0.38)),
+  }
+}
 
 // Pressing a slot puts the command in the prompt box, so arguments (an issue number) can follow.
 export const commandText = (skill: string): string => `/${skill} `
@@ -99,7 +106,7 @@ export const register: Register = on => {
     const slots = names.map((name, slot) => hotbarSlot(name, slot))
     const { Box, Button } = $.ui.resolve(e)
 
-    // The terminal draws a game's hotbar: one row of cells, a click anywhere on one casts it.
+    // The terminal draws an MMO skill bar: a rune keycap and a tinted cell a slot; a click casts it and it cools down.
     if (e.surface === 'terminal') {
       const { Client } = $.ui.resolve(e)
       const hotbar = { slots } satisfies HotbarProps
@@ -113,7 +120,7 @@ export const register: Register = on => {
       )
     }
 
-    // Other surfaces: a button a slot.
+    // Other surfaces: a button a slot, wearing its rune.
     return (
       <Box flexDirection="column">
         {engine}
@@ -121,7 +128,7 @@ export const register: Register = on => {
           {slots.map(one => (
             <Button
               key={one.name}
-              label={`${ICON} ${one.label}`}
+              label={`[${one.rune}] ${one.label}`}
               plain
               dimColor
               onPress={() => void $.prompt.fill({ text: commandText(one.name) })}

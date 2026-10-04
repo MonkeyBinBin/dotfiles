@@ -1,1 +1,1 @@
-{ "name": "skill-bar", "version": "0.1.0", "description": "A game hotbar under the prompt, one slot per project skill and per most used skill; click one to start it", "types": "./types/index.d.ts" }
+{ "name": "skill-bar", "version": "0.1.0", "description": "An MMO skill bar under the prompt, one slot per project skill and per most used skill; click one to start it", "types": "./types/index.d.ts" }

@@ -1,8 +1,8 @@
 import { expect, test } from 'claude-code/testing'
 
-import { SKILL_COLORS, colorFor, toHex } from './colors'
-import { FAVORITES, commandText, slotsFor } from './register'
-import { ICON, SLOT_ROWS, hotbarLines, labelOf, slotWidth } from './hotbar-client'
+import { PANEL, SKILL_COLORS, colorFor, mix, toHex } from './colors'
+import { FAVORITES, commandText, hotbarSlot, slotsFor } from './register'
+import { COOLDOWN_TICKS, SLOT_ROWS, cooldownText, hotbarLines, labelOf, runeOf, slotWidth } from './hotbar-client'
 
 // The slots' names as the hotbar Client was handed them.
 const slotNames = async (ui: { find: (query: { type: 'Client' }) => Promise<{ props?: unknown } | undefined> }) =>
@@ -75,12 +75,12 @@ test('draws one slot per project skill under the engine hint line', async ($, on
   const top = await ui.find({ type: 'Box' })
   const kinds = (top?.children ?? []).map(child => (child as { type?: string }).type)
   expect(kinds).toEqual(['Text', 'Box'])
-  // Each slot one row: edged, iconed and labelled, with no number key or count.
+  // Each slot one row: a rune keycap, then the label, with no number key or count.
   const bar = await hotbarText(ui)
-  expect(bar).toContain('▕')
+  expect(bar).toContain('▐')
+  expect(bar).toContain('G')
+  expect(bar).toContain('▌')
   expect(bar).toContain('gitlab-mr-open')
-  expect(bar).toContain(ICON)
-  expect(bar).toContain('▏')
   expect(bar).not.toContain('╭')
   expect(bar).not.toMatch(/[1-9]/)
 })
@@ -144,7 +144,7 @@ test('a click anywhere on a slot casts it', async ($, on) => {
   await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'skill-bar', surface: 'terminal', component: 'PromptHint', props: HINT_PROPS })
   // The second slot starts one gap past the first, on the same single row.
-  const second = slotWidth({ label: 'commit' }) + 1
+  const second = slotWidth({ label: 'commit' }) + 2
   await ui.pointer({ type: 'down', x: second + 2, y: 0, button: 'left', in: 'hotbar' })
   await ui.pointer({ type: 'up', x: second + 2, y: 0, button: 'left', in: 'hotbar' })
   expect(fills).toEqual(['/issue-start '])
@@ -159,12 +159,12 @@ test('number keys no longer cast', async ($, on) => {
   expect(fills).toEqual([])
 })
 
-test('other surfaces draw a button a slot, iconed like the hotbar', async ($, on) => {
+test('other surfaces draw a button a slot, wearing its rune', async ($, on) => {
   hotbarWorld(on, [])
   await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'skill-bar', surface: 'desktop', component: 'PromptHint', props: HINT_PROPS })
   const buttons = (await ui.findAll({ type: 'Button' })).map(b => b.props?.label)
-  expect(buttons).toEqual([`${ICON} commit`, `${ICON} issue-start`])
+  expect(buttons).toEqual(['[C] commit', '[I] issue-start'])
 })
 
 test('slots wrap into lines that fit the bar', () => {
@@ -172,7 +172,7 @@ test('slots wrap into lines that fit the bar', () => {
   expect(hotbarLines([10, 10, 10], 25)).toEqual([
     [
       { index: 0, x: 0 },
-      { index: 1, x: 11 },
+      { index: 1, x: 12 },
     ],
     [{ index: 2, x: 0 }],
   ])
@@ -184,7 +184,41 @@ test('slots wrap into lines that fit the bar', () => {
 test('slot labels and widths', () => {
   expect(labelOf('mattpocock-skills:diagnosing-bugs')).toBe('diagnosing-bugs')
   expect(labelOf('a-very-long-skill-name-indeed')).toBe('a-very-long-skill…')
-  // Edge, padding, the two-column ⚡, a space, the label, padding, edge.
+  // Spark, keycap, space, the label, space, spark.
   expect(slotWidth({ label: 'commit' })).toBe('commit'.length + 7)
+  expect(runeOf('commit')).toBe('C')
+  expect(runeOf('-x2')).toBe('X')
+  expect(runeOf('…')).toBe('?')
+})
+
+test("each cell is a dark tint of its slot's colour, deeper under the pointer", () => {
+  expect(mix(0xffffff, 0x000000, 0.5)).toBe(0x808080)
+  const slot = hotbarSlot('commit', 0)
+  expect(slot.rune).toBe('C')
+  expect(slot.color).toBe(toHex(colorFor(0)))
+  expect(slot.tint).toBe(toHex(mix(colorFor(0), PANEL, 0.18)))
+  expect(slot.glow).not.toBe(slot.tint)
+})
+
+test('a cast slot cools down from dark to lit, left to right', () => {
+  const text = ' commit '
+  expect(cooldownText(text, 0)).toBe('░▒▓▓▓▓▓▓')
+  const half = cooldownText(text, Math.floor(COOLDOWN_TICKS / 2))
+  expect(half.startsWith(' co')).toBe(true)
+  expect(half).toContain('░')
+  expect(cooldownText(text, COOLDOWN_TICKS)).toBe(text)
+})
+
+test('a click starts the cooldown and it ends on the clock', async ($, on) => {
+  const fills: string[] = []
+  hotbarWorld(on, fills)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'skill-bar', surface: 'terminal', component: 'PromptHint', props: HINT_PROPS })
+  await ui.pointer({ type: 'down', x: 3, y: 0, button: 'left', in: 'hotbar' })
+  await ui.pointer({ type: 'up', x: 3, y: 0, button: 'left', in: 'hotbar' })
+  expect(fills).toEqual(['/commit '])
+  expect(await hotbarText(ui)).toContain('▓')
+  await ui.advance(80 * (COOLDOWN_TICKS + 2))
+  expect(await hotbarText(ui)).not.toContain('▓')
 })
 
