@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # RPG-style status line for Claude Code, matching the rpg-hud / slime-band mods.
 #
-#   line 1  character sheet: class (model) + effort stars, map (dir, branch, PR), clock, gold, loot
-#   line 2  resource bars, drawn as what is LEFT, like a game:
-#             MP  context window      SP  5-hour limit      EN  7-day limit      GP  spend limit
+#   one row of segments, wrapped between segments to fit COLUMNS:
+#     class (model) + effort stars, map (dir, branch, loot, PR), resource bars, clock
+#   resource bars are drawn as what is LEFT, like a game:
+#     MP  context window      ⌛5h / ⌛7d  usage limits      ⛁ cap  spend limit
 #
 # Reads everything from Claude Code's stdin JSON: no credentials, no network.
 # The slime band above the prompt covers turns, tokens and changed-file counts,
@@ -35,39 +36,45 @@ sep=" ${dim}│${reset} "
 
 # ── One jq pass: every field as KEY=value on its own line ──
 fields=$(jq -r '
-  def n: if . == null then "" else tostring end;
-  "model=\(.model.display_name // "Claude")",
+  # Control characters out: a newline would forge a KEY= line, an ESC a terminal sequence.
+  def s: tostring | gsub("[\u0000-\u001f\u007f-\u009f]"; "");
+  def n: if . == null then "" else s end;
+  # Numbers only, so bash arithmetic never evaluates text from the JSON; i drops the fraction.
+  def num: if type == "number" then tostring else "" end;
+  def i: if type == "number" then floor | tostring else "" end;
+  "model=\(.model.display_name // "Claude" | s)",
   "effort=\(.effort.level | n)",
-  "fast=\(.fast_mode // false)",
-  "cwd=\(.workspace.current_dir // .cwd // "")",
-  "worktree=\(.worktree.name // .workspace.git_worktree // "" )",
+  "fast=\(.fast_mode == true)",
+  "cwd=\(.workspace.current_dir // .cwd // "" | s)",
+  "worktree=\(.worktree.name // .workspace.git_worktree // "" | s)",
   "agent=\(.agent.name | n)",
   "vim=\(.vim.mode | n)",
-  "pr=\(.pr.number | n)",
+  "pr=\(.pr.number | i)",
   "pr_state=\(.pr.review_state | n)",
   "pr_url=\(.pr.url | n)",
-  "dur_ms=\(.cost.total_duration_ms // 0)",
-  "cost=\(.cost.total_cost_usd // 0)",
-  "added=\(.cost.total_lines_added // 0)",
-  "removed=\(.cost.total_lines_removed // 0)",
-  "ctx_used=\(.context_window.used_percentage | n)",
-  "ctx_size=\(.context_window.context_window_size // 0)",
-  "ctx_tokens=\(.context_window.total_input_tokens // 0)",
-  "h5=\(.rate_limits.five_hour.used_percentage | n)",
-  "h5_reset=\(.rate_limits.five_hour.resets_at | n)",
-  "d7=\(.rate_limits.seven_day.used_percentage | n)",
-  "d7_reset=\(.rate_limits.seven_day.resets_at | n)",
-  "sp=\(.rate_limits.spend_limit.used_percentage | n)",
-  "sp_usd=\(.rate_limits.spend_limit.used_usd | n)",
-  "sp_limit=\(.rate_limits.spend_limit.limit_usd | n)",
-  "cache_warm=\(.prompt_cache.warm // false)",
-  "cache_hit=\(.prompt_cache.hit_ratio | n)"
+  "dur_ms=\(.cost.total_duration_ms // 0 | i)",
+  "added=\(.cost.total_lines_added // 0 | i)",
+  "removed=\(.cost.total_lines_removed // 0 | i)",
+  "ctx_used=\(.context_window.used_percentage | num)",
+  "ctx_size=\(.context_window.context_window_size // 0 | i)",
+  "ctx_tokens=\(.context_window.total_input_tokens // 0 | i)",
+  "h5=\(.rate_limits.five_hour.used_percentage | num)",
+  "h5_reset=\(.rate_limits.five_hour.resets_at | i)",
+  "d7=\(.rate_limits.seven_day.used_percentage | num)",
+  "d7_reset=\(.rate_limits.seven_day.resets_at | i)",
+  "sp=\(.rate_limits.spend_limit.used_percentage | num)",
+  "sp_usd=\(.rate_limits.spend_limit.used_usd | num)",
+  "sp_limit=\(.rate_limits.spend_limit.limit_usd | num)",
+  "cache_warm=\(.prompt_cache.warm == true)",
+  "cache_hit=\(.prompt_cache.hit_ratio | num)"
 ' <<<"$input" 2>/dev/null) || fields=""
 
 # Assign without eval, so nothing in the JSON can run as shell.
 while IFS= read -r line; do
     key=${line%%=*}
     val=${line#*=}
+    # A plain name only: printf -v would evaluate an array subscript like x[$(cmd)].
+    [[ $key =~ ^[a-z0-9_]+$ ]] || continue
     printf -v "f_$key" '%s' "$val"
 done <<<"$fields"
 
@@ -93,24 +100,29 @@ fmt_duration() {
     fi
 }
 
-# Epoch seconds → "3:05pm" today, "oct 8" further out.
+# Epoch seconds → "oct 4 3:05pm": always the date, so a reset is never ambiguous.
 fmt_reset() {
-    local epoch=$1 now style out
+    local epoch=$1 out
     [ -z "$epoch" ] && return
-    now=$(date +%s)
-    if [ $(( epoch - now )) -lt 86400 ]; then style='+%l:%M%p'; else style='+%b %-d'; fi
-    out=$(LC_ALL=C date -r "$epoch" "$style" 2>/dev/null || LC_ALL=C date -d "@$epoch" "$style" 2>/dev/null)
-    printf '%s' "$out" | sed 's/^ *//' | tr '[:upper:]' '[:lower:]'
+    out=$(LC_ALL=C date -r "$epoch" '+%b %-d %l:%M%p' 2>/dev/null || LC_ALL=C date -d "@$epoch" '+%b %-d %l:%M%p' 2>/dev/null)
+    printf '%s' "$out" | sed 's/  */ /g; s/^ //' | tr '[:upper:]' '[:lower:]'
 }
 
-# bar <remaining-pct> <width> <colour>: filled ▰ for what is left, red when low.
+# Same steps as rpg-hud's gaugeColor, on the unrounded share: the resource's own
+# colour above 60% left, amber above 30%, red below.
+gauge_color() {
+    case $(awk -v u="$1" 'BEGIN { l = 100 - u; print (l > 60 ? 0 : (l > 30 ? 1 : 2)) }') in
+        0) printf '%s' "$2" ;;
+        1) printf '%s' "$c_amber" ;;
+        *) printf '%s' "$c_red" ;;
+    esac
+}
+
+# bar <remaining-pct> <width> <colour>: filled ▰ for what is left.
 bar() {
     local left=$1 width=$2 color=$3 filled i out=""
-    [ "$left" -lt 0 ] && left=0
-    [ "$left" -gt 100 ] && left=100
     filled=$(( (left * width + 50) / 100 ))
     [ "$left" -gt 0 ] && [ "$filled" -eq 0 ] && filled=1
-    [ "$left" -le 15 ] && color=$c_red
     out+="$color"
     for ((i = 0; i < filled; i++)); do out+='▰'; done
     out+="${dim}"
@@ -120,18 +132,22 @@ bar() {
 
 # resource <label> <label-colour> <used-pct> <width> [tail]
 resource() {
-    local label=$1 color=$2 used left pct_color tail=${5:-}
+    local label=$1 color=$2 used left gauge tail=${5:-}
     used=$(round "$3")
     left=$(( 100 - used ))
-    pct_color=$color
-    [ "$left" -le 15 ] && pct_color=$c_red
-    printf '%s%s%s %s %s%3d%%%s%s' "$color$bold" "$label" "$reset" "$(bar "$left" "$4" "$color")" "$pct_color" "$left" "$reset" "$tail"
+    # Spend can run past its limit: never show less than nothing left.
+    [ "$left" -lt 0 ] && left=0
+    [ "$left" -gt 100 ] && left=100
+    gauge=$(gauge_color "$3" "$color")
+    printf '%s%s%s %s %s%3d%%%s%s' "$color$bold" "$label" "$reset" "$(bar "$left" "$4" "$gauge")" "$gauge" "$left" "$reset" "$tail"
 }
 
 # OSC 8 hyperlink.
 link() { printf '%s]8;;%s%s\\%s%s]8;;%s\\' "$esc" "$1" "$esc" "$2" "$esc" "$esc"; }
 
-# ── Line 1: character sheet ────────────────────────────────
+# ── Segments, in reading order ─────────────────────────────
+segs=()
+
 case "$f_effort" in
     low)    stars='★☆☆☆☆' ;;
     medium) stars='★★☆☆☆' ;;
@@ -140,22 +156,24 @@ case "$f_effort" in
     max)    stars='★★★★★' ;;
     *)      stars='' ;;
 esac
-
-line1="${c_gold}⚔${reset} ${bold}${c_blue}${f_model}${reset}"
-[ -n "$stars" ] && line1+=" ${c_gold}${stars}${reset}"
-[ "$f_fast" = "true" ] && line1+=" ${c_amber}⚡${reset}"
-[ -n "$f_agent" ] && line1+=" ${dim}as${reset} ${c_purple}${f_agent}${reset}"
+seg="${c_gold}⚔${reset} ${bold}${c_blue}${f_model}${reset}"
+[ -n "$stars" ] && seg+=" ${c_gold}${stars}${reset}"
+[ "$f_fast" = "true" ] && seg+=" ${c_amber}⚡${reset}"
+[ -n "$f_agent" ] && seg+=" ${dim}as${reset} ${c_purple}${f_agent}${reset}"
+segs+=("$seg")
 
 cwd=${f_cwd:-$PWD}
-line1+="${sep}${c_cyan}⌂ $(basename "$cwd")${reset}"
+seg="${c_cyan}⌂ $(basename "$cwd")${reset}"
 if git -C "$cwd" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     branch=$(git -C "$cwd" symbolic-ref --short HEAD 2>/dev/null || git -C "$cwd" rev-parse --short HEAD 2>/dev/null)
     dirty=""
     [ -n "$(git --no-optional-locks -C "$cwd" status --porcelain 2>/dev/null | head -1)" ] && dirty="${c_red}✎"
-    line1+=" ${c_green}⎇ ${branch}${dirty}${reset}"
+    seg+=" ${c_green}⎇ ${branch}${dirty}${reset}"
 fi
-[ -n "$f_worktree" ] && line1+=" ${dim}⑂${reset} ${c_frost}${f_worktree}${reset}"
-
+if [ "${f_added:-0}" -gt 0 ] || [ "${f_removed:-0}" -gt 0 ]; then
+    seg+=" ${c_green}+${f_added}${reset} ${c_red}-${f_removed}${reset}"
+fi
+[ -n "$f_worktree" ] && seg+=" ${dim}⑂${reset} ${c_frost}${f_worktree}${reset}"
 if [ -n "$f_pr" ]; then
     case "$f_pr_state" in
         approved)          pr_color=$c_green ;;
@@ -165,48 +183,67 @@ if [ -n "$f_pr" ]; then
     esac
     pr_text="⚑ #${f_pr}"
     [ -n "$f_pr_url" ] && pr_text=$(link "$f_pr_url" "$pr_text")
-    line1+=" ${pr_color}${pr_text}${reset}"
+    seg+=" ${pr_color}${pr_text}${reset}"
 fi
+segs+=("$seg")
 
-[ "${f_dur_ms:-0}" -gt 0 ] 2>/dev/null && line1+="${sep}${c_white}◷ $(fmt_duration "$f_dur_ms")${reset}"
-line1+="${sep}${c_gold}◎ $(awk -v c="${f_cost:-0}" 'BEGIN { printf "$%.2f", c }')${reset}"
-if [ "${f_added:-0}" -gt 0 ] || [ "${f_removed:-0}" -gt 0 ]; then
-    line1+="${sep}${c_green}+${f_added}${reset} ${c_red}-${f_removed}${reset}"
-fi
-[ -n "$f_vim" ] && line1+="${sep}${c_purple}${f_vim}${reset}"
-
-# ── Line 2: resource bars ──────────────────────────────────
+# Resources, as what is LEFT. MP is the context window, the same MP as the
+# rpg-hud hero panel; the limits are the account's, so they go by their window.
 if [ "$cols" -lt 100 ]; then width=6; else width=10; fi
-bars=()
-
 if [ -n "$f_ctx_used" ]; then
-    ctx_tail=" ${dim}$(fmt_k "${f_ctx_tokens:-0}")/$(fmt_k "${f_ctx_size:-0}")${reset}"
+    tail=" ${dim}$(fmt_k "${f_ctx_tokens:-0}")/$(fmt_k "${f_ctx_size:-0}")${reset}"
     [ "$f_cache_warm" = "true" ] && [ -n "$f_cache_hit" ] &&
-        ctx_tail+=" ${c_amber}♨$(round "$(awk -v h="$f_cache_hit" 'BEGIN { print h * 100 }')")%${reset}"
-    bars+=("$(resource MP "$c_blue" "$f_ctx_used" "$width" "$ctx_tail")")
+        tail+=" ${c_amber}♨ ${dim}cache${reset}${c_amber} $(round "$(awk -v h="$f_cache_hit" 'BEGIN { print h * 100 }')")%${reset}"
+    segs+=("$(resource MP "$c_blue" "$f_ctx_used" "$width" "$tail")")
 fi
 if [ -n "$f_h5" ]; then
     reset_at=$(fmt_reset "$f_h5_reset")
-    bars+=("$(resource SP "$c_gold" "$f_h5" "$width" "${reset_at:+ ${dim}⟳${reset} ${c_white}${reset_at}${reset}}")")
+    segs+=("$(resource '⌛5h' "$c_gold" "$f_h5" "$width" "${reset_at:+ ${dim}⟳${reset} ${c_white}${reset_at}${reset}}")")
 fi
 if [ -n "$f_d7" ]; then
     reset_at=$(fmt_reset "$f_d7_reset")
-    bars+=("$(resource EN "$c_purple" "$f_d7" "$width" "${reset_at:+ ${dim}⟳${reset} ${c_white}${reset_at}${reset}}")")
+    segs+=("$(resource '⌛7d' "$c_purple" "$f_d7" "$width" "${reset_at:+ ${dim}⟳${reset} ${c_white}${reset_at}${reset}}")")
 fi
 if [ -n "$f_sp" ]; then
-    gp_tail=""
+    tail=""
     [ -n "$f_sp_usd" ] && [ -n "$f_sp_limit" ] &&
-        gp_tail=" ${dim}$(awk -v u="$f_sp_usd" -v l="$f_sp_limit" 'BEGIN { printf "$%.0f/$%.0f", u, l }')${reset}"
-    bars+=("$(resource GP "$c_green" "$f_sp" "$width" "$gp_tail")")
+        tail=" ${dim}$(awk -v u="$f_sp_usd" -v l="$f_sp_limit" 'BEGIN { printf "$%.0f/$%.0f", u, l }')${reset}"
+    segs+=("$(resource '⛁ cap' "$c_green" "$f_sp" "$width" "$tail")")
 fi
 
-# ── Output ─────────────────────────────────────────────────
-printf '%s' "$line1"
-if [ "${#bars[@]}" -gt 0 ]; then
-    printf '\n'
-    for i in "${!bars[@]}"; do
-        [ "$i" -gt 0 ] && printf '%s' "$sep"
-        printf '%s' "${bars[$i]}"
-    done
-fi
+[ "${f_dur_ms:-0}" -gt 0 ] 2>/dev/null && segs+=("${c_white}◷ $(fmt_duration "$f_dur_ms")${reset}")
+[ -n "$f_vim" ] && segs+=("${c_purple}${f_vim}${reset}")
+
+# ── Output: one line, wrapped between segments ─────────────
+# Columns each segment takes on screen, in one perl pass: escapes dropped,
+# East Asian wide / fullwidth glyphs (CJK, ⚡, ⌛) counted twice. Perl decodes
+# UTF-8 itself, so this holds under any locale and on bash 3.2, whose bracket
+# patterns mis-match multibyte ranges.
+widths=()
+while IFS= read -r w; do widths+=("$w"); done < <(perl -CSA -e '
+    for (@ARGV) {
+        s/\e\[[0-9;]*m//g;
+        s/\e\]8;;[^\e]*\e\\//g;
+        my $wide = () = /[\p{EA=W}\p{EA=F}]/g;
+        print length($_) + $wide, "\n";
+    }' "${segs[@]}" 2>/dev/null)
+
+# Claude Code pads the row; keep a little slack so the terminal never wraps it first.
+limit=$(( cols - 2 ))
+sep_width=3
+used=0
+for i in "${!segs[@]}"; do
+    seg=${segs[$i]}
+    w=${widths[$i]:-${#seg}}
+    if [ "$i" -eq 0 ]; then
+        printf '%s' "$seg"
+        used=$w
+    elif [ $(( used + sep_width + w )) -le "$limit" ]; then
+        printf '%s%s' "$sep" "$seg"
+        used=$(( used + sep_width + w ))
+    else
+        printf '\n%s' "$seg"
+        used=$w
+    fi
+done
 exit 0
