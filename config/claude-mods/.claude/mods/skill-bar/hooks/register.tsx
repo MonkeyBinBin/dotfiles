@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { SkillNames } from '../types'
-import { hotkeyOf, labelOf } from './hotbar-client'
+import { ICON, labelOf } from './hotbar-client'
 import type { HotbarProps, HotbarSlot } from './hotbar-client'
 import { colorFor, toHex } from './colors'
 
@@ -47,13 +47,11 @@ async function readFavorites($: EngineInterface) {
   return { uses, known }
 }
 
-// One hotbar slot in its own colour; a favourite is a skill picked up elsewhere and used often.
-export const hotbarSlot = (name: string, slot: number, uses: number, isFavorite: boolean): HotbarSlot => ({
+// One hotbar slot in its own colour.
+export const hotbarSlot = (name: string, slot: number): HotbarSlot => ({
   name,
   label: labelOf(name),
   color: toHex(colorFor(slot)),
-  uses,
-  isFavorite,
 })
 
 // Pressing a slot puts the command in the prompt box, so arguments (an issue number) can follow.
@@ -82,7 +80,7 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // The hotbar Client posts `{ cast }` when a slot is clicked or its number key pressed.
+  // The hotbar Client posts `{ cast }` when a slot is clicked.
   on('ui.message', async ($, e, next) => {
     const data = (e.data ?? {}) as { cast?: unknown }
     if (e.element !== 'hotbar' || typeof data.cast !== 'string') return next(e)
@@ -98,10 +96,10 @@ export const register: Register = on => {
     const names = slotsFor(project, favorites.uses, favorites.known)
     if (names.length === 0) return engine
 
-    const slots = names.map((name, slot) => hotbarSlot(name, slot, favorites.uses[name] ?? 0, !project.includes(name)))
+    const slots = names.map((name, slot) => hotbarSlot(name, slot))
     const { Box, Button } = $.ui.resolve(e)
 
-    // The terminal draws a game's hotbar: framed slots, a click anywhere on one casts it, the number keys too.
+    // The terminal draws a game's hotbar: one row of cells, a click anywhere on one casts it.
     if (e.surface === 'terminal') {
       const { Client } = $.ui.resolve(e)
       const hotbar = { slots } satisfies HotbarProps
@@ -115,15 +113,15 @@ export const register: Register = on => {
       )
     }
 
-    // Other surfaces: a button a slot, numbered as the hotbar's keys are.
+    // Other surfaces: a button a slot.
     return (
       <Box flexDirection="column">
         {engine}
         <Box flexDirection="row" flexWrap="wrap" columnGap={2} marginY={1}>
-          {slots.map((one, slot) => (
+          {slots.map(one => (
             <Button
               key={one.name}
-              label={`${hotkeyOf(slot) ?? '·'} ${one.isFavorite ? '★' : ''}${one.label}`}
+              label={`${ICON} ${one.label}`}
               plain
               dimColor
               onPress={() => void $.prompt.fill({ text: commandText(one.name) })}

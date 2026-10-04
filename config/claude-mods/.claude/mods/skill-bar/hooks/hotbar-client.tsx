@@ -7,8 +7,6 @@ export type HotbarSlot = {
   label: string
   // The slot's own colour, as hex.
   color: string
-  uses: number
-  isFavorite: boolean
 }
 
 export type HotbarProps = { slots: HotbarSlot[] }
@@ -23,27 +21,22 @@ type HotbarState = {
 
 const FRAME_MS = 80
 const FLASH_TICKS = 4
-// A slot is three rows: its frame's top, the icon and label, the frame's bottom.
-export const SLOT_ROWS = 3
+// A slot is one row: `▕ ⚡ label ▏`, its inside on a dark backdrop like a hotbar cell.
+export const SLOT_ROWS = 1
 const GAP = 1
 // Every slot's icon: an emoji draws more than a few pixel blocks could. Two columns wide.
 export const ICON = '⚡'
 const ICON_COLUMNS = 2
 // The longest label a slot shows whole.
 const MAX_LABEL = 18
-// The frames around a slot: border, padding, icon, space, label, padding, border.
+// Around the label: edge, padding, icon, space, padding, edge.
 const CHROME = 1 + 1 + ICON_COLUMNS + 1 + 1 + 1
-// The flash's backdrop, as the rpg-hud menu's selected card.
-const CARD = '#2a2342'
+// The cell's backdrop at rest, under the pointer and while it flashes (the last as rpg-hud's selected card).
+const CELL = '#1e1a2b'
+const CELL_HOVER = '#2a2342'
+const CELL_FLASH = '#3a2f5c'
 // The width laid out before the first layout reports the region's.
 const FALLBACK_COLUMNS = 80
-
-// The number key that casts a slot: 1–9, then 0 for the tenth; none past it.
-export const hotkeyOf = (index: number): string | undefined => (index < 9 ? String(index + 1) : index === 9 ? '0' : undefined)
-
-// The tag on a slot's bottom edge: a star for a favourite, then how often it was cast.
-export const badgeOf = (slot: Pick<HotbarSlot, 'uses' | 'isFavorite'>): string =>
-  [slot.isFavorite ? '★' : '', slot.uses > 0 ? `×${slot.uses}` : ''].filter(part => part !== '').join(' ')
 
 // `name` past its `plugin:` prefix, cut to fit a slot.
 export const labelOf = (name: string): string => {
@@ -51,14 +44,7 @@ export const labelOf = (name: string): string => {
   return bare.length > MAX_LABEL ? `${bare.slice(0, MAX_LABEL - 1)}…` : bare
 }
 
-// The label's columns: the label, or more when the badge needs it. The bottom edge holds ` badge ` with at least
-// one rule before it and `─╯` after: badge + 5 columns against the label's + 7 across the slot.
-const labelWidth = (slot: Pick<HotbarSlot, 'label' | 'uses' | 'isFavorite'>) => {
-  const badge = badgeOf(slot)
-  return Math.max(slot.label.length, badge === '' ? 0 : badge.length - 1)
-}
-
-export const slotWidth = (slot: Pick<HotbarSlot, 'label' | 'uses' | 'isFavorite'>): number => labelWidth(slot) + CHROME
+export const slotWidth = (slot: Pick<HotbarSlot, 'label'>): number => slot.label.length + CHROME
 
 // The slots in lines that fit `columns`: each line as many as fit, a slot wider than the whole bar alone on one.
 export const hotbarLines = (widths: readonly number[], columns: number): { index: number; x: number }[][] => {
@@ -110,69 +96,25 @@ const Hotbar: ClientModule<HotbarProps, HotbarState> = (props, surface) => {
     if (state.hover !== index && e.type !== 'down') surface.setState({ ...state, hover: index })
   })
 
-  // Once a click has given the bar the focus, the number keys cast as a game's hotbar does.
-  surface.onKey(e => {
-    const index = props.slots.findIndex((_, at) => hotkeyOf(at) === e.key)
-    if (index >= 0) cast(index)
-  })
-
   const drawSlot = (slot: HotbarSlot, index: number) => {
-    const width = widths[index] ?? 0
-    const inner = width - 2
     const isFlash = state.cast?.index === index
     const isHover = !isFlash && state.hover === index
-    const frame = isFlash ? 'yellow' : isHover ? slot.color : 'gray'
-    const isFrameDim = !isFlash && !isHover
-    const key = hotkeyOf(index)
-    const badge = badgeOf(slot)
-    const badgeText = badge === '' ? '' : ` ${badge} `
-    const back = isFlash ? { backgroundColor: CARD } : {}
-    const label = slot.label.padEnd(labelWidth(slot))
+    const edge = isFlash ? 'yellow' : isHover ? slot.color : 'gray'
+    const isDim = !isFlash && !isHover
+    const back = { backgroundColor: isFlash ? CELL_FLASH : isHover ? CELL_HOVER : CELL }
 
     return (
-      <Box key={slot.name} flexDirection="column" width={width}>
-        <Text>
-          <Text color={frame} dimColor={isFrameDim}>
-            ╭─
-          </Text>
-          {key === undefined ? (
-            <Text color={frame} dimColor={isFrameDim}>
-              ─
-            </Text>
-          ) : (
-            <Text bold color={isFlash ? 'yellow' : isHover ? slot.color : 'white'}>
-              {key}
-            </Text>
-          )}
-          <Text color={frame} dimColor={isFrameDim}>
-            {'─'.repeat(Math.max(0, inner - 2))}╮
-          </Text>
+      <Box key={slot.name} flexDirection="row" width={widths[index] ?? 0} height={1}>
+        <Text color={edge} dimColor={isDim}>
+          ▕
         </Text>
-        <Box flexDirection="row" height={1}>
-          <Text color={frame} dimColor={isFrameDim}>
-            │
-          </Text>
-          <Text {...back}> </Text>
-          <Text {...back}>{ICON}</Text>
-          <Text {...back}> </Text>
-          <Text bold={!isFrameDim} color={isFlash ? 'yellow' : isHover ? slot.color : 'white'} dimColor={isFrameDim} {...back}>
-            {label}
-          </Text>
-          <Text {...back}> </Text>
-          <Text color={frame} dimColor={isFrameDim}>
-            │
-          </Text>
-        </Box>
-        <Text>
-          <Text color={frame} dimColor={isFrameDim}>
-            ╰{'─'.repeat(Math.max(0, inner - badgeText.length - 1))}
-          </Text>
-          <Text color={slot.isFavorite ? 'yellow' : frame} dimColor={isFrameDim}>
-            {badgeText}
-          </Text>
-          <Text color={frame} dimColor={isFrameDim}>
-            ─╯
-          </Text>
+        <Text {...back}> {ICON} </Text>
+        <Text bold={!isDim} color={isFlash ? 'yellow' : isHover ? slot.color : 'white'} {...back}>
+          {slot.label}
+        </Text>
+        <Text {...back}> </Text>
+        <Text color={edge} dimColor={isDim}>
+          ▏
         </Text>
       </Box>
     )

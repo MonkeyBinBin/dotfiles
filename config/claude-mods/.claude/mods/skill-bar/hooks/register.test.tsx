@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 
 import { SKILL_COLORS, colorFor, toHex } from './colors'
 import { FAVORITES, commandText, slotsFor } from './register'
-import { ICON, SLOT_ROWS, badgeOf, hotbarLines, hotkeyOf, labelOf, slotWidth } from './hotbar-client'
+import { ICON, SLOT_ROWS, hotbarLines, labelOf, slotWidth } from './hotbar-client'
 
 // The slots' names as the hotbar Client was handed them.
 const slotNames = async (ui: { find: (query: { type: 'Client' }) => Promise<{ props?: unknown } | undefined> }) =>
@@ -75,13 +75,14 @@ test('draws one slot per project skill under the engine hint line', async ($, on
   const top = await ui.find({ type: 'Box' })
   const kinds = (top?.children ?? []).map(child => (child as { type?: string }).type)
   expect(kinds).toEqual(['Text', 'Box'])
-  // Each slot framed, numbered and labelled.
+  // Each slot one row: edged, iconed and labelled, with no number key or count.
   const bar = await hotbarText(ui)
-  expect(bar).toContain('╭─')
-  expect(bar).toContain('1')
+  expect(bar).toContain('▕')
   expect(bar).toContain('gitlab-mr-open')
   expect(bar).toContain(ICON)
-  expect(bar).toContain('─╯')
+  expect(bar).toContain('▏')
+  expect(bar).not.toContain('╭')
+  expect(bar).not.toMatch(/[1-9]/)
 })
 
 test('the most used skills join the project ones, most used first', () => {
@@ -112,13 +113,15 @@ test("reads rpg-hud's skill counts for the favourite slots", async ($, on) => {
   await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'skill-bar', surface: 'terminal', component: 'PromptHint', props: HINT_PROPS })
   expect(await slotNames(ui)).toEqual(['simplify', 'commit'])
-  // Favourites wear a star and how often they were cast.
-  expect(await hotbarText(ui)).toContain('★ ×5')
+  // No use counts or stars on the slots.
+  const bar = await hotbarText(ui)
+  expect(bar).not.toContain('×')
+  expect(bar).not.toContain('★')
 })
 
 // --- The hotbar ---
 
-const hotbarWorld = (on: Parameters<Parameters<typeof test>[1]>[1], fills: string[]) => {
+const hotbarWorld = (on: Parameters<Extract<Parameters<typeof test>[1], (...args: never[]) => unknown>>[1], fills: string[]) => {
   on('session.start', async (_$, e) => ({ cwd: e.cwd }))
   on('session.cwd', async () => ({ value: '/proj' }))
   on('fs.exists', async () => ({ value: true }))
@@ -140,29 +143,28 @@ test('a click anywhere on a slot casts it', async ($, on) => {
   hotbarWorld(on, fills)
   await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'skill-bar', surface: 'terminal', component: 'PromptHint', props: HINT_PROPS })
-  // The second slot starts one gap past the first; its bottom-right corner is still the slot.
-  const second = slotWidth({ label: 'commit', uses: 0, isFavorite: false }) + 1
-  await ui.pointer({ type: 'down', x: second + 2, y: 2, button: 'left', in: 'hotbar' })
-  await ui.pointer({ type: 'up', x: second + 2, y: 2, button: 'left', in: 'hotbar' })
+  // The second slot starts one gap past the first, on the same single row.
+  const second = slotWidth({ label: 'commit' }) + 1
+  await ui.pointer({ type: 'down', x: second + 2, y: 0, button: 'left', in: 'hotbar' })
+  await ui.pointer({ type: 'up', x: second + 2, y: 0, button: 'left', in: 'hotbar' })
   expect(fills).toEqual(['/issue-start '])
 })
 
-test('the number keys cast as a hotbar does', async ($, on) => {
+test('number keys no longer cast', async ($, on) => {
   const fills: string[] = []
   hotbarWorld(on, fills)
   await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'skill-bar', surface: 'terminal', component: 'PromptHint', props: HINT_PROPS })
-  await ui.key({ key: '1', in: 'hotbar' })
-  await ui.key({ key: '9', in: 'hotbar' })
-  expect(fills).toEqual(['/commit '])
+  await ui.key({ key: '1', in: 'hotbar' }).catch(() => undefined)
+  expect(fills).toEqual([])
 })
 
-test('other surfaces number their buttons as the hotbar does', async ($, on) => {
+test('other surfaces draw a button a slot, iconed like the hotbar', async ($, on) => {
   hotbarWorld(on, [])
   await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'skill-bar', surface: 'desktop', component: 'PromptHint', props: HINT_PROPS })
   const buttons = (await ui.findAll({ type: 'Button' })).map(b => b.props?.label)
-  expect(buttons).toEqual(['1 commit', '2 issue-start'])
+  expect(buttons).toEqual([`${ICON} commit`, `${ICON} issue-start`])
 })
 
 test('slots wrap into lines that fit the bar', () => {
@@ -176,18 +178,13 @@ test('slots wrap into lines that fit the bar', () => {
   ])
   // A slot wider than the bar still gets a line of its own.
   expect(hotbarLines([50], 30)).toEqual([[{ index: 0, x: 0 }]])
-  expect(SLOT_ROWS).toBe(3)
+  expect(SLOT_ROWS).toBe(1)
 })
 
-test('slot labels, keys and badges', () => {
+test('slot labels and widths', () => {
   expect(labelOf('mattpocock-skills:diagnosing-bugs')).toBe('diagnosing-bugs')
   expect(labelOf('a-very-long-skill-name-indeed')).toBe('a-very-long-skill…')
-  expect([0, 8, 9, 10].map(hotkeyOf)).toEqual(['1', '9', '0', undefined])
-  expect(badgeOf({ uses: 0, isFavorite: false })).toBe('')
-  expect(badgeOf({ uses: 12, isFavorite: true })).toBe('★ ×12')
-  // A short label still leaves the badge its rule: `╰` + rule + ` badge ` + `─╯`.
-  expect(slotWidth({ label: 'go', uses: 1234, isFavorite: true })).toBeGreaterThanOrEqual('★ ×1234'.length + 2 + 3)
-  // Border, padding, the two-column ⚡, a space, the label, padding, border.
-  expect(slotWidth({ label: 'commit', uses: 0, isFavorite: false })).toBe('commit'.length + 7)
+  // Edge, padding, the two-column ⚡, a space, the label, padding, edge.
+  expect(slotWidth({ label: 'commit' })).toBe('commit'.length + 7)
 })
 
