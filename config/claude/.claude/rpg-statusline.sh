@@ -42,6 +42,10 @@ fields=$(jq -r '
   # Numbers only, so bash arithmetic never evaluates text from the JSON; i drops the fraction.
   def num: if type == "number" then tostring else "" end;
   def i: if type == "number" then floor | tostring else "" end;
+  # A used share as what is LEFT, rounded and held to 0–100, and its gauge step on the unrounded share
+  # (rpg-hud gaugeColor: 0 above 60% left, 1 above 30%, 2 below), so no awk runs per bar.
+  def left: if type == "number" then [0, ([100, 100 - (. + 0.5 | floor)] | min)] | max | tostring else "" end;
+  def level: if type == "number" then (100 - .) as $l | if $l > 60 then "0" elif $l > 30 then "1" else "2" end else "" end;
   "model=\(.model.display_name // "Claude" | s)",
   "effort=\(.effort.level | n)",
   "fast=\(.fast_mode == true)",
@@ -55,18 +59,22 @@ fields=$(jq -r '
   "dur_ms=\(.cost.total_duration_ms // 0 | i)",
   "added=\(.cost.total_lines_added // 0 | i)",
   "removed=\(.cost.total_lines_removed // 0 | i)",
-  "ctx_used=\(.context_window.used_percentage | num)",
+  "ctx_left=\(.context_window.used_percentage | left)",
+  "ctx_level=\(.context_window.used_percentage | level)",
   "ctx_size=\(.context_window.context_window_size // 0 | i)",
   "ctx_tokens=\(.context_window.total_input_tokens // 0 | i)",
-  "h5=\(.rate_limits.five_hour.used_percentage | num)",
+  "h5_left=\(.rate_limits.five_hour.used_percentage | left)",
+  "h5_level=\(.rate_limits.five_hour.used_percentage | level)",
   "h5_reset=\(.rate_limits.five_hour.resets_at | i)",
-  "d7=\(.rate_limits.seven_day.used_percentage | num)",
+  "d7_left=\(.rate_limits.seven_day.used_percentage | left)",
+  "d7_level=\(.rate_limits.seven_day.used_percentage | level)",
   "d7_reset=\(.rate_limits.seven_day.resets_at | i)",
-  "sp=\(.rate_limits.spend_limit.used_percentage | num)",
+  "sp_left=\(.rate_limits.spend_limit.used_percentage | left)",
+  "sp_level=\(.rate_limits.spend_limit.used_percentage | level)",
   "sp_usd=\(.rate_limits.spend_limit.used_usd | num)",
   "sp_limit=\(.rate_limits.spend_limit.limit_usd | num)",
   "cache_warm=\(.prompt_cache.warm == true)",
-  "cache_hit=\(.prompt_cache.hit_ratio | num)"
+  "cache_pct=\(.prompt_cache.hit_ratio | if type == "number" then . * 100 + 0.5 | floor | tostring else "" end)"
 ' <<<"$input" 2>/dev/null) || fields=""
 
 # Assign without eval, so nothing in the JSON can run as shell.
@@ -77,12 +85,12 @@ while IFS= read -r line; do
     [[ $key =~ ^[a-z0-9_]+$ ]] || continue
     printf -v "f_$key" '%s' "$val"
 done <<<"$fields"
+# jq missing or the JSON unreadable: still name the class.
+f_model=${f_model:-Claude}
 
 cols=${COLUMNS:-120}
 
 # ── Helpers ────────────────────────────────────────────────
-round() { awk -v x="$1" 'BEGIN { printf "%d", (x == "" ? 0 : x + 0.5) }'; }
-
 fmt_k() {
     local n=$1
     if [ "$n" -ge 1000000 ]; then awk -v n="$n" 'BEGIN { printf "%.1fM", n / 1e6 }'
@@ -108,10 +116,9 @@ fmt_reset() {
     printf '%s' "$out" | sed 's/  */ /g; s/^ //' | tr '[:upper:]' '[:lower:]'
 }
 
-# Same steps as rpg-hud's gaugeColor, on the unrounded share: the resource's own
-# colour above 60% left, amber above 30%, red below.
+# gauge_color <level> <colour>: the resource's own colour, then amber, then red (see `level` in jq).
 gauge_color() {
-    case $(awk -v u="$1" 'BEGIN { l = 100 - u; print (l > 60 ? 0 : (l > 30 ? 1 : 2)) }') in
+    case $1 in
         0) printf '%s' "$2" ;;
         1) printf '%s' "$c_amber" ;;
         *) printf '%s' "$c_red" ;;
@@ -130,16 +137,12 @@ bar() {
     printf '%s%s' "$out" "$reset"
 }
 
-# resource <label> <label-colour> <used-pct> <width> [tail]
+# resource <label> <label-colour> <left-pct> <level> <width> [tail]
+# left is already held to 0–100 by jq: spend can run past its limit, never below nothing left.
 resource() {
-    local label=$1 color=$2 used left gauge tail=${5:-}
-    used=$(round "$3")
-    left=$(( 100 - used ))
-    # Spend can run past its limit: never show less than nothing left.
-    [ "$left" -lt 0 ] && left=0
-    [ "$left" -gt 100 ] && left=100
-    gauge=$(gauge_color "$3" "$color")
-    printf '%s%s%s %s %s%3d%%%s%s' "$color$bold" "$label" "$reset" "$(bar "$left" "$4" "$gauge")" "$gauge" "$left" "$reset" "$tail"
+    local label=$1 color=$2 left=$3 gauge tail=${6:-}
+    gauge=$(gauge_color "$4" "$color")
+    printf '%s%s%s %s %s%3d%%%s%s' "$color$bold" "$label" "$reset" "$(bar "$left" "$5" "$gauge")" "$gauge" "$left" "$reset" "$tail"
 }
 
 # OSC 8 hyperlink.
@@ -164,10 +167,18 @@ segs+=("$seg")
 
 cwd=${f_cwd:-$PWD}
 seg="${c_cyan}⌂ $(basename "$cwd")${reset}"
-if git -C "$cwd" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    branch=$(git -C "$cwd" symbolic-ref --short HEAD 2>/dev/null || git -C "$cwd" rev-parse --short HEAD 2>/dev/null)
-    dirty=""
-    [ -n "$(git --no-optional-locks -C "$cwd" status --porcelain 2>/dev/null | head -1)" ] && dirty="${c_red}✎"
+# One git call for branch and dirty: porcelain v2 heads its entries with `# branch.*` lines.
+if git_status=$(git --no-optional-locks -C "$cwd" status --porcelain=v2 --branch 2>/dev/null); then
+    branch="" oid="" dirty=""
+    while IFS= read -r line; do
+        case $line in
+            '# branch.head '*) branch=${line#'# branch.head '} ;;
+            '# branch.oid '*)  oid=${line#'# branch.oid '} ;;
+            '#'*) ;;
+            *) dirty="${c_red}✎"; break ;;
+        esac
+    done <<<"$git_status"
+    [ "$branch" = "(detached)" ] && branch=${oid:0:7}
     seg+=" ${c_green}⎇ ${branch}${dirty}${reset}"
 fi
 if [ "${f_added:-0}" -gt 0 ] || [ "${f_removed:-0}" -gt 0 ]; then
@@ -190,25 +201,25 @@ segs+=("$seg")
 # Resources, as what is LEFT. MP is the context window, the same MP as the
 # rpg-hud hero panel; the limits are the account's, so they go by their window.
 if [ "$cols" -lt 100 ]; then width=6; else width=10; fi
-if [ -n "$f_ctx_used" ]; then
+if [ -n "$f_ctx_left" ]; then
     tail=" ${dim}$(fmt_k "${f_ctx_tokens:-0}")/$(fmt_k "${f_ctx_size:-0}")${reset}"
-    [ "$f_cache_warm" = "true" ] && [ -n "$f_cache_hit" ] &&
-        tail+=" ${c_amber}♨ ${dim}cache${reset}${c_amber} $(round "$(awk -v h="$f_cache_hit" 'BEGIN { print h * 100 }')")%${reset}"
-    segs+=("$(resource MP "$c_blue" "$f_ctx_used" "$width" "$tail")")
+    [ "$f_cache_warm" = "true" ] && [ -n "$f_cache_pct" ] &&
+        tail+=" ${c_amber}♨ ${dim}cache${reset}${c_amber} ${f_cache_pct}%${reset}"
+    segs+=("$(resource MP "$c_blue" "$f_ctx_left" "$f_ctx_level" "$width" "$tail")")
 fi
-if [ -n "$f_h5" ]; then
+if [ -n "$f_h5_left" ]; then
     reset_at=$(fmt_reset "$f_h5_reset")
-    segs+=("$(resource '⌛5h' "$c_gold" "$f_h5" "$width" "${reset_at:+ ${dim}⟳${reset} ${c_white}${reset_at}${reset}}")")
+    segs+=("$(resource '⌛5h' "$c_gold" "$f_h5_left" "$f_h5_level" "$width" "${reset_at:+ ${dim}⟳${reset} ${c_white}${reset_at}${reset}}")")
 fi
-if [ -n "$f_d7" ]; then
+if [ -n "$f_d7_left" ]; then
     reset_at=$(fmt_reset "$f_d7_reset")
-    segs+=("$(resource '⌛7d' "$c_purple" "$f_d7" "$width" "${reset_at:+ ${dim}⟳${reset} ${c_white}${reset_at}${reset}}")")
+    segs+=("$(resource '⌛7d' "$c_purple" "$f_d7_left" "$f_d7_level" "$width" "${reset_at:+ ${dim}⟳${reset} ${c_white}${reset_at}${reset}}")")
 fi
-if [ -n "$f_sp" ]; then
+if [ -n "$f_sp_left" ]; then
     tail=""
     [ -n "$f_sp_usd" ] && [ -n "$f_sp_limit" ] &&
         tail=" ${dim}$(awk -v u="$f_sp_usd" -v l="$f_sp_limit" 'BEGIN { printf "$%.0f/$%.0f", u, l }')${reset}"
-    segs+=("$(resource '⛁ cap' "$c_green" "$f_sp" "$width" "$tail")")
+    segs+=("$(resource '⛁ cap' "$c_green" "$f_sp_left" "$f_sp_level" "$width" "$tail")")
 fi
 
 [ "${f_dur_ms:-0}" -gt 0 ] 2>/dev/null && segs+=("${c_white}◷ $(fmt_duration "$f_dur_ms")${reset}")

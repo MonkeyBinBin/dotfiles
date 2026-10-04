@@ -245,6 +245,7 @@ dotfiles**——否則 cmux 更新格式時 repo 內的手寫版本會悄悄失�
 
 - 單行排列，依 `COLUMNS` 以段為單位自動換行：model + effort 星等、⚡ fast mode、目錄 / 分支 / ✎ dirty / 增刪行數 / PR、資源條、session 時長
 - 資源條顯示剩餘量：`MP` 為 context window（與 rpg-hud 人物面板的 MP 同義、同變色門檻），`⌛5h` / `⌛7d` 為用量限額並附重置日期時間，`⛁ cap` 為 spend limit（僅 gateway）
+- `refreshInterval: 2`：調整視窗寬度不會觸發 status line 更新，靠每 2 秒重跑讓換行跟上新寬度
 - 全部資料取自 stdin JSON，不讀 credentials、不連網；turn、token、變更檔數交給 `slime-band`，不重複顯示
 - 停用：刪除 `~/.claude/settings.json` 的 `statusLine`，並從 `settings.json.example` 移除，否則下次 `stow-wrap.sh claude` 會加回
 

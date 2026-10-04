@@ -118,6 +118,7 @@
   "agentPushNotifEnabled": true,
   "statusLine": {
     "type": "command",
-    "command": "bash \"$HOME/.claude/rpg-statusline.sh\""
+    "command": "bash \"$HOME/.claude/rpg-statusline.sh\"",
+    "refreshInterval": 2
   }
 }
