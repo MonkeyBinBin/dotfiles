@@ -115,5 +115,9 @@
   "autoCompactEnabled": false,
   "remoteControlAtStartup": true,
   "inputNeededNotifEnabled": true,
-  "agentPushNotifEnabled": true
+  "agentPushNotifEnabled": true,
+  "statusLine": {
+    "type": "command",
+    "command": "bash \"$HOME/.claude/rpg-statusline.sh\""
+  }
 }

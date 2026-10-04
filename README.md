@@ -10,7 +10,7 @@
 | `tmux`        | tmux 終端多工器設定                            | `~/.tmux.conf`                                    |
 | `ghostty`     | Ghostty 終端模擬器設定                         | `~/.config/ghostty/config`                        |
 | `cmux`        | Cmux 終端機設定                                | `~/.config/cmux/`                                 |
-| `claude`      | Claude Code 系統提示 + output styles + hooks 範本 | `~/.claude/CLAUDE.md`、`~/.claude/output-styles/` |
+| `claude`      | Claude Code 系統提示 + output styles + hooks 範本 + RPG status line | `~/.claude/CLAUDE.md`、`~/.claude/output-styles/`、`~/.claude/rpg-statusline.sh` |
 | `claude-mods` | Claude Code mods（hooks plugin：pane、band 等） | `~/.claude/mods/<mod>/` → 目錄 symlink |
 | `codex`       | Codex CLI 系統提示                             | `~/.codex/AGENTS.md`                              |
 | `hammerspoon` | Hammerspoon macOS 自動化                       | `~/.hammerspoon/`                                 |
@@ -237,6 +237,16 @@ dotfiles**——否則 cmux 更新格式時 repo 內的手寫版本會悄悄失�
 > 歷史：先前由 dotfiles 維護一支 `cmux-notify` 腳本供各工具呼叫，因 cmux 變更 socket 路徑
 > （`/tmp/cmux.sock` → `~/.local/state/cmux/cmux-<uid>.sock`）而靜默失效。既然 cmux 已內建整合，
 > 該腳本與其所屬的 `bin` 套件已一併移除。細節見 `cmux docs agents`。
+
+#### Claude Code RPG status line（`rpg-statusline.sh`）
+
+`claude` 套件含 `~/.claude/rpg-statusline.sh`（stow symlink），風格對齊 `claude-mods` 的遊戲 UI。
+`settings.json.example` 的 `statusLine` 指向它，`merge-settings.jq` 會以範本覆蓋本機 `statusLine`。
+
+- 第 1 行：model + effort 星等、⚡ fast mode、目錄 / 分支 / ✎ dirty / PR、session 時長、花費、增刪行數
+- 第 2 行：剩餘量條——`MP` context window、`SP` 5 小時限額、`EN` 7 天限額、`GP` spend limit（僅 gateway）；剩 15% 以下轉紅
+- 全部資料取自 stdin JSON，不讀 credentials、不連網；turn、token、變更檔數交給 `slime-band`，不重複顯示
+- 停用：刪除 `~/.claude/settings.json` 的 `statusLine`，並從 `settings.json.example` 移除，否則下次 `stow-wrap.sh claude` 會加回
 
 #### Claude Code Telegram 完成通知（`cc-notify.sh`）
 

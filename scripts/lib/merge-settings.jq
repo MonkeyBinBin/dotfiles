@@ -5,6 +5,7 @@
 # - env：example 的 key 覆蓋 user（recursive merge），其餘保留
 # - permissions.allow / permissions.deny：取聯集去重，使用者自訂條目保留
 # - hooks：對每個事件以 hook command 字串為冪等鍵，example 條目若 user 已有則跳過，否則 append
+# - statusLine：example 有則整個覆蓋 user（status line 腳本由 dotfiles 管理）
 # - example 沒有的頂層 key（如 plugins、mcpServers）一律不動
 
 # 保留 user 原順序，將 example 中尚未出現的條目依序 append 到尾端
@@ -37,3 +38,4 @@ def merge_hooks($u; $e):
      then .permissions.deny = union_arrays($user.permissions.deny; $example.permissions.deny)
      else . end)
 | (if $example.hooks then .hooks = merge_hooks($user.hooks; $example.hooks) else . end)
+| (if $example.statusLine then .statusLine = $example.statusLine else . end)
