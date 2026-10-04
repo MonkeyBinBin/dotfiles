@@ -155,7 +155,7 @@ test('number keys no longer cast', async ($, on) => {
   hotbarWorld(on, fills)
   await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'skill-bar', surface: 'terminal', component: 'PromptHint', props: HINT_PROPS })
-  await ui.key({ key: '1', in: 'hotbar' }).catch(() => undefined)
+  await ui.key({ key: '1', in: 'hotbar' })
   expect(fills).toEqual([])
 })
 
@@ -222,3 +222,17 @@ test('a click starts the cooldown and it ends on the clock', async ($, on) => {
   expect(await hotbarText(ui)).not.toContain('▓')
 })
 
+
+test("a hovered slot's sparks twinkle once every few frames", async ($, on) => {
+  hotbarWorld(on, [])
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'skill-bar', surface: 'terminal', component: 'PromptHint', props: HINT_PROPS })
+  await ui.pointer({ type: 'move', x: 3, y: 0, in: 'hotbar' })
+  expect(await hotbarText(ui)).toContain('✦')
+  await ui.advance(80 * 2)
+  expect(await hotbarText(ui)).toContain('✦')
+  await ui.advance(80 * 2)
+  expect(await hotbarText(ui)).toContain('✧')
+  await ui.pointer({ type: 'leave', x: 3, y: 0, in: 'hotbar' })
+  expect(await hotbarText(ui)).not.toMatch(/[✦✧]/)
+})

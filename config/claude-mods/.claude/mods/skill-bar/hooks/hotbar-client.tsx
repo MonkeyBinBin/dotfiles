@@ -1,5 +1,7 @@
 import type { ClientModule } from 'claude-code'
 
+import { PANEL, toHex } from './colors'
+
 export type HotbarSlot = {
   // The skill's full name, what a cast fills the prompt with.
   name: string
@@ -36,7 +38,7 @@ const MAX_LABEL = 18
 // Around the label: spark, keycap (▐ rune ▌), space, space, spark.
 const CHROME = 1 + 3 + 1 + 1 + 1
 // The rune's ink on its coloured keycap, and the cooling cell's.
-const INK = '#14111c'
+const INK = toHex(PANEL)
 const COOLING = '#2a2533'
 // The width laid out before the first layout reports the region's.
 const FALLBACK_COLUMNS = 80
@@ -79,10 +81,20 @@ export const hotbarLines = (widths: readonly number[], columns: number): { index
 const Hotbar: ClientModule<HotbarProps, HotbarState> = (props, surface) => {
   const { Box, Text } = surface.elements
   if (surface.state === undefined) {
+    // Frames since the sparks last twinkled, while nothing cools.
+    let idle = 0
     surface.every(FRAME_MS, () => {
       const now = surface.state
       // Only a cooldown or a hovered slot's sparks move; at rest nothing redraws.
       if (now === undefined || (now.cast === undefined && now.hover === undefined)) return
+      // Sparks alone change once a twinkle: skip the frames between, then step the clock a whole twinkle.
+      if (now.cast === undefined) {
+        idle += 1
+        if (idle < TWINKLE_TICKS) return
+        idle = 0
+        surface.setState({ ...now, tick: now.tick + TWINKLE_TICKS })
+        return
+      }
       const isCool = now.cast !== undefined && now.tick + 1 - now.cast.start >= COOLDOWN_TICKS
       surface.setState({ ...now, tick: now.tick + 1, ...(isCool ? { cast: undefined } : {}) })
     })
@@ -127,7 +139,7 @@ const Hotbar: ClientModule<HotbarProps, HotbarState> = (props, surface) => {
         <Text color={cap} backgroundColor={cell}>
           ▌
         </Text>
-        <Text bold={isHover} color={isCooling ? slot.color : isHover ? slot.color : 'white'} dimColor={isCooling} backgroundColor={cell}>
+        <Text bold={isHover} color={isCooling || isHover ? slot.color : 'white'} dimColor={isCooling} backgroundColor={cell}>
           {isCooling ? cooldownText(text, elapsed) : text}
         </Text>
         <Text color={slot.color}>{spark}</Text>
