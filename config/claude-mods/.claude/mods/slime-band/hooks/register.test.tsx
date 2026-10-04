@@ -2,6 +2,7 @@ import { expect, mock, test } from 'claude-code/testing'
 
 import { SLIME_WIDTH } from './slime-sprite'
 import { RIGHT_MARGIN, SLIME_AREA_MIN, layoutHud } from './hud'
+import { allocateCells, gaugeLine, layoutGauge, legendLines, percentColor, wrapLegend } from './context-bar'
 import { NAP_AFTER_MS, TRACK_ROWS, composeTrack, floorAt, formatTokens, infoLine, infoSegments, slimePose, stepSlime } from './register'
 
 const BAND_PROPS = {
@@ -227,4 +228,157 @@ test('a permission prompt makes the slime wait until its tool has run', async ($
   await clock.advance(80 * 12)
   // Whatever the blink showed last, the track now stands without the '!'.
   expect(topRowHas(blitted.at(-1) ?? '', 40, 0x21)).toBe(false)
+})
+
+const CONTEXT = {
+  slices: [
+    { name: 'System prompt', tokens: 3000, color: 'promptBorder', kind: 'used' as const },
+    { name: 'Messages', tokens: 37_000, color: 'permission', kind: 'used' as const },
+    { name: 'MCP tools', tokens: 9000, color: 'inactive', kind: 'deferred' as const },
+    { name: 'Free space', tokens: 127_000, color: 'promptBorder', kind: 'free' as const },
+    { name: 'Autocompact buffer', tokens: 33_000, color: 'inactive', kind: 'buffer' as const },
+  ],
+  total: 40_000,
+  max: 200_000,
+  percent: 20,
+}
+
+test('the context gauge fills its width exactly, one run per category', () => {
+  const gauge = layoutGauge(CONTEXT, 80)
+  expect(gauge).toBeDefined()
+  const line = gaugeLine(gauge!)
+  expect(line.startsWith('◈ ▕')).toBe(true)
+  expect(line.endsWith('▏ 20% 40.0k/200k')).toBe(true)
+  // Deferred tool schemas sit outside the window and the gauge.
+  expect(gauge!.runs.map(r => r.glyph)).toEqual(['█', '█', '░', '▒'])
+  expect([...line].length).toBe(80 - 3)
+  expect(legendLines(gauge!)).toEqual(['■ System prompt 3.0k  ■ Messages 37.0k'])
+})
+
+test('every non-empty category keeps a cell, even a tiny one', () => {
+  const cells = allocateCells(
+    [
+      { name: 'a', tokens: 10, color: 'x', kind: 'used' },
+      { name: 'b', tokens: 100_000, color: 'x', kind: 'free' },
+    ],
+    20,
+  )
+  expect(cells).toEqual([1, 19])
+})
+
+test('the gauge reddens as auto-compaction nears, or the window fills when it is off', () => {
+  const at = (percent: number, compactAt?: number) => percentColor({ percent, max: 200_000, compactAt })
+  // Compaction at 167k is 83.5%: red from 73.5%, amber from 58.5%.
+  expect(at(75, 167_000)).toBe('#ff5f5f')
+  expect(at(60, 167_000)).toBe('#ffd23c')
+  expect(at(50, 167_000)).toBe('#5ad27a')
+  // Off, the limit is the whole window.
+  expect(at(85)).toBe('#ffd23c')
+  expect(at(92)).toBe('#ff5f5f')
+})
+
+test('the gauge hides when too narrow or empty, and survives NaN counts', () => {
+  expect(allocateCells([{ name: 'a', tokens: Number.NaN, color: 'x', kind: 'used' }], 20)).toEqual([0])
+  expect(layoutGauge(CONTEXT, 30)).toBeUndefined()
+  expect(layoutGauge({ ...CONTEXT, slices: [] }, 120)).toBeUndefined()
+})
+
+test('a context measure fills the gauge under the floor, above the engine band', async ($, on) => {
+  mock.clock(on)
+  on('session.turns', async () => ({ value: 1 }))
+  on('session.measure', async (_$, e) => ({ changed: e.changed }) as never)
+  on('session.usage', async () => ({
+    value: {
+      startedAt: 0,
+      rateLimits: [],
+      context: {
+        window: 200_000,
+        breakdown: {
+          categories: CONTEXT.slices.map(s => ({ ...s, isDeferred: s.kind === 'deferred' })),
+          totalTokens: 40_000,
+          maxTokens: 200_000,
+          rawMaxTokens: 200_000,
+          percentage: 20,
+          isAutoCompactEnabled: true,
+          autoCompactThreshold: 167_000,
+        },
+      },
+    },
+  }) as never)
+  on('ui.render', { component: 'AbovePrompt' }, async ($$, e) => {
+    const { Text } = $$.ui.resolve(e)
+    return <Text>engine band</Text>
+  })
+  await $.session.measure({ context: { window: 200_000 }, rateLimits: [], changed: ['context'] } as never)
+  const ui = await $.ui.mount({
+    plugin: 'slime-band',
+    surface: 'terminal',
+    component: 'AbovePrompt',
+    props: { ...BAND_PROPS, bodyColumns: 100 },
+  })
+  const band = await ui.find({ type: 'Box' })
+  type Node = { type?: string; text?: string | null; children?: unknown[] }
+  // A nested Text carries its words on its leaves.
+  const textOf = (node: Node): string =>
+    (node.text ?? '') + (node.children ?? []).map(child => (typeof child === 'string' ? child : textOf(child as Node))).join('')
+  const kids = (band?.children ?? []) as Node[]
+  const raster = kids.findIndex(k => k.type === 'Raster')
+  const gauge = kids.findIndex(k => textOf(k).includes('◈'))
+  const engine = kids.findIndex(k => textOf(k).includes('engine band'))
+  expect(textOf(kids[gauge + 1] ?? {})).toContain('Messages')
+  expect(raster).toBeGreaterThan(-1)
+  expect(gauge).toBeGreaterThan(raster)
+  expect(engine).toBeGreaterThan(gauge)
+})
+
+test('a long legend wraps onto more rows, every item whole', () => {
+  const items = Array.from({ length: 8 }, (_, at) => ({ name: `Category ${at}`, tokens: '12.3k', color: 'x' }))
+  const rows = wrapLegend(items, 60)
+  expect(rows.length).toBeGreaterThan(1)
+  expect(rows.flat()).toEqual(items)
+  const gauge = layoutGauge(
+    { ...CONTEXT, slices: items.map(i => ({ name: i.name, tokens: 12_300, color: 'x', kind: 'used' as const })) },
+    60,
+  )
+  for (const line of legendLines(gauge!)) expect([...line].length).toBeLessThanOrEqual(60 - 3)
+})
+
+test('shortens big windows without a decimal', () => {
+  expect(formatTokens(200_000)).toBe('200k')
+  expect(formatTokens(99_950)).toBe('100.0k')
+})
+
+test('ending the conversation (/clear, resume) drops the gauge', async ($, on) => {
+  mock.clock(on)
+  on('session.turns', async () => ({ value: 1 }))
+  on('session.measure', async (_$, e) => ({ changed: e.changed }) as never)
+  on('session.usage', async () => ({
+    value: {
+      startedAt: 0,
+      rateLimits: [],
+      context: {
+        window: 200_000,
+        breakdown: {
+          categories: CONTEXT.slices.map(s => ({ ...s, isDeferred: s.kind === 'deferred' })),
+          totalTokens: 40_000,
+          rawMaxTokens: 200_000,
+          percentage: 20,
+          isAutoCompactEnabled: false,
+        },
+      },
+    },
+  }) as never)
+  on('session.end', async () => ({ sessionId: 's' }) as never)
+  on('ui.render', { component: 'AbovePrompt' }, async ($$, e) => {
+    const { Text } = $$.ui.resolve(e)
+    return <Text> </Text>
+  })
+  const shows = async () => {
+    const ui = await $.ui.mount({ plugin: 'slime-band', surface: 'desktop', component: 'AbovePrompt', props: { ...BAND_PROPS, bodyColumns: 100 } })
+    return (await ui.findAll({ type: 'Text' })).some(t => (t.text ?? '').includes('◈'))
+  }
+  await $.session.measure({ context: { window: 200_000 }, rateLimits: [], changed: ['context'] } as never)
+  expect(await shows()).toBe(true)
+  await $.session.end({ reason: 'clear' } as never)
+  expect(await shows()).toBe(false)
 })

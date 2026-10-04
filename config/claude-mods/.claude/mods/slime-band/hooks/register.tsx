@@ -1,10 +1,12 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
-import type { BandInfo } from '../types'
+import type { BandInfo, ContextInfo } from '../types'
+import { CLOSE, OPEN, gaugeLine, layoutGauge, legendLines } from './context-bar'
+import type { ContextGauge } from './context-bar'
 import { SLIME_FRAMES, SLIME_PALETTE, SLIME_ROWS, SLIME_WIDTH } from './slime-sprite'
 import type { SlimePose } from './slime-sprite'
-import { layoutHud } from './hud'
+import { formatTokens, layoutHud } from './hud'
 import type { HudFact, HudPixel } from './hud'
 
 const info = atom({ plugin: 'slime-band', key: 'info' } as const, {
@@ -14,6 +16,9 @@ const info = atom({ plugin: 'slime-band', key: 'info' } as const, {
   inTokens: 0,
   outTokens: 0,
 })
+
+const EMPTY_CONTEXT: ContextInfo = { slices: [], total: 0, max: 0, percent: 0 }
+const contextInfo = atom({ plugin: 'slime-band', key: 'context' } as const, EMPTY_CONTEXT)
 
 const FRAME_MS = 80
 // Ticks each hop frame (squash, stretch) stays up.
@@ -124,8 +129,7 @@ const toBase64 = (bytes: Uint8Array): string => {
   return btoa(binary)
 }
 
-export const formatTokens = (n: number): string =>
-  n < 1000 ? `${n}` : `${(n / 1000).toFixed(1)}k`
+export { formatTokens }
 
 // Module state, so a reload starts the slime over.
 const slime = {
@@ -189,6 +193,20 @@ async function refreshGit($: EngineInterface) {
   }))
 }
 
+// A local estimate, as /context's summary counts it: no token-count requests.
+async function refreshContext($: EngineInterface) {
+  const usage = await $.session.usage({ breakdown: 'summary' })
+  const breakdown = usage.context.breakdown
+  if (breakdown === undefined) return
+  await update($, contextInfo, () => ({
+    slices: breakdown.categories.map(c => ({ name: c.name, tokens: c.tokens, color: c.color, kind: c.kind })),
+    total: breakdown.totalTokens,
+    max: breakdown.rawMaxTokens,
+    percent: breakdown.percentage,
+    compactAt: breakdown.isAutoCompactEnabled ? breakdown.autoCompactThreshold : undefined,
+  }))
+}
+
 // Only what the person's status line leaves out: it already shows the model,
 // the branch and a dirty mark, so the band adds the count of changed files.
 // The big numbers need RGB; the labels use the matching named colour.
@@ -231,11 +249,53 @@ export const infoLine = (value: BandInfo, turns: number): string =>
     .map(s => `${s.icon} ${s.value} ${s.label}`)
     .join(SEPARATOR)
 
+type TextElement = ReturnType<EngineInterface['ui']['resolve']>['Text']
+
+// Two rows under the floor: the gauge, then a legend of what fills it.
+const renderGauge = (Text: TextElement, gauge: ContextGauge) => [
+  <Text key="ctx-gauge" wrap="truncate">
+    <Text color="#c8d2ff" bold>{gauge.prefix}</Text>
+    <Text dimColor>{OPEN}</Text>
+    {gauge.runs.map((run, at) => (
+      <Text key={`run-${at}`} color={run.color} dimColor={run.dim}>
+        {run.glyph.repeat(run.length)}
+      </Text>
+    ))}
+    <Text dimColor>{CLOSE}</Text>
+    <Text color={gauge.percentColor} bold>{gauge.suffix}</Text>
+  </Text>,
+  ...gauge.legendRows.map((row, at) => (
+    <Text key={`ctx-legend-${at}`}>
+      {row.map((item, i) => (
+        <Text key={item.name}>
+          {i > 0 ? '  ' : ''}
+          <Text color={item.color}>■</Text>
+          <Text dimColor> {item.name} </Text>
+          <Text>{item.tokens}</Text>
+        </Text>
+      ))}
+    </Text>
+  )),
+]
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     slime.idleSince = await $.clock.now()
     await refreshGit($).catch(() => undefined)
 
+    return next(e)
+  })
+
+  // The engine raises this whenever the window's fill moves: turns, compaction, /clear, a /model switch.
+  on('session.measure', async ($, e, next) => {
+    const result = await next(e)
+    if (e.changed.includes('context')) await refreshContext($).catch(() => undefined)
+    return result
+  })
+
+  // /clear and resume end this conversation without a session.start: drop its gauge until the next measure.
+  on('session.end', async ($, e, next) => {
+    await update($, contextInfo, () => EMPTY_CONTEXT)
     return next(e)
   })
 
@@ -296,12 +356,15 @@ export const register: Register = on => {
     }
     const engine = await next(e)
     const value = await read($, info)
+    const gauge = layoutGauge(await read($, contextInfo), e.props.bodyColumns)
 
     if (e.surface !== 'terminal') {
       const { Box, Text } = $.ui.resolve(e)
       return (
         <Box flexDirection="column">
           <Text wrap="truncate">◕‿◕ {infoLine(value, await $.session.turns())}</Text>
+          {gauge && <Text wrap="truncate">{gaugeLine(gauge)}</Text>}
+          {gauge && legendLines(gauge).map(line => <Text key={line}>{line}</Text>)}
           {engine}
         </Box>
       )
@@ -341,6 +404,7 @@ export const register: Register = on => {
       <Box flexDirection="column">
         <Text wrap="truncate">{labelPieces}</Text>
         <Raster key="track" columns={trackWidth} rows={TRACK_ROWS} cells={slime.shown} />
+        {gauge && renderGauge(Text, gauge)}
         {engine}
       </Box>
     )

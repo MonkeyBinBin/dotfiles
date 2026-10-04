@@ -33,6 +33,12 @@ export type HudPixel = { x: number; y: number; rgb: number }
 export type HudLabel = { x: number; width: number; text: string; color: string }
 export type HudLayout = { areaWidth: number; pixels: HudPixel[]; labels: HudLabel[] }
 
+export const formatTokens = (n: number): string => {
+  if (n < 1000) return `${n}`
+  const k = n / 1000
+  return k >= 100 ? `${Math.round(k)}k` : `${k.toFixed(1)}k`
+}
+
 const glyphWidth = (ch: string): number => FONT[ch]?.[0]?.length ?? 0
 
 // Pixel width of a value: glyphs one column apart.
