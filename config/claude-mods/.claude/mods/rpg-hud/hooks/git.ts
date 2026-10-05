@@ -11,8 +11,9 @@ export const parseStatus = (porcelain: string): Omit<GitMap, 'isRepo' | 'graph' 
 }
 
 export type GraphRow = {
-  graph: string
   hash: string
+  // The parents' full hashes: none for a root, two or more for a merge.
+  parents: string[]
   refs: string
   age: string
   subject: string
@@ -21,27 +22,28 @@ export type GraphRow = {
   remotes: string[]
 }
 
-// Fields after the graph's lanes, split by the unit separator.
+// Fields of one GIT_LOG line, split by the unit separator.
 const SEP = '\x1f'
-const ROW = new RegExp(`^([*|\\\\/_ .-]*?)([0-9a-f]{7,40})${SEP}([^${SEP}]*)${SEP}([^${SEP}]*)${SEP}(.*)$`)
 
-// One `git log --graph` line in GIT_LOG's format; a connector-only line has no hash.
+// One `git log` line in GIT_LOG's format: full hash, parents, refs, age, subject.
 // `remoteNames` (`git remote`) tells a remote-tracking ref (`origin/main`) from a local branch with a slash (`feat/x`).
-export const parseGraphLine = (line: string, remoteNames: readonly string[] = ['origin']): GraphRow => {
-  const match = ROW.exec(line)
-  if (match === null) return { graph: line, hash: '', refs: '', age: '', subject: '', isHead: false, remotes: [] }
-  const refs = match[3] ?? ''
+export const parseLogLine = (line: string, remoteNames: readonly string[] = ['origin']): GraphRow => {
+  const [hash = '', parents = '', refs = '', age = '', ...subject] = line.split(SEP)
   const names = refs.split(',').map(ref => ref.trim()).filter(ref => ref.length > 0)
   return {
-    graph: match[1] ?? '',
-    hash: match[2] ?? '',
+    hash,
+    parents: parents.split(' ').filter(parent => parent.length > 0),
     refs,
-    age: shortAge(match[4] ?? ''),
-    subject: match[5] ?? '',
+    age: shortAge(age),
+    subject: subject.join(SEP),
     isHead: names.some(ref => ref === 'HEAD' || ref.startsWith('HEAD -> ')),
     remotes: names.filter(ref => remoteNames.some(remote => ref.startsWith(`${remote}/`)) && !ref.endsWith('/HEAD')),
   }
 }
+
+// GIT_LOG's lines as commits; a line in any other shape (a graph kept from an older format) is left out.
+export const parseLog = (lines: readonly string[], remoteNames?: readonly string[]): GraphRow[] =>
+  lines.map(line => parseLogLine(line, remoteNames)).filter(row => /^[0-9a-f]{7,64}$/.test(row.hash))
 
 // `3 hours ago` → `3h`, `2 weeks ago` → `2w`; anything else as git wrote it.
 export const shortAge = (age: string): string => {
@@ -51,20 +53,25 @@ export const shortAge = (age: string): string => {
   return `${match[1]}${unit}`
 }
 
-// A history with no fork or merge in sight: every line is a lone commit.
+// A history with no fork or merge in sight: each commit's one parent is the next one shown.
 export const isLinear = (rows: readonly GraphRow[]): boolean =>
-  rows.length > 0 && rows.every(row => row.hash !== '' && row.graph.trim() === '*')
+  rows.length > 0 &&
+  rows.every((row, index) => {
+    const next = rows[index + 1]
+    return row.parents.length <= 1 && (next === undefined || row.parents[0] === next.hash)
+  })
 
 export const GRAPH_LIMIT = 40
 
 export const GIT_LOG = [
   'git',
   'log',
-  '--graph',
   '--color=never',
   '--all',
+  // Each branch's commits together, children before their parents: what the lane layout draws from.
+  '--topo-order',
   `-n${GRAPH_LIMIT}`,
-  `--format=%h${SEP}%D${SEP}%cr${SEP}%s`,
+  `--format=%H${SEP}%P${SEP}%D${SEP}%cr${SEP}%s`,
 ]
 export const GIT_REMOTES = ['git', 'remote']
 // Paths as written (日記.md), not C-escaped ("\346\227\245…"), so they match between commands and on disk.

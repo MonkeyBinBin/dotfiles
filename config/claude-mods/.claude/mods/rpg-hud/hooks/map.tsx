@@ -1,8 +1,10 @@
 import type { ElementTable } from 'claude-code'
 
 import type { GitMap, TouchedFile } from '../types'
-import { GRAPH_LIMIT, isLinear, parseGraphLine } from './git'
+import { GRAPH_LIMIT, isLinear, parseLog } from './git'
 import type { GraphRow } from './git'
+import { layoutLanes } from './lanes'
+import type { LaneRow } from './lanes'
 import { oneLine } from './util'
 import type { Item } from './window'
 
@@ -21,7 +23,7 @@ export const exploredOrder = (files: readonly TouchedFile[]): TouchedFile[] =>
 
 export const mapSubtitle = (map: GitMap): string => {
   if (!map.isRepo) return 'uncharted'
-  const rows = map.graph.map(line => parseGraphLine(line, map.remotes))
+  const rows = parseLog(map.graph, map.remotes)
   return `@ ${map.branch || 'detached'} · ${isLinear(rows) ? 'one road' : 'branching paths'}`
 }
 
@@ -46,24 +48,27 @@ export const trailStops = (rows: readonly GraphRow[], dirty: number): Stop[] => 
   return stops
 }
 
-// The graph's lanes, each character coloured by its column; the HEAD commit is the player.
-const Lanes = (ui: ElementTable, graph: string, isHead: boolean) => {
+// A row's lanes, each glyph in its lane's colour; the HEAD commit is the player.
+const Lanes = (ui: ElementTable, lanes: LaneRow, width: number, isHead: boolean) => {
   const { Text } = ui
-  return Array.from(graph, (ch, column) => {
-    const color = LANE_COLORS[Math.floor(column / 2) % LANE_COLORS.length] ?? 'cyan'
-    if (ch === '*') {
+  const glyphs = lanes.cells.map((cell, index) => {
+    const color = LANE_COLORS[cell.color % LANE_COLORS.length] ?? 'cyan'
+    if (cell.isCommit === true) {
       return isHead ? (
-        <Text key={`c-${column}`} bold color="yellow">@</Text>
+        <Text key={`c-${index}`} bold color="yellow">@</Text>
       ) : (
-        <Text key={`c-${column}`} color={color}>◆</Text>
+        <Text key={`c-${index}`} color={color}>●</Text>
       )
     }
     return (
-      <Text key={`c-${column}`} color={color} dimColor>
-        {ch}
+      <Text key={`c-${index}`} color={color}>
+        {cell.glyph}
       </Text>
     )
   })
+  // Narrower rows padded out so every hash starts in the same column.
+  const pad = width - lanes.cells.length
+  return pad > 0 ? [...glyphs, <Text key="pad">{' '.repeat(pad)}</Text>] : glyphs
 }
 
 const row = (key: string, node: Item['node']): Item => ({ key, rows: 1, node })
@@ -133,7 +138,8 @@ function trailItems(ui: ElementTable, rows: readonly GraphRow[], dirty: number, 
       case 'step': {
         const { row: commit, place } = stop
         const isFirst = index === 0
-        const trail = place === 'road' ? (index % 2 === 0 ? '┊' : '│') : isFirst ? '╭' : '│'
+        // One solid line down the column: colour, not the glyph, tells the carried steps from the road behind.
+        const trail = isFirst ? '╭' : '│'
         const marker =
           place === 'here' ? (
             <Text bold color="yellow">@</Text>
@@ -172,30 +178,31 @@ function trailItems(ui: ElementTable, rows: readonly GraphRow[], dirty: number, 
 
 function branchItems(ui: ElementTable, rows: readonly GraphRow[], width: number, camps: Camps): Item[] {
   const { Box, Text } = ui
+  const lanes = layoutLanes(rows)
+  // Every subject starts in the same column, past the widest row of lanes.
+  const graphWidth = Math.max(...lanes.map(lane => lane.cells.length))
   return rows.map((line, index) => {
     const refs = line.refs === '' ? '' : `(${line.refs})`
     const flags = campsOn(line.refs, camps)
     // The refs, their space, and each ⚑flag with its space.
     const extras = (refs === '' ? 0 : refs.length + 1) + flags.reduce((sum, name) => sum + name.length + 2, 0)
-    const subjectWidth = Math.max(4, width - line.graph.length - HASH_COLUMNS - extras - AGE_COLUMNS)
+    const subjectWidth = Math.max(4, width - graphWidth - HASH_COLUMNS - extras - AGE_COLUMNS)
     return row(
-      `g-${index}`,
+      `g-${line.hash}`,
       <Box height={1}>
         <Box flexGrow={1}>
           <Text wrap="truncate">
-            {Lanes(ui, line.graph, line.isHead)}
-            {line.hash !== '' && <Text color="yellow" dimColor>{line.hash.slice(0, 7)} </Text>}
+            {Lanes(ui, lanes[index] as LaneRow, graphWidth, line.isHead)}
+            <Text color="yellow" dimColor>{line.hash.slice(0, 7)} </Text>
             {refs !== '' && <Text color="green">{refs}</Text>}
             {Flags(ui, flags)}
             {refs !== '' && <Text> </Text>}
             <Text bold={line.isHead}>{oneLine(line.subject, subjectWidth)}</Text>
           </Text>
         </Box>
-        {line.hash !== '' && (
-          <Box width={AGE_COLUMNS} justifyContent="flex-end">
-            <Text dimColor>{line.age}</Text>
-          </Box>
-        )}
+        <Box width={AGE_COLUMNS} justifyContent="flex-end">
+          <Text dimColor>{line.age}</Text>
+        </Box>
       </Box>,
     )
   })
@@ -215,7 +222,7 @@ export function mapItems(ui: ElementTable, map: GitMap, touched: readonly Touche
   const { openBag } = actions
   if (!map.isRepo) return [row('none', <Text dimColor>Uncharted land: this folder is not a git repository.</Text>)]
 
-  const rows = map.graph.map(line => parseGraphLine(line, map.remotes))
+  const rows = parseLog(map.graph, map.remotes)
   const items: Item[] = [
     row(
       'where',

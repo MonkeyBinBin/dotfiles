@@ -4,7 +4,8 @@ import type { Engine } from 'claude-code/testing'
 import { HERO_FRAMES } from './hero-cells'
 import { HURT_MS, pickFrame, pickMood } from './anim'
 import { bossFor, bossesFor, countFailures, failedGuard, fightBoss, fightText, runsGit } from './boss'
-import { GIT_STATUS, diffArgv, isLinear, parseBag, parseGraphLine, parseStatus, parseWorktrees, shortAge } from './git'
+import { GIT_STATUS, diffArgv, isLinear, parseBag, parseLog, parseLogLine, parseStatus, parseWorktrees, shortAge } from './git'
+import { layoutLanes, laneText } from './lanes'
 import { campsOn } from './map'
 import { parseDiff, rarityOf, splitBar } from './diff'
 import { countPatch, patchSource } from './edit-card'
@@ -301,9 +302,9 @@ test('a summoned subagent joins the party and reports back', async ($, on) => {
   expect(shown).toContain('↩ Found it in settings.json')
 })
 
-// A `git log --graph` line in GIT_LOG's format.
-const logLine = (graph: string, hash: string, refs: string, age: string, subject: string) =>
-  `${graph}${hash}\x1f${refs}\x1f${age}\x1f${subject}`
+// A `git log` line in GIT_LOG's format; `parents` space-separated.
+const logLine = (hash: string, parents: string, refs: string, age: string, subject: string) =>
+  `${hash}\x1f${parents}\x1f${refs}\x1f${age}\x1f${subject}`
 
 const DIFF = ['diff --git a/x.ts b/x.ts', 'index 1..2 100644', '--- a/x.ts', '+++ b/x.ts', '@@ -3,2 +3,3 @@ function hero()', ' keep', '-old line', '+new line', '+another']
 
@@ -321,10 +322,10 @@ const mapWorld = (on: On, log: string[], status = '## main...origin/main [ahead 
 
 test('a one-line history is drawn as a road: camp, you, the loot you carry, the town', async ($, on) => {
   mapWorld(on, [
-    logLine('* ', 'abc1234', 'HEAD -> main', '2 hours ago', 'feat: map'),
-    logLine('* ', 'abc0000', '', '5 hours ago', 'feat: loot'),
-    logLine('* ', 'bcd2345', 'origin/main, origin/HEAD', '3 days ago', 'fix: road'),
-    logLine('* ', 'def5678', '', '7 weeks ago', 'init'),
+    logLine('abc1234', 'abc0000', 'HEAD -> main', '2 hours ago', 'feat: map'),
+    logLine('abc0000', 'bcd2345', '', '5 hours ago', 'feat: loot'),
+    logLine('bcd2345', 'def5678', 'origin/main, origin/HEAD', '3 days ago', 'fix: road'),
+    logLine('def5678', '', '', '7 weeks ago', 'init'),
   ])
   await $.tool.call({ tool: 'Edit', file_path: '/x/y/z.ts', old_string: 'a', new_string: 'b' } as never)
   await $.turn.complete({ answer: '', durationMs: 5, isAborted: false, turnId: 't' } as never)
@@ -347,10 +348,9 @@ test('a one-line history is drawn as a road: camp, you, the loot you carry, the 
 
 test('a branching history keeps the lane graph', async ($, on) => {
   mapWorld(on, [
-    logLine('* ', 'abc1234', 'HEAD -> feat/x', '1 hour ago', 'wip'),
-    logLine('| * ', 'bcd2345', 'main', '2 hours ago', 'fix'),
-    '|/',
-    logLine('* ', 'def5678', '', '1 day ago', 'init'),
+    logLine('abc1234', 'def5678', 'HEAD -> feat/x', '1 hour ago', 'wip'),
+    logLine('bcd2345', 'def5678', 'main', '2 hours ago', 'fix'),
+    logLine('def5678', '', '', '1 day ago', 'init'),
   ])
   await $.turn.complete({ answer: '', durationMs: 5, isAborted: false, turnId: 't' } as never)
   const ui = await mountPane($, 'terminal', 40)
@@ -362,7 +362,7 @@ test('a branching history keeps the lane graph', async ($, on) => {
 })
 
 test('opens the bag from the camp, inspects a change and walks back', async ($, on) => {
-  mapWorld(on, [logLine('* ', 'abc1234', 'HEAD -> main, origin/main', '2 hours ago', 'feat: map')])
+  mapWorld(on, [logLine('abc1234', '', 'HEAD -> main, origin/main', '2 hours ago', 'feat: map')])
   await $.turn.complete({ answer: '', durationMs: 5, isAborted: false, turnId: 't' } as never)
   const ui = await mountPane($, 'terminal', 40)
   await showTab($, ui, 'map')
@@ -390,15 +390,15 @@ test('opens the bag from the camp, inspects a change and walks back', async ($, 
 })
 
 test('places each stop of the road', () => {
-  const rows = [
-    parseGraphLine(logLine('* ', 'a000001', 'HEAD -> main', '1 hour ago', 'a')),
-    parseGraphLine(logLine('* ', 'a000002', '', '1 hour ago', 'b')),
-    parseGraphLine(logLine('* ', 'a000003', 'origin/main', '1 day ago', 'c')),
-    parseGraphLine(logLine('* ', 'a000004', '', '1 day ago', 'd')),
-  ]
+  const rows = parseLog([
+    logLine('a000001', 'a000002', 'HEAD -> main', '1 hour ago', 'a'),
+    logLine('a000002', 'a000003', '', '1 hour ago', 'b'),
+    logLine('a000003', 'a000004', 'origin/main', '1 day ago', 'c'),
+    logLine('a000004', '', '', '1 day ago', 'd'),
+  ])
   const kinds = trailStops(rows, 2).map(stop => (stop.kind === 'step' ? stop.place : stop.kind))
   expect(kinds).toEqual(['camp', 'here', 'carried', 'town', 'road', 'road', 'end'])
-  const synced = trailStops([parseGraphLine(logLine('* ', 'a000001', 'HEAD -> main, origin/main', '1 hour ago', 'a'))], 0)
+  const synced = trailStops([parseLogLine(logLine('a000001', '', 'HEAD -> main, origin/main', '1 hour ago', 'a'))], 0)
   expect(synced[0]).toEqual({ kind: 'town', remotes: ['origin/main'], isHere: true })
 })
 
@@ -581,20 +581,32 @@ test('reads the branch, its distance and unsaved files from git status', () => {
   expect(parseStatus('## feat/x\n')).toEqual({ branch: 'feat/x', ahead: 0, behind: 0, dirty: 0 })
 })
 
-test('splits a graph line into lanes, hash, refs, age and subject', () => {
-  expect(parseGraphLine('* bb43d3f\x1fHEAD -> main, origin/main, origin/HEAD\x1f7 hours ago\x1ffeat: add mods')).toEqual({
-    graph: '* ',
+test('splits a log line into hash, parents, refs, age and subject', () => {
+  expect(parseLogLine('bb43d3f\x1f9854943 1234567\x1fHEAD -> main, origin/main, origin/HEAD\x1f7 hours ago\x1ffeat: add mods')).toEqual({
     hash: 'bb43d3f',
+    parents: ['9854943', '1234567'],
     refs: 'HEAD -> main, origin/main, origin/HEAD',
     age: '7h',
     subject: 'feat: add mods',
     isHead: true,
     remotes: ['origin/main'],
   })
-  expect(parseGraphLine('| * 9854943\x1f\x1f2 days ago\x1ffix(zsh): symbols').graph).toBe('| * ')
-  expect(parseGraphLine('|/').hash).toBe('')
-  expect(isLinear([parseGraphLine('* 9854943\x1f\x1f2 days ago\x1fx')])).toBe(true)
-  expect(isLinear([parseGraphLine('| * 9854943\x1f\x1f2 days ago\x1fx')])).toBe(false)
+  // A line kept from the old `--graph` format is no commit.
+  expect(parseLog(['* 9854943\x1f\x1f2 days ago\x1fx', '|/'])).toEqual([])
+  expect(isLinear(parseLog([logLine('a000001', 'a000002', '', '1 day ago', 'x'), logLine('a000002', '', '', '1 day ago', 'y')]))).toBe(true)
+  expect(isLinear(parseLog([logLine('a000001', 'a000009', '', '1 day ago', 'x'), logLine('a000002', '', '', '1 day ago', 'y')]))).toBe(false)
+  expect(isLinear(parseLog([logLine('a000001', 'a000002 a000003', '', '1 day ago', 'x')]))).toBe(false)
+})
+
+test('lays out forks and merges in lanes that never break', () => {
+  const draw = (commits: [string, string][]) =>
+    layoutLanes(commits.map(([hash, parents]) => ({ hash, parents: parents.split(' ').filter(p => p !== '') }))).map(row => laneText(row))
+  // Two branches from one base: the second opens its own lane and turns back into the base.
+  expect(draw([['x', 'b'], ['y', 'b'], ['b', '']])).toEqual(['●', '│ ●', '●─╯'])
+  // A merge opens a lane for its other parent, which runs down beside the first and meets it again.
+  expect(draw([['m', 'a f'], ['f', 'a'], ['a', 'r'], ['r', '']])).toEqual(['●─╮', '│ ●', '●─╯', '●'])
+  // A lane passing a join is crossed, not cut.
+  expect(draw([['m', 'a b'], ['t', 'a'], ['b', 'a'], ['a', '']])).toEqual(['●─╮', '│ │ ●', '│ ● │', '●─┴─╯'])
 })
 
 test('reads the bag from git status and numstat', () => {
@@ -834,7 +846,7 @@ const outpostGit = (here: string) => (argv: readonly string[]) => {
   if (command[0] === 'log' && command[1] === '-1') return { stdout: '3 hours ago\n' }
   if (command[0] === 'diff' && command[1] === '--numstat') return { stdout: at === '/x-wt/feat-x' ? '5\t1\ta.ts\n2\t0\tb.ts\n' : '' }
   if (command[0] === 'diff') return { stdout: `${DIFF.join('\n')}\n` }
-  return { stdout: `${logLine('* ', 'abc1234', 'HEAD -> main', '2 hours ago', 'feat: map')}\n${logLine('* ', 'bcd2345', 'feat/x', '1 day ago', 'wip')}\n` }
+  return { stdout: `${logLine('abc1234', 'bcd2345', 'HEAD -> main', '2 hours ago', 'feat: map')}\n${logLine('bcd2345', '', 'feat/x', '1 day ago', 'wip')}\n` }
 }
 
 const outpostWorld = (on: On, here = '/x') => world(on, { git: outpostGit(here) })
@@ -1018,7 +1030,7 @@ test('the level keeps rising past the 200 calls the spell book keeps, and levels
 })
 
 test('a bag file opens its diff on desktop too', async ($, on) => {
-  mapWorld(on, [logLine('* ', 'abc1234', 'HEAD -> main, origin/main', '2 hours ago', 'feat: map')])
+  mapWorld(on, [logLine('abc1234', '', 'HEAD -> main, origin/main', '2 hours ago', 'feat: map')])
   await $.turn.complete({ answer: '', durationMs: 5, isAborted: false, turnId: 't' } as never)
   const ui = await mountPane($, 'desktop', 40)
   await showTab($, ui, 'map', 'desktop')
