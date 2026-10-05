@@ -1269,6 +1269,26 @@ test('a background pet announces its return; a foreground one does not', async (
   expect(toasts.filter(text => text.includes('returned'))).toEqual(['🐾 Scout Hawk returned: Mapped 12 modules'])
 })
 
+test('a pet core sends to the background without run_in_background keeps questing until it returns', async ($, on) => {
+  const { toasts } = world(on, {
+    tool: async e => {
+      if (e.tool !== 'Agent') return undefined
+      await $.agent.spawn({ prompt: 'go', description: e.description, subagentType: 'general-purpose', tool_use_id: e.tool_use_id } as never)
+      return { result: { status: 'async_launched', agentId: 'agent-1', description: e.description ?? '', prompt: 'go' } } as never
+    },
+  })
+  on('agent.spawn', async () => ({ model: 'claude-haiku-4-5', agentId: 'agent-1' }))
+  await $.tool.call({ tool: 'Agent', tool_use_id: 'tu-1', description: 'Revisit review MR !300', prompt: 'go' } as never)
+
+  const ui = await mountPane($, 'terminal')
+  await showTab($, ui, 'pets')
+  expect((await texts(ui)).join('|')).toContain('1 questing · 1 summoned')
+
+  await $.turn.complete({ agentId: 'agent-1', answer: 'Two findings left', durationMs: 5, isAborted: false, turnId: 't' } as never)
+  expect((await texts(ui)).join('|')).toContain('↩ Two findings left')
+  expect(toasts.filter(text => text.includes('returned'))).toHaveLength(1)
+})
+
 test('a fallen pet says what it was sent to do', () => {
   expect(returnToast({ kind: 'Explore', description: 'Map the repo', loot: '' }, 'err')).toBe('🐾 Scout Hawk fell: Map the repo')
   expect(returnToast({ kind: 'Explore', description: 'Map the repo' }, 'ok')).toBe('🐾 Scout Hawk returned: Map the repo')

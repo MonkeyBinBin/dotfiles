@@ -398,6 +398,12 @@ async function discoverPet($: EngineInterface, agentId: string): Promise<boolean
   return true
 }
 
+// An Agent call answered with its launch, not its answer: the agent runs on in the background (or remotely).
+const isLaunched = (ran: { result?: unknown }) => {
+  const status = (ran.result as { status?: unknown } | undefined)?.status
+  return status === 'async_launched' || status === 'remote_launched'
+}
+
 // Pets still questing that the agent list no longer names: engine forks an older build let in, never to finish.
 async function dropStrayPets($: EngineInterface) {
   const listed = await $.agent.list().catch(() => undefined)
@@ -1083,7 +1089,13 @@ export const register: Register = on => {
     })
 
     if (e.tool === 'Agent' && !isBackground && !isRefused) {
-      await finishPet($, pet => pet.id === call.id, isError ? 'err' : 'ok', ran.text ?? '')
+      // Without run_in_background, core may still send the agent to the background (its type asks to, or the call
+      // ran long): it answers with the launch, and the pet's own turn.complete brings it back.
+      if (isLaunched(ran)) {
+        await update($, pets, list => list.map(pet => (pet.id === call.id ? { ...pet, isBackground: true } : pet)))
+      } else {
+        await finishPet($, pet => pet.id === call.id, isError ? 'err' : 'ok', ran.text ?? '')
+      }
     }
     if (e.tool === 'Skill' && !isRefused) {
       const skill = (e as { skill?: unknown }).skill
