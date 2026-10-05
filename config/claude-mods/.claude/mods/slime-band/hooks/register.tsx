@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
 import type { BandInfo, ContextInfo } from '../types'
-import { CLOSE, OPEN, gaugeLine, layoutGauge, legendLines } from './context-bar'
+import { CLOSE, FRAME, MP_LABEL, OPEN, TITLE, gaugeLine, innerWidth, layoutGauge, legendLines, topFill } from './context-bar'
 import type { ContextGauge } from './context-bar'
 import { SLIME_FRAMES, SLIME_PALETTE, SLIME_ROWS, SLIME_WIDTH } from './slime-sprite'
 import type { SlimePose } from './slime-sprite'
@@ -251,32 +251,61 @@ export const infoLine = (value: BandInfo, turns: number): string =>
 
 type TextElement = ReturnType<EngineInterface['ui']['resolve']>['Text']
 
-// Two rows under the floor: the gauge, then a legend of what fills it.
-const renderGauge = (Text: TextElement, gauge: ContextGauge) => [
-  <Text key="ctx-gauge" wrap="truncate">
-    <Text color="#c8d2ff" bold>{gauge.prefix}</Text>
-    <Text dimColor>{OPEN}</Text>
-    {gauge.runs.map((run, at) => (
-      <Text key={`run-${at}`} color={run.color} dimColor={run.dim}>
-        {run.glyph.repeat(run.length)}
-      </Text>
-    ))}
-    <Text dimColor>{CLOSE}</Text>
-    <Text color={gauge.percentColor} bold>{gauge.suffix}</Text>
-  </Text>,
-  ...gauge.legendRows.map((row, at) => (
-    <Text key={`ctx-legend-${at}`}>
-      {row.map((item, i) => (
-        <Text key={item.name}>
-          {i > 0 ? '  ' : ''}
-          <Text color={item.color}>■</Text>
-          <Text dimColor> {item.name} </Text>
-          <Text>{item.tokens}</Text>
+const FRAME_COLOR = '#8a93c8'
+const TITLE_COLOR = '#c8d2ff'
+const MP_COLOR = '#56c8dc'
+
+// An RPG status window under the floor: the title and mana status on the top
+// border, the MP bar, then a legend of what fills it, all inside one frame.
+const renderGauge = (Text: TextElement, gauge: ContextGauge) => {
+  // Not `h`: that name is the JSX factory.
+  const { tl, tr, bl, br, h: dash, v } = FRAME
+  const inner = innerWidth(gauge)
+  const legend = legendLines(gauge)
+  return [
+    <Text key="ctx-top" wrap="truncate">
+      <Text color={FRAME_COLOR}>{`${tl}${dash} `}</Text>
+      <Text color={TITLE_COLOR} bold>{TITLE}</Text>
+      <Text color={FRAME_COLOR}>{` ${dash.repeat(topFill(gauge))} `}</Text>
+      <Text color={gauge.percentColor} bold inverse>{gauge.status}</Text>
+      <Text color={FRAME_COLOR}>{` ${dash}${tr}`}</Text>
+    </Text>,
+    <Text key="ctx-gauge" wrap="truncate">
+      <Text color={FRAME_COLOR}>{`${v} `}</Text>
+      <Text color={MP_COLOR} bold>{MP_LABEL}</Text>
+      <Text dimColor>{OPEN}</Text>
+      {gauge.runs.map((run, at) => (
+        <Text key={`run-${at}`} color={run.color} dimColor={run.dim}>
+          {run.glyph.repeat(run.length)}
         </Text>
       ))}
-    </Text>
-  )),
-]
+      <Text dimColor>{CLOSE}</Text>
+      <Text color={gauge.percentColor} bold>{gauge.suffix}</Text>
+      <Text color={FRAME_COLOR}>{` ${v}`}</Text>
+    </Text>,
+    ...gauge.legendRows.map((row, at) => {
+      const used = [...(legend[at] ?? '')].length
+      return (
+        <Text key={`ctx-legend-${at}`} wrap="truncate">
+          <Text color={FRAME_COLOR}>{`${v} `}</Text>
+          {row.map((item, i) => (
+            <Text key={item.name}>
+              {i > 0 ? '  ' : ''}
+              <Text color={item.color}>■</Text>
+              <Text dimColor> {item.name} </Text>
+              <Text>{item.tokens}</Text>
+            </Text>
+          ))}
+          {' '.repeat(Math.max(0, inner - used))}
+          <Text color={FRAME_COLOR}>{` ${v}`}</Text>
+        </Text>
+      )
+    }),
+    <Text key="ctx-bottom" wrap="truncate" color={FRAME_COLOR}>
+      {`${bl}${dash.repeat(gauge.width - 2)}${br}`}
+    </Text>,
+  ]
+}
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {

@@ -2,7 +2,7 @@ import { expect, mock, test } from 'claude-code/testing'
 
 import { SLIME_WIDTH } from './slime-sprite'
 import { RIGHT_MARGIN, SLIME_AREA_MIN, layoutHud } from './hud'
-import { allocateCells, gaugeLine, layoutGauge, legendLines, percentColor, wrapLegend } from './context-bar'
+import { allocateCells, frameLines, gaugeLine, layoutGauge, legendLines, percentColor, wrapLegend } from './context-bar'
 import { NAP_AFTER_MS, TRACK_ROWS, composeTrack, floorAt, formatTokens, infoLine, infoSegments, slimePose, stepSlime } from './register'
 
 const BAND_PROPS = {
@@ -251,8 +251,22 @@ test('the context gauge fills its width exactly, one run per category', () => {
   expect(line.endsWith('▏ 20% 40.0k/200k')).toBe(true)
   // Deferred tool schemas sit outside the window and the gauge.
   expect(gauge!.runs.map(r => r.glyph)).toEqual(['█', '█', '░', '▒'])
-  expect([...line].length).toBe(80 - 3)
   expect(legendLines(gauge!)).toEqual(['■ System prompt 3.0k  ■ Messages 37.0k'])
+})
+
+test('the gauge sits in a status window, every row the same width', () => {
+  const lines = frameLines(layoutGauge(CONTEXT, 80)!)
+  expect(lines).toHaveLength(4)
+  for (const line of lines) expect([...line].length).toBe(80 - 3)
+  expect(lines[0]).toMatch(/^╭─ ◈ MANA ─+ STABLE ─╮$/)
+  expect(lines[1]).toMatch(/^│ MP ▕[█░▒]+▏ 20% 40\.0k\/200k │$/)
+  expect(lines[2]).toMatch(/^│ ■ System prompt 3\.0k  ■ Messages 37\.0k +│$/)
+  expect(lines[3]).toMatch(/^╰─+╯$/)
+})
+
+test('the status tag reads the mana left', () => {
+  expect(layoutGauge({ ...CONTEXT, percent: 65, compactAt: 167_000 }, 80)!.status).toBe('LOW MP')
+  expect(layoutGauge({ ...CONTEXT, percent: 80, compactAt: 167_000 }, 80)!.status).toBe('DANGER')
 })
 
 test('every non-empty category keeps a cell, even a tiny one', () => {
@@ -323,9 +337,12 @@ test('a context measure fills the gauge under the floor, above the engine band',
     (node.text ?? '') + (node.children ?? []).map(child => (typeof child === 'string' ? child : textOf(child as Node))).join('')
   const kids = (band?.children ?? []) as Node[]
   const raster = kids.findIndex(k => k.type === 'Raster')
-  const gauge = kids.findIndex(k => textOf(k).includes('◈'))
+  const top = kids.findIndex(k => textOf(k).includes('◈ MANA'))
+  const gauge = kids.findIndex(k => textOf(k).includes('MP ▕'))
   const engine = kids.findIndex(k => textOf(k).includes('engine band'))
+  expect(gauge).toBe(top + 1)
   expect(textOf(kids[gauge + 1] ?? {})).toContain('Messages')
+  expect(textOf(kids[gauge + 2] ?? {})).toMatch(/^╰─+╯$/)
   expect(raster).toBeGreaterThan(-1)
   expect(gauge).toBeGreaterThan(raster)
   expect(engine).toBeGreaterThan(gauge)
@@ -340,7 +357,8 @@ test('a long legend wraps onto more rows, every item whole', () => {
     { ...CONTEXT, slices: items.map(i => ({ name: i.name, tokens: 12_300, color: 'x', kind: 'used' as const })) },
     60,
   )
-  for (const line of legendLines(gauge!)) expect([...line].length).toBeLessThanOrEqual(60 - 3)
+  for (const line of legendLines(gauge!)) expect([...line].length).toBeLessThanOrEqual(60 - 3 - 4)
+  for (const line of frameLines(gauge!)) expect([...line].length).toBe(60 - 3)
 })
 
 test('shortens big windows without a decimal', () => {
