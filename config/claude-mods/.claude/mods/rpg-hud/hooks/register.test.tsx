@@ -2012,6 +2012,10 @@ test("a running job's stop button stops it through TaskStop", async ($, on) => {
   expect(stops).toEqual(['b1'])
   const shown = (await texts(ui)).join('|')
   expect(shown).toContain('■ stopped')
+  // The HUD's own TaskStop is none of the hero's casts.
+  expect(shown).toContain('1 casts')
+  await showTab($, ui, 'spells', 'desktop')
+  expect((await texts(ui)).join('|')).not.toContain('TaskStop')
   // A stopped job has no button left.
   expect((await ui.findAll({ type: 'Button' })).some(b => b.props?.key === 'job-stop-b1')).toBe(false)
 })

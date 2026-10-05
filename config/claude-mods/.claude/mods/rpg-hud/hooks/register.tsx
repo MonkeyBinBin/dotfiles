@@ -122,6 +122,7 @@ async function resetSession($: EngineInterface) {
 
 const progress = atom({ plugin: 'rpg-hud', key: 'progress' } as const, EMPTY_PROGRESS)
 
+const PLUGIN = 'rpg-hud'
 const PANE = 'rpg-hud'
 const TITLE = 'Adventure'
 const COMMAND = 'hud'
@@ -912,6 +913,8 @@ export const register: Register = on => {
     })
     await markStart($)
     await loadProgress($)
+    // A tab kept from an older build (`feats`) no longer names a page: the spell book stands in.
+    await update($, tab, kept => (isTab(kept) ? kept : 'spells'))
     await dropStrayPets($)
     follow.isOn = (await $.store.get(FOLLOW_KEY).catch(() => undefined)) !== false
     // Each session plays a class at random; a reload of the mod keeps the one rolled.
@@ -934,6 +937,8 @@ export const register: Register = on => {
   // A slash command the person typed is a message of theirs, even one that never reaches the conversation (a
   // skill forked to the background): the window follows again, and a skill counts as cast.
   on('command.run', async ($, e, next) => {
+    // A forked skill never submits its prompt, so its mark ends with the next command rather than outliving it.
+    commandCast = undefined
     const isPerson = e.origin?.kind === 'composer' || e.origin?.kind === 'bridge'
     if (!isPerson || e.command === COMMAND) return next(e)
     follow.isHeld = false
@@ -1001,8 +1006,12 @@ export const register: Register = on => {
 
   on('prompt.submit', async ($, e, next) => {
     await update($, waitingFor, () => null)
-    // A background task's notification says a job ended, and how.
-    if (e.origin?.kind === 'task-notification') await endJobs($, parseJobEnds(e.text))
+    // A background task's notification says a job ended, and how. It is no message of the person's: a tab they
+    // picked stays held, and the window stays where it is.
+    if (e.origin?.kind === 'task-notification') {
+      await endJobs($, parseJobEnds(e.text))
+      return next(e)
+    }
     // The HUD's own command is no message: `/hud map` and the like set the window themselves.
     if (skillOfPrompt(e.text, [COMMAND]) === COMMAND) return next(e)
     // A new message lets the window follow again, whatever tab was picked during the last.
@@ -1069,6 +1078,8 @@ export const register: Register = on => {
   })
 
   on('tool.call', async ($, e, next) => {
+    // The HUD's own calls (a job's stop button) are none of the hero's: no cast, no combo, no level.
+    if (next.origin.plugin === PLUGIN) return next(e)
     const isMain = e.agentId === undefined
     // A mod loaded mid-session starts its watch at the first call it sees.
     await markStart($)
@@ -1302,9 +1313,7 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    // A tab kept from an older build (`feats`) no longer names a page: the spell book stands in.
-    const kept = await read($, tab)
-    const active: Tab = isTab(kept) ? kept : 'spells'
+    const active = await read($, tab)
     const entry = entryOf(active)
     const width = e.props.bodyColumns
     const now = await $.clock.now()

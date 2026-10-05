@@ -154,7 +154,7 @@ export function jobItems(
             {canStop && <Button key={`job-stop-${job.id}`} label={armed === job.id ? ARMED_LABEL : STOP_LABEL} plain onPress={() => onStop(job)} />}
           </Box>
           <Text dimColor wrap="truncate">
-            {oneLine(`$ ${job.command}`, width - (job.agentId === undefined ? 0 : 6))}
+            {job.command === '' ? '' : oneLine(`$ ${job.command}`, width - (job.agentId === undefined ? 0 : 6))}
             {job.agentId !== undefined && ' · pet'}
           </Text>
         </Box>
