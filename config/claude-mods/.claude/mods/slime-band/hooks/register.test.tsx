@@ -244,13 +244,14 @@ const CONTEXT = {
 }
 
 test('the context gauge fills its width exactly, one run per category', () => {
-  const gauge = layoutGauge(CONTEXT, 80)
+  const gauge = layoutGauge(CONTEXT, 80, false)
   expect(gauge).toBeDefined()
   const line = gaugeLine(gauge!)
   expect(line.startsWith('◈ ▕')).toBe(true)
   expect(line.endsWith('▏ 20% 40.0k/200k')).toBe(true)
   // Deferred tool schemas sit outside the window and the gauge.
   expect(gauge!.runs.map(r => r.glyph)).toEqual(['█', '█', '░', '▒'])
+  expect([...line].length).toBe(80 - 3)
   expect(legendLines(gauge!)).toEqual(['■ System prompt 3.0k  ■ Messages 37.0k'])
 })
 
@@ -259,7 +260,7 @@ test('the gauge sits in a status window, every row the same width', () => {
   expect(lines).toHaveLength(4)
   for (const line of lines) expect([...line].length).toBe(80 - 3)
   expect(lines[0]).toMatch(/^╭─ ◈ MANA ─+ STABLE ─╮$/)
-  expect(lines[1]).toMatch(/^│ MP ▕[█░▒]+▏ 20% 40\.0k\/200k │$/)
+  expect(lines[1]).toMatch(/^│ CTX ▕[█░▒]+▏ 20% 40\.0k\/200k │$/)
   expect(lines[2]).toMatch(/^│ ■ System prompt 3\.0k  ■ Messages 37\.0k +│$/)
   expect(lines[3]).toMatch(/^╰─+╯$/)
 })
@@ -338,7 +339,7 @@ test('a context measure fills the gauge under the floor, above the engine band',
   const kids = (band?.children ?? []) as Node[]
   const raster = kids.findIndex(k => k.type === 'Raster')
   const top = kids.findIndex(k => textOf(k).includes('◈ MANA'))
-  const gauge = kids.findIndex(k => textOf(k).includes('MP ▕'))
+  const gauge = kids.findIndex(k => textOf(k).includes('CTX ▕'))
   const engine = kids.findIndex(k => textOf(k).includes('engine band'))
   expect(gauge).toBe(top + 1)
   expect(textOf(kids[gauge + 1] ?? {})).toContain('Messages')

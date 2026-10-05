@@ -1,5 +1,5 @@
 // The context window as an RPG status window under the slime's floor: a framed
-// MP bar with one run of blocks per category in /context's own colours, free
+// CTX bar with one run of blocks per category in /context's own colours, free
 // space as dim shade, and the categories listed inside the frame.
 
 import type { ContextCategoryKind } from 'claude-code'
@@ -10,7 +10,7 @@ import { RIGHT_MARGIN, formatTokens } from './hud'
 // A mana crystal: single-width, so column math stays exact.
 const PREFIX = '◈ '
 export const TITLE = '◈ MANA'
-export const MP_LABEL = 'MP '
+export const CTX_LABEL = 'CTX '
 export const OPEN = '▕'
 export const CLOSE = '▏'
 export const FRAME = { tl: '╭', tr: '╮', bl: '╰', br: '╯', h: '─', v: '│' } as const
@@ -46,8 +46,8 @@ const LEGEND_GAP = 2
 const itemWidth = (item: LegendItem): number => [...`■ ${item.name} ${item.tokens}`].length
 
 // Greedy rows from the left edge; an item wider than a row gets one to itself.
-export const wrapLegend = (items: readonly LegendItem[], width: number): LegendItem[][] => {
-  const room = Math.max(1, width)
+export const wrapLegend = (items: readonly LegendItem[], available: number): LegendItem[][] => {
+  const room = Math.max(1, available)
   const rows: LegendItem[][] = []
   let row: LegendItem[] = []
   let used = 0
@@ -108,13 +108,16 @@ export const allocateCells = (slices: readonly ContextInfo['slices'][number][], 
   return cells
 }
 
-export const layoutGauge = (info: ContextInfo, columns: number): ContextGauge | undefined => {
+// `framed` lays out the terminal status window; without it, the plain one-line
+// gauge (prefix, bar, suffix) and its legend span the whole band.
+export const layoutGauge = (info: ContextInfo, columns: number, framed = true): ContextGauge | undefined => {
   const slices = info.slices.filter(s => s.kind !== 'deferred')
   if (slices.length === 0 || info.max <= 0) return undefined
   const suffix = ` ${info.percent}% ${formatTokens(info.total)}/${formatTokens(info.max)}`
   const frameWidth = columns - RIGHT_MARGIN
-  const inner = frameWidth - SIDE * 2
-  const width = inner - MP_LABEL.length - OPEN.length - CLOSE.length - [...suffix].length
+  const inner = framed ? frameWidth - SIDE * 2 : frameWidth
+  const lead = framed ? CTX_LABEL : PREFIX
+  const width = inner - [...lead].length - OPEN.length - CLOSE.length - [...suffix].length
   if (width < MIN_GAUGE) return undefined
   const cells = allocateCells(slices, width)
   const runs: GaugeRun[] = []
@@ -160,7 +163,7 @@ export const frameLines = (gauge: ContextGauge): string[] => {
   const pad = (text: string) => text + ' '.repeat(Math.max(0, inner - [...text].length))
   return [
     `${tl}${h} ${TITLE} ${h.repeat(topFill(gauge))} ${gauge.status} ${h}${tr}`,
-    `${v} ${MP_LABEL}${OPEN}${bar}${CLOSE}${gauge.suffix} ${v}`,
+    `${v} ${CTX_LABEL}${OPEN}${bar}${CLOSE}${gauge.suffix} ${v}`,
     ...legendLines(gauge).map(line => `${v} ${pad(line)} ${v}`),
     `${bl}${h.repeat(gauge.width - 2)}${br}`,
   ]

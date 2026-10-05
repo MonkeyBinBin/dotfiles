@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
 import type { BandInfo, ContextInfo } from '../types'
-import { CLOSE, FRAME, MP_LABEL, OPEN, TITLE, gaugeLine, innerWidth, layoutGauge, legendLines, topFill } from './context-bar'
+import { CLOSE, FRAME, CTX_LABEL, OPEN, TITLE, gaugeLine, innerWidth, layoutGauge, legendLines, topFill } from './context-bar'
 import type { ContextGauge } from './context-bar'
 import { SLIME_FRAMES, SLIME_PALETTE, SLIME_ROWS, SLIME_WIDTH } from './slime-sprite'
 import type { SlimePose } from './slime-sprite'
@@ -253,10 +253,10 @@ type TextElement = ReturnType<EngineInterface['ui']['resolve']>['Text']
 
 const FRAME_COLOR = '#8a93c8'
 const TITLE_COLOR = '#c8d2ff'
-const MP_COLOR = '#56c8dc'
+const CTX_COLOR = '#56c8dc'
 
 // An RPG status window under the floor: the title and mana status on the top
-// border, the MP bar, then a legend of what fills it, all inside one frame.
+// border, the CTX bar, then a legend of what fills it, all inside one frame.
 const renderGauge = (Text: TextElement, gauge: ContextGauge) => {
   // Not `h`: that name is the JSX factory.
   const { tl, tr, bl, br, h: dash, v } = FRAME
@@ -272,7 +272,7 @@ const renderGauge = (Text: TextElement, gauge: ContextGauge) => {
     </Text>,
     <Text key="ctx-gauge" wrap="truncate">
       <Text color={FRAME_COLOR}>{`${v} `}</Text>
-      <Text color={MP_COLOR} bold>{MP_LABEL}</Text>
+      <Text color={CTX_COLOR} bold>{CTX_LABEL}</Text>
       <Text dimColor>{OPEN}</Text>
       {gauge.runs.map((run, at) => (
         <Text key={`run-${at}`} color={run.color} dimColor={run.dim}>
@@ -385,9 +385,10 @@ export const register: Register = on => {
     }
     const engine = await next(e)
     const value = await read($, info)
-    const gauge = layoutGauge(await read($, contextInfo), e.props.bodyColumns)
+    const context = await read($, contextInfo)
 
     if (e.surface !== 'terminal') {
+      const gauge = layoutGauge(context, e.props.bodyColumns, false)
       const { Box, Text } = $.ui.resolve(e)
       return (
         <Box flexDirection="column">
@@ -404,6 +405,7 @@ export const register: Register = on => {
       slime.isWorking = true
     }
     const trackWidth = e.props.bodyColumns
+    const gauge = layoutGauge(context, trackWidth)
     const hud = layoutHud(infoSegments(value, await $.session.turns()), trackWidth)
     slime.trackWidth = trackWidth
     slime.areaWidth = hud.areaWidth
