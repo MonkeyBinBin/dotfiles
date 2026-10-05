@@ -57,8 +57,6 @@ fields=$(jq -r '
   "pr_state=\(.pr.review_state | n)",
   "pr_url=\(.pr.url | n)",
   "dur_ms=\(.cost.total_duration_ms // 0 | i)",
-  "added=\(.cost.total_lines_added // 0 | i)",
-  "removed=\(.cost.total_lines_removed // 0 | i)",
   "ctx_left=\(.context_window.used_percentage | left)",
   "ctx_level=\(.context_window.used_percentage | level)",
   "ctx_size=\(.context_window.context_window_size // 0 | i)",
@@ -180,9 +178,16 @@ if git_status=$(git --no-optional-locks -C "$cwd" status --porcelain=v2 --branch
     done <<<"$git_status"
     [ "$branch" = "(detached)" ] && branch=${oid:0:7}
     seg+=" ${c_green}⎇ ${branch}${dirty}${reset}"
-fi
-if [ "${f_added:-0}" -gt 0 ] || [ "${f_removed:-0}" -gt 0 ]; then
-    seg+=" ${c_green}+${f_added}${reset} ${c_red}-${f_removed}${reset}"
+    # Lines not yet committed, against HEAD: ` 3 files changed, 93 insertions(+), 67 deletions(-)`.
+    # Only a dirty tree is asked, and a repository with no commit yet has no HEAD to diff against.
+    if [ -n "$dirty" ] && shortstat=$(git --no-optional-locks -C "$cwd" diff --shortstat HEAD 2>/dev/null); then
+        added=0 removed=0
+        [[ $shortstat =~ ([0-9]+)\ insertion ]] && added=${BASH_REMATCH[1]}
+        [[ $shortstat =~ ([0-9]+)\ deletion ]] && removed=${BASH_REMATCH[1]}
+        if [ "$added" -gt 0 ] || [ "$removed" -gt 0 ]; then
+            seg+=" ${c_green}+${added}${reset} ${c_red}-${removed}${reset}"
+        fi
+    fi
 fi
 [ -n "$f_worktree" ] && seg+=" ${dim}⑂${reset} ${c_frost}${f_worktree}${reset}"
 if [ -n "$f_pr" ]; then
