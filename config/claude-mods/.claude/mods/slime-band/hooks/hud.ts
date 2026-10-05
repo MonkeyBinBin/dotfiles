@@ -22,8 +22,6 @@ const FONT: Record<string, readonly string[]> = {
 export const SLIME_AREA_MIN = 24
 // Columns between two facts.
 const BLOCK_GAP = 3
-// Columns kept free at the right edge, where the engine draws the band's '[-]'.
-export const RIGHT_MARGIN = 3
 // The track is six pixels tall and glyphs five: starting one pixel down puts
 // the numbers on the same ground row the slime stands on.
 const GLYPH_TOP = 1
@@ -50,11 +48,12 @@ const labelText = (fact: HudFact): string => `${fact.icon} ${fact.label}`
 const blockWidth = (fact: HudFact): number =>
   Math.max(valueWidth(fact.value), [...labelText(fact)].length)
 
-// Right-aligned facts; the last ones drop first when the slime would be squeezed.
+// Right-aligned facts, flush with the band's edge (bodyColumns already leaves out
+// the engine's '[-]'); the last ones drop first when the slime would be squeezed.
 export const layoutHud = (facts: readonly HudFact[], trackWidth: number): HudLayout => {
   let shown = [...facts]
   const widthOf = (list: readonly HudFact[]) =>
-    list.reduce((sum, fact) => sum + blockWidth(fact) + BLOCK_GAP, 0) - BLOCK_GAP + RIGHT_MARGIN
+    list.reduce((sum, fact) => sum + blockWidth(fact) + BLOCK_GAP, 0) - BLOCK_GAP
   while (shown.length > 0 && trackWidth - widthOf(shown) - BLOCK_GAP < SLIME_AREA_MIN) {
     shown = shown.slice(0, -1)
   }

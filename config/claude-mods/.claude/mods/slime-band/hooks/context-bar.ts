@@ -5,7 +5,7 @@
 import type { ContextCategoryKind } from 'claude-code'
 
 import type { ContextInfo } from '../types'
-import { RIGHT_MARGIN, formatTokens } from './hud'
+import { formatTokens } from './hud'
 
 // A mana crystal: single-width, so column math stays exact.
 const PREFIX = '◈ '
@@ -114,7 +114,8 @@ export const layoutGauge = (info: ContextInfo, columns: number, framed = true): 
   const slices = info.slices.filter(s => s.kind !== 'deferred')
   if (slices.length === 0 || info.max <= 0) return undefined
   const suffix = ` ${info.percent}% ${formatTokens(info.total)}/${formatTokens(info.max)}`
-  const frameWidth = columns - RIGHT_MARGIN
+  // bodyColumns already leaves out the engine's '[-]' column: the gauge takes it all.
+  const frameWidth = columns
   const inner = framed ? frameWidth - SIDE * 2 : frameWidth
   const lead = framed ? CTX_LABEL : PREFIX
   const width = inner - [...lead].length - OPEN.length - CLOSE.length - [...suffix].length

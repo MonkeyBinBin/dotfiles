@@ -1,7 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 
 import { SLIME_WIDTH } from './slime-sprite'
-import { RIGHT_MARGIN, SLIME_AREA_MIN, layoutHud } from './hud'
+import { SLIME_AREA_MIN, layoutHud } from './hud'
 import { allocateCells, frameLines, gaugeLine, layoutGauge, legendLines, percentColor, wrapLegend } from './context-bar'
 import { NAP_AFTER_MS, TRACK_ROWS, composeTrack, floorAt, formatTokens, infoLine, infoSegments, slimePose, stepSlime } from './register'
 
@@ -152,12 +152,11 @@ test('paints the big numbers into the track', () => {
   expect(cell.slice(1)).toContain(0x56c8dc)
 })
 
-test("keeps the HUD clear of the band's '[-]' corner", () => {
+test('the HUD ends flush with the band, lined up with the context window', () => {
   const hud = layoutHud(infoSegments(FACTS, 12), 120)
   const rightmostPixel = Math.max(...hud.pixels.map(pixel => pixel.x))
   const rightmostLabel = Math.max(...hud.labels.map(label => label.x + label.width - 1))
-  expect(Math.max(rightmostPixel, rightmostLabel)).toBeLessThan(120 - RIGHT_MARGIN)
-  expect(RIGHT_MARGIN).toBe(3)
+  expect(Math.max(rightmostPixel, rightmostLabel)).toBe(119)
 })
 
 test('the big numbers stand on the same ground row as the slime', () => {
@@ -251,14 +250,14 @@ test('the context gauge fills its width exactly, one run per category', () => {
   expect(line.endsWith('▏ 20% 40.0k/200k')).toBe(true)
   // Deferred tool schemas sit outside the window and the gauge.
   expect(gauge!.runs.map(r => r.glyph)).toEqual(['█', '█', '░', '▒'])
-  expect([...line].length).toBe(80 - 3)
+  expect([...line].length).toBe(80)
   expect(legendLines(gauge!)).toEqual(['■ System prompt 3.0k  ■ Messages 37.0k'])
 })
 
 test('the gauge sits in a status window, every row the same width', () => {
   const lines = frameLines(layoutGauge(CONTEXT, 80)!)
   expect(lines).toHaveLength(4)
-  for (const line of lines) expect([...line].length).toBe(80 - 3)
+  for (const line of lines) expect([...line].length).toBe(80)
   expect(lines[0]).toMatch(/^╭─ ◈ MANA ─+ STABLE ─╮$/)
   expect(lines[1]).toMatch(/^│ CTX ▕[█░▒]+▏ 20% 40\.0k\/200k │$/)
   expect(lines[2]).toMatch(/^│ ■ System prompt 3\.0k  ■ Messages 37\.0k +│$/)
@@ -358,8 +357,8 @@ test('a long legend wraps onto more rows, every item whole', () => {
     { ...CONTEXT, slices: items.map(i => ({ name: i.name, tokens: 12_300, color: 'x', kind: 'used' as const })) },
     60,
   )
-  for (const line of legendLines(gauge!)) expect([...line].length).toBeLessThanOrEqual(60 - 3 - 4)
-  for (const line of frameLines(gauge!)) expect([...line].length).toBe(60 - 3)
+  for (const line of legendLines(gauge!)) expect([...line].length).toBeLessThanOrEqual(60 - 4)
+  for (const line of frameLines(gauge!)) expect([...line].length).toBe(60)
 })
 
 test('shortens big windows without a decimal', () => {
