@@ -1017,6 +1017,19 @@ test('a spawn answered after its first tool call does not add the pet twice', as
   expect(shown).toContain('⚔ 1 · Grep x')
 })
 
+test("the engine's own forks, which the agent list does not name, never join the party", async ($, on) => {
+  world(on)
+  on('agent.list', async () => ({ value: [] }))
+  await $.tool.call({ tool: 'Bash', command: 'true', agentId: 'memory-fork' } as never)
+  await $.tool.call({ tool: 'Read', file_path: '/x/a.ts', agentId: 'memory-fork' } as never)
+
+  const ui = await mountPane($, 'terminal')
+  await showTab($, ui, 'pets')
+  const shown = (await texts(ui)).join('|')
+  expect(shown).toContain('0 questing · 0 summoned')
+  expect(shown).not.toContain('a task in the background')
+})
+
 // --- Second review fixes ---
 
 test('the level keeps rising past the 200 calls the spell book keeps, and levels up once per ten', async ($, on) => {

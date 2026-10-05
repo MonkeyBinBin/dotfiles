@@ -380,19 +380,30 @@ async function joinParty($: EngineInterface, pet: Pet) {
   await followTo($, 'pets')
 }
 
-// A subagent met through its tool calls with no spawn of its own seen: a skill's fork, a teammate, or one whose
-// spawn answered after its first call. The session's agent list names its type and task when it can.
-async function discoverPet($: EngineInterface, agentId: string) {
+// A subagent met through its tool calls with no spawn of its own seen: a skill's fork or a teammate, which the
+// session's agent list names. A loop it does not name is the engine's own fork (compaction, memory) or a subagent
+// whose spawn has not answered yet: no pet of the party, so false.
+async function discoverPet($: EngineInterface, agentId: string): Promise<boolean> {
   const info = (await $.agent.list().catch(() => [])).find(agent => agent.id === agentId)
+  if (info === undefined) return false
   await joinParty($, {
     id: `agent:${agentId}`,
     agentId,
-    kind: info?.type ?? 'fork',
-    description: info?.description || info?.name || 'a task in the background',
+    kind: info.type ?? 'fork',
+    description: info.description || info.name || 'a task in the background',
     startedAt: await $.clock.now(),
     status: 'run',
     actions: 0,
   })
+  return true
+}
+
+// Pets still questing that the agent list no longer names: engine forks an older build let in, never to finish.
+async function dropStrayPets($: EngineInterface) {
+  const listed = await $.agent.list().catch(() => undefined)
+  if (listed === undefined) return
+  const ids = new Set(listed.map(agent => agent.id))
+  await update($, pets, list => list.filter(pet => pet.status !== 'run' || pet.agentId === undefined || ids.has(pet.agentId)))
 }
 
 // Where back leads from a bag: the outposts list for a bag opened there, the map otherwise.
@@ -814,6 +825,9 @@ export const register: Register = on => {
   const background = new Set<string>()
   // Subagents being looked up in the agent list, so parallel tool calls of one add it once.
   const discovering = new Set<string>()
+  // What the loops the agent list does not name have done: a spawn that answers later takes it on, an engine fork
+  // never shows.
+  const strays = new Map<string, Pick<Pet, 'actions' | 'startedAt' | 'lastTool' | 'lastSummary'>>()
   // Calls auto mode denied, by tool_use_id, until their tool.call answers.
   const autoDenied = new Set<string>()
   // The loop whose tool `waitingFor` names: a subagent's id, undefined for the main loop.
@@ -827,6 +841,7 @@ export const register: Register = on => {
     })
     await markStart($)
     await loadProgress($)
+    await dropStrayPets($)
     follow.isOn = (await $.store.get(FOLLOW_KEY).catch(() => undefined)) !== false
     // Each session plays a class at random; a reload of the mod keeps the one rolled.
     if ((await read($, heroClass)) === '') await chooseClass($, rollClass(Math.random()))
@@ -944,6 +959,8 @@ export const register: Register = on => {
     const now = await $.clock.now()
     // A pet sent to its own worktree, or to a folder outside the repository, camps there.
     const camp = await campOfPet($, e.cwd, isIsolated)
+    const stray = strays.get(ran.agentId)
+    strays.delete(ran.agentId)
     const pet: Pet = {
       id: e.tool_use_id,
       agentId: ran.agentId,
@@ -952,6 +969,7 @@ export const register: Register = on => {
       startedAt: now,
       status: 'run',
       actions: 0,
+      ...stray,
       ...(camp === undefined ? {} : { camp }),
       ...(isBackground ? { isBackground } : {}),
     }
@@ -982,9 +1000,13 @@ export const register: Register = on => {
       anim.running += 1
     } else if (e.agentId !== undefined) {
       const agentId = e.agentId
-      if (!(await read($, pets)).some(pet => pet.agentId === agentId) && !discovering.has(agentId)) {
+      const stray = strays.get(agentId)
+      if (stray !== undefined) {
+        strays.set(agentId, { ...stray, actions: stray.actions + 1, lastTool: e.tool, lastSummary: summary })
+      } else if (!(await read($, pets)).some(pet => pet.agentId === agentId) && !discovering.has(agentId)) {
         discovering.add(agentId)
-        await discoverPet($, agentId).finally(() => discovering.delete(agentId))
+        const isPet = await discoverPet($, agentId).finally(() => discovering.delete(agentId))
+        if (!isPet) strays.set(agentId, { actions: 1, startedAt, lastTool: e.tool, lastSummary: summary })
       }
       await update($, pets, list =>
         list.map(pet =>
