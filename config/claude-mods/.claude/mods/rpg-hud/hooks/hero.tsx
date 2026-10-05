@@ -81,7 +81,8 @@ export type StatusData = {
   vitals: Vitals
   combo: Combo
   boss: Boss | null
-  trophies: { earned: number; total: number }
+  // Background shells and monitors still running.
+  jobsOut: number
   petsOut: number
   // The outpost (worktree) the session works in, when not the repository's main folder.
   camp?: string
@@ -188,8 +189,8 @@ export function renderStatus(ui: ElementTable, data: StatusData, Raster?: Elemen
           {usd !== undefined && <Text color="yellow">⛁ {usd.toFixed(2)}</Text>}
         </Box>
         <Text wrap="truncate">
-          <Text color="yellow">★ {data.trophies.earned}/{data.trophies.total}</Text>
-          <Text dimColor> feats</Text>
+          <Text color="yellow">⚙ {data.jobsOut}</Text>
+          <Text dimColor> {data.jobsOut === 1 ? 'job' : 'jobs'}</Text>
           <Text color="green">  ♣ {data.petsOut}</Text>
           <Text dimColor> in party</Text>
         </Text>

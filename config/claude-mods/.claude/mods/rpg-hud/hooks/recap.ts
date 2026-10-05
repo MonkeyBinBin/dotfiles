@@ -15,8 +15,6 @@ export type RecapData = {
   touched: readonly TouchedFile[]
   usd?: number
   contextPercent?: number
-  // Titles of the trophies unlocked since the session started.
-  trophies: readonly string[]
 }
 
 // `2h 05m`, `14m`, or `40s` under a minute.
@@ -64,6 +62,5 @@ export const recapText = (data: RecapData): string => {
   if (data.contextPercent !== undefined) purse.push(`🔮 context ${Math.round(data.contextPercent)}% full`)
   if (purse.length > 0) lines.push(purse.join(' · '))
 
-  if (data.trophies.length > 0) lines.push(`🏆 ${data.trophies.join(', ')}`)
   return lines.join('\n')
 }

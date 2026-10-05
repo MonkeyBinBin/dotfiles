@@ -6,7 +6,7 @@ import type { Item } from './window'
 // Every /hud command, as the help page and `/hud help` list it.
 export const HELP_COMMANDS: readonly { usage: string; what: string }[] = [
   { usage: '/hud', what: 'Open the adventure HUD' },
-  { usage: '/hud spell|party|map|skill|feats', what: 'Open it on that tab; 1–5 name them too' },
+  { usage: '/hud spell|party|map|skill|jobs', what: 'Open it on that tab; 1–5 name them too' },
   { usage: '/hud class [name]', what: `Reroll the hero's class, or pick one: ${CLASS_IDS.join(', ')}` },
   { usage: '/hud cards', what: 'Draw Edit and Write results as spell cards, or as before' },
   { usage: '/hud follow', what: 'On a message turn to the spell book, then to what happens (skills, party, map); or stay put' },

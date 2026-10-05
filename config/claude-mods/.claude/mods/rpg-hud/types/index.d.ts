@@ -18,7 +18,7 @@ export type SpellFilter = 'all' | 'errors' | 'slow'
 export type Tally = { failures: number; refusals: number; bossesDefeated: number; petsSummoned: number }
 
 // The command menu's entries; the hero's status panel above them never changes.
-export type Tab = 'spells' | 'pets' | 'map' | 'skills' | 'feats'
+export type Tab = 'spells' | 'pets' | 'map' | 'skills' | 'jobs'
 
 // A subagent, keyed by the Agent call that summoned it.
 export type Pet = {
@@ -38,6 +38,24 @@ export type Pet = {
   camp?: string
   // Sent with run_in_background: its return is announced, since nothing waits on it.
   isBackground?: boolean
+}
+
+// A background task a Bash or Monitor call left running, keyed by the engine's task id.
+// `done`: gone from the engine's list with no notification seen, so how it ended is unknown.
+export type JobStatus = 'run' | 'ok' | 'err' | 'kill' | 'done'
+
+export type Job = {
+  id: string
+  toolUseId: string
+  kind: 'shell' | 'monitor'
+  command: string
+  description: string
+  startedAt: number
+  endedAt?: number
+  status: JobStatus
+  exitCode?: number
+  // The subagent whose call started it; absent for the main loop.
+  agentId?: string
 }
 
 // Context window and spend, as the status line reports them.
@@ -103,23 +121,10 @@ export type Gear = { server: string; tools: number; isLoaded: boolean }
 
 export type Loadout = { skills: SkillSlot[]; gear: Gear[] }
 
-// Lifetime figures, kept in $.store across sessions and mirrored into state for drawing.
+// Lifetime figures, kept in $.store across sessions and mirrored into state for drawing: how often each skill was
+// cast, which the skills tab and the skill-bar mod read.
 export type Progress = {
-  totalCalls: number
-  bashCalls: number
-  bestCombo: number
-  turnStreak: number
-  bestTurnStreak: number
-  bossesDefeated: number
-  petsSummoned: number
-  maxPetsAtOnce: number
-  peakContext: number
-  isNightOwl: boolean
-  // Every hero class a session has rolled.
-  classesPlayed: string[]
   skillUses: Record<string, number>
-  // Achievement id to the time it was unlocked.
-  unlocked: Record<string, number>
 }
 
 declare module 'claude-code' {
@@ -137,6 +142,10 @@ declare module 'claude-code' {
       // The hero class this session rolled.
       heroClass: string
       pets: Pet[]
+      // Background shells and monitors, running first; the finished ones kept are capped.
+      jobs: Job[]
+      // The job whose stop was pressed once and waits for the second press; null when none.
+      stopArmed: string | null
       vitals: Vitals
       combo: Combo
       boss: Boss | null

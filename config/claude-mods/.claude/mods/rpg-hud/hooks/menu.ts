@@ -50,11 +50,11 @@ export const MENU: readonly MenuEntry[] = [
     pixels: ['...YY...', '...YY...', 'YYYBBYYY', '.YYYYYY.', '.YY..YY.', 'Y......Y'],
   },
   {
-    id: 'feats',
-    label: 'Feats',
-    title: '🏆 FEATS',
+    id: 'jobs',
+    label: 'Jobs',
+    title: '⚙ JOBS',
     color: 'yellow',
-    pixels: ['Y.YYYY.Y', 'YYYWYYYY', '.YYYYYY.', '..YYYY..', '...yy...', '..yyyy..'],
+    pixels: ['yyyyyyyy', 'yKKKKKKy', 'yKGKKKKy', 'yKKGKKKy', 'yKGKWWKy', 'yyyyyyyy'],
   },
 ]
 

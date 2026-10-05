@@ -18,7 +18,7 @@ import { formatDuration, recapText, topTools } from './recap'
 import { HELP_COMMANDS, helpText } from './help'
 import { filterSpells, timeColor } from './spellbook'
 import { SKILL_KEYS, groupSkills, masteryStars, skillKeys } from './skills'
-import { EMPTY_PROGRESS, newlyEarned } from './trophies'
+import { KEPT_JOBS, endJob, jobOrder, parseJobEnds, reconcileJobs, trimJobs } from './jobs'
 import { barFill, oneLine } from './util'
 import { cardWidth } from './menu-client'
 import { pageItems } from './window'
@@ -136,7 +136,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
   test(`the status panel stays on top whatever the menu shows on ${surface}`, async ($, on) => {
     world(on)
     const ui = await mountPane($, surface)
-    for (const [key, title] of [['pets', '🐾 PARTY'], ['map', '🧭 WORLD MAP'], ['skills', '📜 SKILLS'], ['feats', '🏆 FEATS'], ['spells', '📖 SPELL BOOK']] as const) {
+    for (const [key, title] of [['pets', '🐾 PARTY'], ['map', '🧭 WORLD MAP'], ['skills', '📜 SKILLS'], ['jobs', '⚙ JOBS'], ['spells', '📖 SPELL BOOK']] as const) {
       await showTab($, ui, key, surface)
       const shown = await texts(ui)
       expect(shown).toContain(title)
@@ -152,23 +152,23 @@ test('draws the portrait and the icon menu on the terminal', async ($, on) => {
   // Five labels under the icons, buttons carrying their number keys, the active one jewelled.
   const labels = (await ui.findAll({ type: 'Button' })).filter(b => String(b.props?.key ?? '').startsWith('menu-'))
   // Plain, so the terminal draws each as `1: SPELL`; the active one at full strength.
-  expect(labels.map(b => b.props?.label)).toEqual(['SPELL', 'PARTY', 'MAP', 'SKILL', 'FEATS'])
+  expect(labels.map(b => b.props?.label)).toEqual(['SPELL', 'PARTY', 'MAP', 'SKILL', 'JOBS'])
   expect(labels.map(b => b.props?.hotkey)).toEqual(['1', '2', '3', '4', '5'])
   expect(labels.every(b => b.props?.plain === true)).toBe(true)
   expect(labels.map(b => b.props?.dimColor)).toEqual([false, true, true, true, true])
   // Every card framed whole in rounded corners; the selected one gold.
   expect((await cardOf(ui, 'spells'))).toMatchObject({ borderStyle: 'round', borderColor: 'yellow' })
-  for (const tab of ['pets', 'map', 'skills', 'feats']) expect((await cardOf(ui, tab))).toMatchObject({ borderStyle: 'round', borderColor: 'gray' })
+  for (const tab of ['pets', 'map', 'skills', 'jobs']) expect((await cardOf(ui, tab))).toMatchObject({ borderStyle: 'round', borderColor: 'gray' })
 })
 
 test('a label button picks its tab, as its number key does once the pane has the keys', async ($, on) => {
   world(on)
   const ui = await mountPane($, 'terminal')
-  await ui.press({ key: 'menu-feats' })
-  expect((await texts(ui)).join('|')).toContain('🏆')
+  await ui.press({ key: 'menu-jobs' })
+  expect((await texts(ui)).join('|')).toContain('⚙ JOBS')
   // With the help page open, the active tab's button closes it.
   await ui.press({ key: 'help' })
-  await ui.press({ key: 'menu-feats' })
+  await ui.press({ key: 'menu-jobs' })
   expect((await texts(ui)).join('|')).not.toContain('❓ HELP')
 })
 
@@ -474,18 +474,12 @@ test('the letters go to the skills in view, a from the top', () => {
   expect(skillKeys(many, 0, 30).size).toBe(SKILL_KEYS.length)
 })
 
-test('the first cast unlocks a feat and saves the progress', async ($, on) => {
+test('a skill cast saves the progress', async ($, on) => {
   const { clock, store } = world(on)
-  await $.tool.call({ tool: 'Read', file_path: '/x/a.md' })
+  await $.tool.call({ tool: 'Skill', skill: 'commit' } as never)
   // The save runs beside the call, never in its way.
   await clock.advance(0)
-  expect(Object.keys((store.get('progress') as { unlocked: Record<string, number> }).unlocked)).toContain('first-cast')
-
-  const ui = await mountPane($, 'desktop')
-  await showTab($, ui, 'feats', 'desktop')
-  const shown = (await texts(ui)).join('|')
-  expect(shown).toContain('First Spark')
-  expect(shown).toContain('1/15 earned')
+  expect(store.get('progress')).toEqual({ skillUses: { commit: 1 } })
 })
 
 test('levels up every ten calls and caps lost hearts at five', () => {
@@ -734,13 +728,6 @@ test('a typed slash command counts only for known skills', () => {
   expect(skillOfPrompt('hello /commit', ['commit'])).toBeUndefined()
 })
 
-test('earns trophies once their goal is met', () => {
-  const earned = newlyEarned({ ...EMPTY_PROGRESS, totalCalls: 120, bestCombo: 25 }).map(t => t.id)
-  expect(earned).toEqual(['first-cast', 'centurion', 'combo-20'])
-  const kept = newlyEarned({ ...EMPTY_PROGRESS, totalCalls: 1, unlocked: { 'first-cast': 1 } })
-  expect(kept).toEqual([])
-})
-
 test('puffs smoke on the pane after a failed call, then rests', async ($, on) => {
   const clock = world(on, { tool: failBash('boom') }).clock
   const blitted: string[] = []
@@ -795,7 +782,7 @@ test('each class has its own ranks and frames', () => {
 })
 
 test('/hud class picks a class and the panel follows it', async ($, on) => {
-  const { store } = world(on)
+  world(on)
   const answer = await $.command.run({ command: 'hud', args: 'class knight' } as never)
   expect(answer).toMatchObject({ text: 'Claude is now a knight.' })
   const ui = await mountPane($, 'terminal')
@@ -804,7 +791,6 @@ test('/hud class picks a class and the panel follows it', async ($, on) => {
   expect(shown).toContain('Squire')
   expect(shown).toContain('⛨ standing guard')
   expect(shown).toContain('✓ no blows parried')
-  expect((store.get('progress') as { classesPlayed: string[] }).classesPlayed).toEqual(['knight'])
 
   expect(await $.command.run({ command: 'hud', args: 'class bard' } as never)).toMatchObject({
     text: 'No such class. Pick one of: wizard, knight, ranger, rogue, cleric, artificer.',
@@ -1083,12 +1069,11 @@ test('git prints paths as written, and a control character in one cannot break t
 })
 
 test("progress adds to what other sessions saved, never overwrites it", async ($, on) => {
-  const { clock, store } = world(on, { stored: { progress: { ...EMPTY_PROGRESS, totalCalls: 50, unlocked: { 'first-cast': 1 } } } })
-  await $.tool.call({ tool: 'Read', file_path: '/x/a.md' })
+  // An older build's figures beside the skill counts are left behind by the next save.
+  const { clock, store } = world(on, { stored: { progress: { totalCalls: 50, skillUses: { commit: 3, review: 1 } } } })
+  await $.tool.call({ tool: 'Skill', skill: 'commit' } as never)
   await clock.advance(0)
-  const saved = store.get('progress') as { totalCalls: number; unlocked: Record<string, number> }
-  expect(saved.totalCalls).toBe(51)
-  expect(saved.unlocked['first-cast']).toBe(1)
+  expect(store.get('progress')).toEqual({ skillUses: { commit: 4, review: 1 } })
 })
 
 test('only a check runner summons a boss, never a word in the arguments', () => {
@@ -1187,13 +1172,14 @@ test('a hovered row the bag no longer has is let go', async ($, on) => {
 })
 
 test('a store that cannot be read is never overwritten', async ($, on) => {
-  const { store } = world(on, { isStoreDown: true, stored: { progress: { ...EMPTY_PROGRESS, totalCalls: 50 } } })
-  await $.tool.call({ tool: 'Read', file_path: '/x/a.md' })
-  expect((store.get('progress') as { totalCalls: number }).totalCalls).toBe(50)
-  // This session's copy still counts the call.
+  const { store } = world(on, { isStoreDown: true, usage: ONE_SKILL, stored: { progress: { skillUses: { commit: 50 } } } })
+  await $.turn.complete({ answer: '', durationMs: 5, isAborted: false, turnId: 't' } as never)
+  await $.tool.call({ tool: 'Skill', skill: 'commit' } as never)
+  expect(store.get('progress')).toEqual({ skillUses: { commit: 50 } })
+  // This session's copy still counts the cast.
   const ui = await mountPane($, 'desktop')
-  await showTab($, ui, 'feats', 'desktop')
-  expect((await texts(ui)).join('|')).toContain('1/15 earned')
+  await showTab($, ui, 'skills', 'desktop')
+  expect((await texts(ui)).join('|')).toContain('1/1 learned')
 })
 
 test('only a command that starts git refreshes the map', () => {
@@ -1233,25 +1219,21 @@ for (const surface of ['terminal', 'desktop'] as const) {
   })
 }
 
-test('a refused call earns no XP and no lifetime count', async ($, on) => {
-  const { clock, store } = world(on, { tool: e => (e.tool === 'Bash' ? { deny: 'not now' } : undefined) })
+test('a refused call earns no XP', async ($, on) => {
+  world(on, { tool: e => (e.tool === 'Bash' ? { deny: 'not now' } : undefined) })
   await $.tool.call({ tool: 'Read', file_path: '/x/a.md' })
   await $.tool.call({ tool: 'Bash', command: 'rm -rf build' })
   await $.tool.call({ tool: 'Read', file_path: '/x/b.md' })
-  await clock.advance(0)
-  const saved = store.get('progress') as { totalCalls: number; bashCalls: number }
-  expect(saved.totalCalls).toBe(2)
-  expect(saved.bashCalls).toBe(0)
 
   const ui = await mountPane($, 'desktop')
   expect((await texts(ui)).join('|')).toContain('2 casts')
 })
 
-test('a burst of calls all count, however the saves batch them', async ($, on) => {
+test('a burst of casts all count, however the saves batch them', async ($, on) => {
   const { clock, store } = world(on)
-  await Promise.all([1, 2, 3, 4, 5].map(n => $.tool.call({ tool: 'Read', file_path: `/x/${n}.md` })))
+  await Promise.all([1, 2, 3, 4, 5].map(() => $.tool.call({ tool: 'Skill', skill: 'commit' } as never)))
   await clock.advance(0)
-  expect((store.get('progress') as { totalCalls: number }).totalCalls).toBe(5)
+  expect(store.get('progress')).toEqual({ skillUses: { commit: 5 } })
 })
 
 test('mana alarms sound once each, and again after a compact', () => {
@@ -1437,7 +1419,6 @@ test('the recap leaves out what the session never did', () => {
     bestCombo: 0,
     boss: null,
     touched: [],
-    trophies: [],
   })
   expect(text).toBe('⚔ Claude the knight · Lv.1 Squire\n✦ 0 casts · ✗ 0 blows parried · ⚡ best combo 0')
 })
@@ -1469,7 +1450,6 @@ test('/hud recap sums up the session', async ($, on) => {
     '☠ 0 bosses defeated · Bug Hydra still stands (HP 2)',
     '🗺 1 file explored · ✎ 1 edited',
     '⛁ $1.50 · 🔮 context 42% full',
-    '🏆 First Spark',
   ])
 })
 
@@ -1561,7 +1541,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
     await ui.press({ key: 'help-back' })
     expect((await texts(ui)).join('|')).toContain('📖 SPELL BOOK')
     await ui.press({ key: 'help' })
-    await showTab($, ui, 'feats', surface)
+    await showTab($, ui, 'jobs', surface)
     shown = (await texts(ui)).join('|')
     expect(shown).not.toContain('❓ HELP')
   })
@@ -1584,7 +1564,7 @@ test('a window stops at the first item that does not fit', () => {
 })
 
 test("auto mode's denial is a refusal, whatever its wording", async ($, on) => {
-  const { clock, store } = world(on, {
+  const { clock } = world(on, {
     // The classifier denies the Bash call while it is under way; the model reads its own wording.
     tool: async e => {
       if (e.tool !== 'Bash') return undefined
@@ -1603,7 +1583,7 @@ test("auto mode's denial is a refusal, whatever its wording", async ($, on) => {
   expect(shown).toContain('5/5')
   expect(shown).toContain('⊘')
   expect(shown).not.toContain('☠')
-  expect((store.get('progress') as { totalCalls: number }).totalCalls).toBe(1)
+  expect(shown).toContain('1 casts')
 })
 
 test('a failure auto mode never denied is still a failure', async ($, on) => {
@@ -1622,7 +1602,7 @@ test('the number keys pick a tab and ? toggles the help page', async ($, on) => 
   world(on)
   const ui = await mountPane($, 'terminal')
   await ui.key({ key: '5', in: 'icon-spells' })
-  expect((await texts(ui)).join('|')).toContain('🏆')
+  expect((await texts(ui)).join('|')).toContain('⚙ JOBS')
   await ui.key({ key: '3', in: 'icon-spells' })
   expect((await texts(ui)).join('|')).toContain('🧭 WORLD MAP')
 
@@ -1666,7 +1646,7 @@ test("a pointer passing over a card's icon leaves nothing lit behind it", async 
   await showTab($, ui, 'pets')
   expect(await colours('map')).toEqual(before)
   // The selected card's icon is the bright one.
-  expect(await colours('pets')).not.toEqual(await colours('feats'))
+  expect(await colours('pets')).not.toEqual(await colours('jobs'))
   // (The hover group that lights the pixels is the surface's; the test tree omits hover props.)
 })
 
@@ -1765,6 +1745,35 @@ test('a typed /skill turns to the skills', async ($, on) => {
   expect((await texts(ui)).join('|')).toContain('📜 SKILLS')
 })
 
+test('a typed /skill forked to the background still lets the window follow, and counts once', async ($, on) => {
+  world(on, { usage: ONE_SKILL })
+  on('command.run', async () => ({ text: '' }))
+  on('agent.list', async () => ({ value: [{ id: 'fork-1', description: '/commit', type: 'general-purpose', status: 'running' }] }) as never)
+  await $.turn.complete({ answer: '', durationMs: 5, isAborted: false, turnId: 't' } as never)
+  const ui = await mountPane($, 'terminal', 40)
+  // A pick in the pane holds the window.
+  await showTab($, ui, 'jobs')
+  await $.command.run({ command: 'commit', args: '', origin: { kind: 'composer' } } as never)
+  expect((await texts(ui)).join('|')).toContain('📜 SKILLS')
+  // The fork's first call brings it into the party, and the window along.
+  await $.tool.call({ tool: 'Read', file_path: '/x/a.md', agentId: 'fork-1' } as never)
+  expect((await texts(ui)).join('|')).toContain('🐾 PARTY')
+  // A skill that also submits its prompt is counted once.
+  await $.prompt.submit({ text: '/commit' } as never)
+  await showTab($, ui, 'skills')
+  expect(await texts(ui)).toContain('×1')
+})
+
+test("a plugin's slash command is no message of the person's", async ($, on) => {
+  world(on, { usage: ONE_SKILL })
+  on('command.run', async () => ({ text: '' }))
+  await $.turn.complete({ answer: '', durationMs: 5, isAborted: false, turnId: 't' } as never)
+  const ui = await mountPane($, 'terminal', 40)
+  await showTab($, ui, 'jobs')
+  await $.command.run({ command: 'commit', args: '', origin: { kind: 'plugin', name: 'other' } } as never)
+  expect((await texts(ui)).join('|')).toContain('⚙ JOBS')
+})
+
 for (const source of ['clear', 'resume'] as const) {
   test(`a ${source} puts out the glow of the casts before it`, async ($, on) => {
     world(on, { usage: ONE_SKILL })
@@ -1792,9 +1801,9 @@ test('a tab the person picks holds the window until their next message', async (
   world(on, { usage: ONE_SKILL })
   await $.turn.complete({ answer: '', durationMs: 5, isAborted: false, turnId: 't' } as never)
   const ui = await mountPane($, 'terminal', 40)
-  await ui.press({ key: 'menu-feats' })
+  await ui.press({ key: 'menu-jobs' })
   await $.tool.call({ tool: 'Skill', skill: 'commit' } as never)
-  expect((await texts(ui)).join('|')).toContain('🏆')
+  expect((await texts(ui)).join('|')).toContain('⚙ JOBS')
   // The next message lets it follow again.
   await $.prompt.submit({ text: 'and now?' } as never)
   await $.tool.call({ tool: 'Skill', skill: 'commit' } as never)
@@ -1818,11 +1827,11 @@ test('a sent message turns the window to the spell book, where its calls show', 
   world(on, { usage: ONE_SKILL })
   await $.turn.complete({ answer: '', durationMs: 5, isAborted: false, turnId: 't' } as never)
   const ui = await mountPane($, 'terminal', 40)
-  await showTab($, ui, 'feats')
+  await showTab($, ui, 'jobs')
   await $.prompt.submit({ text: 'what changed?' } as never)
   expect((await texts(ui)).join('|')).toContain('📖 SPELL BOOK')
   // With the help page open it stays put.
-  await showTab($, ui, 'feats')
+  await showTab($, ui, 'jobs')
   await ui.press({ key: 'help' })
   await $.prompt.submit({ text: 'again' } as never)
   expect((await texts(ui)).join('|')).toContain('❓ HELP')
@@ -1833,7 +1842,7 @@ test("/hud with a tab's number opens that tab", async ($, on) => {
   on('ui.open', async () => ({ value: undefined }) as never)
   const ui = await mountPane($, 'terminal')
   await $.command.run({ command: 'hud', args: '5' } as never)
-  expect((await texts(ui)).join('|')).toContain('🏆')
+  expect((await texts(ui)).join('|')).toContain('⚙ JOBS')
   await $.command.run({ command: 'hud', args: '3' } as never)
   expect((await texts(ui)).join('|')).toContain('🧭 WORLD MAP')
   // A number past the menu only opens the HUD.
@@ -1877,4 +1886,173 @@ test('reading a diff holds the window: a pick or a press in the pane stops the f
   await $.prompt.submit({ text: 'and again' } as never)
   await $.tool.call({ tool: 'Skill', skill: 'commit' } as never)
   expect((await texts(ui)).join('|')).toContain('📜 SKILLS')
+})
+
+// --- Jobs ---
+
+const notification = (id: string, status: string, summary = '') =>
+  `<task-notification>\n<task-id>${id}</task-id>\n<tool-use-id>tu-${id}</tool-use-id>\n<status>${status}</status>\n<summary>${summary}</summary>\n</task-notification>`
+
+const job = (id: string, status: 'run' | 'ok' | 'done' = 'run') =>
+  ({ id, toolUseId: `tu-${id}`, kind: 'shell', command: 'npm run dev', description: 'Start the dev server', startedAt: 0, status }) as const
+
+test('a task notification tells how each job ended', () => {
+  const text = [
+    notification('b1', 'completed', 'Background command "Build" completed (exit code 0)'),
+    notification('b2', 'completed', 'Background command "Test" completed (exit code 1)'),
+    notification('b3', 'killed'),
+    notification('b4', 'failed'),
+    notification('b5', 'failed', 'Background command "Lint" failed with exit code 3'),
+    // A monitor's event carries no final status: it ends nothing.
+    '<task-notification>\n<task-id>m1</task-id>\n<event>line</event>\n</task-notification>',
+  ].join('\n')
+  expect(parseJobEnds(text)).toEqual([
+    { id: 'b1', toolUseId: 'tu-b1', status: 'ok', exitCode: 0 },
+    { id: 'b2', toolUseId: 'tu-b2', status: 'err', exitCode: 1 },
+    { id: 'b3', toolUseId: 'tu-b3', status: 'kill' },
+    { id: 'b4', toolUseId: 'tu-b4', status: 'err' },
+    { id: 'b5', toolUseId: 'tu-b5', status: 'err', exitCode: 3 },
+  ])
+  expect(parseJobEnds('just a message')).toEqual([])
+  // The description quoted first may name an exit code of its own; the outcome comes last.
+  expect(parseJobEnds(notification('b6', 'completed', 'Background command "Check exit code 2 handling" completed (exit code 0)'))[0]).toMatchObject({ status: 'ok', exitCode: 0 })
+})
+
+test('a late notification still says how a job the engine dropped ended, never one already ended', () => {
+  const dropped = endJob([job('b1', 'done')], { id: 'b1', status: 'err', exitCode: 2 }, 5)
+  expect(dropped[0]).toMatchObject({ status: 'err', exitCode: 2 })
+  expect(endJob([job('b1', 'ok')], { id: 'b1', status: 'kill' }, 5)[0]?.status).toBe('ok')
+  // An empty call id names none of the jobs met only in the engine's list.
+  const met = { ...job('b2'), toolUseId: '' }
+  expect(endJob([met], { id: 'x', toolUseId: '', status: 'ok' }, 5)[0]?.status).toBe('run')
+})
+
+test('the jobs keep every running one and the latest finished, running first', () => {
+  const many = [job('r'), ...Array.from({ length: KEPT_JOBS + 5 }, (_, at) => job(`f${at}`, 'ok'))]
+  const kept = trimJobs(many)
+  expect(kept).toHaveLength(KEPT_JOBS + 1)
+  expect(kept.some(one => one.id === 'r')).toBe(true)
+  expect(kept.some(one => one.id === 'f0')).toBe(false)
+  expect(jobOrder([job('a', 'ok'), job('b'), job('c', 'ok')]).map(one => one.id)).toEqual(['b', 'c', 'a'])
+})
+
+test("a stop checks the jobs against the engine's list of background work", () => {
+  const inFlight = [
+    { id: 'b2', type: 'shell', description: 'Watch the tests', command: 'npm test -- --watch' },
+    { id: 'a1', type: 'subagent', description: 'An agent' },
+  ]
+  const next = reconcileJobs([job('b1'), job('b2')], inFlight, 9)
+  expect(next.map(one => [one.id, one.status])).toEqual([['b1', 'done'], ['b2', 'run']])
+  // One begun before the HUD watched joins; a subagent is the party's, not a job.
+  const met = reconcileJobs([], inFlight, 9)
+  expect(met.map(one => [one.id, one.command])).toEqual([['b2', 'npm test -- --watch']])
+  // One marked ended that the engine names again runs on.
+  const revived = reconcileJobs([{ ...job('b2', 'done'), endedAt: 4 }], inFlight, 9)
+  expect(revived[0]?.status).toBe('run')
+  expect(revived[0]?.endedAt).toBeUndefined()
+})
+
+for (const surface of ['terminal', 'desktop'] as const) {
+  test(`a background shell shows on the jobs tab until its notification on ${surface}`, async ($, on) => {
+    const { toasts } = world(on, {
+      tool: e => (e.tool === 'Bash' && e.tool_use_id === 'tu-b1' ? ({ result: { text: '', backgroundTaskId: 'b1' } } as never) : undefined),
+    })
+    const ui = await mountPane($, surface)
+    await $.tool.call({ tool: 'Bash', tool_use_id: 'tu-b1', command: 'npm run dev', description: 'Start the dev server', run_in_background: true } as never)
+    // The window turns to the jobs, and the status panel counts the one running.
+    let shown = (await texts(ui)).join('|')
+    expect(shown).toContain('⚙ JOBS')
+    expect(shown).toContain('Start the dev server')
+    expect(shown).toContain('$ npm run dev')
+    expect(shown).toContain('1 running')
+    expect(shown).toContain('⚙ 1| job')
+
+    await $.prompt.submit({ text: notification('b1', 'completed', 'Background command "x" completed (exit code 3)'), origin: { kind: 'task-notification' } } as never)
+    await showTab($, ui, 'jobs', surface)
+    shown = (await texts(ui)).join('|')
+    expect(shown).toContain('✗ exit 3')
+    expect(shown).toContain('⚙ 0| jobs')
+    expect(toasts).toContain('⚙ Job failed: Start the dev server')
+  })
+}
+
+test('TaskStop stops the job it names', async ($, on) => {
+  world(on, {
+    tool: e =>
+      e.tool === 'Monitor'
+        ? ({ result: { taskId: 'm1', timeoutMs: 0 } } as never)
+        : e.tool === 'TaskStop'
+          ? ({ result: { message: 'stopped', task_id: 'm1', task_type: 'monitor' } } as never)
+          : undefined,
+  })
+  const ui = await mountPane($, 'desktop')
+  await $.tool.call({ tool: 'Monitor', command: 'tail -f log', description: 'Watch the log', timeout_ms: 0 } as never)
+  expect((await texts(ui)).join('|')).toContain('◉ ')
+  await $.tool.call({ tool: 'TaskStop', task_id: 'm1' } as never)
+  expect((await texts(ui)).join('|')).toContain('■ stopped')
+})
+
+test("a running job's stop button stops it through TaskStop", async ($, on) => {
+  const stops: unknown[] = []
+  world(on, {
+    tool: e => {
+      if (e.tool === 'Bash') return { result: { text: '', backgroundTaskId: 'b1' } } as never
+      if (e.tool !== 'TaskStop') return undefined
+      stops.push((e as { task_id?: unknown }).task_id)
+      return { result: { message: 'stopped', task_id: 'b1', task_type: 'local_bash' } } as never
+    },
+  })
+  const ui = await mountPane($, 'desktop')
+  await $.tool.call({ tool: 'Bash', command: 'npm run dev', run_in_background: true } as never)
+  // The first press only asks again.
+  await ui.press({ key: 'job-stop-b1' })
+  expect(stops).toEqual([])
+  expect((await ui.findAll({ type: 'Button' })).find(b => b.props?.key === 'job-stop-b1')?.props?.label).toBe('■ sure?')
+  await ui.press({ key: 'job-stop-b1' })
+  expect(stops).toEqual(['b1'])
+  const shown = (await texts(ui)).join('|')
+  expect(shown).toContain('■ stopped')
+  // A stopped job has no button left.
+  expect((await ui.findAll({ type: 'Button' })).some(b => b.props?.key === 'job-stop-b1')).toBe(false)
+})
+
+test('a stop the engine refuses leaves the job running and says so', async ($, on) => {
+  const { toasts } = world(on, {
+    tool: e => (e.tool === 'Bash' ? ({ result: { text: '', backgroundTaskId: 'b1' } } as never) : e.tool === 'TaskStop' ? { deny: 'no' } : undefined),
+  })
+  const ui = await mountPane($, 'desktop')
+  await $.tool.call({ tool: 'Bash', command: 'npm run dev', description: 'Dev server', run_in_background: true } as never)
+  await ui.press({ key: 'job-stop-b1' })
+  await ui.press({ key: 'job-stop-b1' })
+  expect(toasts).toContain('⚙ Could not stop: Dev server')
+  expect((await texts(ui)).join('|')).toContain('1 running')
+})
+
+test('a stop pressed once settles back after a moment', async ($, on) => {
+  const stops: unknown[] = []
+  const { clock } = world(on, {
+    tool: e => {
+      if (e.tool === 'Bash') return { result: { text: '', backgroundTaskId: 'b1' } } as never
+      if (e.tool === 'TaskStop') stops.push('b1')
+      return undefined
+    },
+  })
+  const ui = await mountPane($, 'desktop')
+  await $.tool.call({ tool: 'Bash', command: 'npm run dev', run_in_background: true } as never)
+  const label = async () => (await ui.findAll({ type: 'Button' })).find(b => b.props?.key === 'job-stop-b1')?.props?.label
+  await ui.press({ key: 'job-stop-b1' })
+  expect(await label()).toBe('■ sure?')
+  await clock.advance(3000)
+  expect(await label()).toBe('■ stop')
+  // A press after it settled arms it again, and stops nothing.
+  await ui.press({ key: 'job-stop-b1' })
+  expect(stops).toEqual([])
+})
+
+test('a foreground shell is no job', async ($, on) => {
+  world(on)
+  const ui = await mountPane($, 'desktop')
+  await $.tool.call({ tool: 'Bash', command: 'ls' })
+  await showTab($, ui, 'jobs', 'desktop')
+  expect((await texts(ui)).join('|')).toContain('No background jobs.')
 })

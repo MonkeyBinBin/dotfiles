@@ -8,6 +8,7 @@ import type {
   Gear,
   GitMap,
   Inspect,
+  Job,
   Loadout,
   MapView,
   Outpost,
@@ -41,8 +42,9 @@ import { recapText } from './recap'
 import { castText, skillItems, skillKeys, skillRows, skillsSubtitle } from './skills'
 import { filterSpells, spellFilters, spellItems } from './spellbook'
 import { HELP_COMMANDS, helpItems, helpText } from './help'
-import { EMPTY_PROGRESS, TROPHIES, newlyEarned } from './trophies'
-import { featItems, featsSubtitle } from './trophy-room'
+import { EMPTY_PROGRESS, progressOf } from './progress'
+import { addJob, endJob, jobItems, jobsSubtitle, parseJobEnds, reconcileJobs, trimJobs } from './jobs'
+import type { JobEnd } from './jobs'
 import { summarize } from './util'
 import { WINDOW_CHROME_COLUMNS, WINDOW_CHROME_ROWS, clampOffset, pageItems, renderWindow, totalRows } from './window'
 import type { Item } from './window'
@@ -56,6 +58,8 @@ const tab = atom({ plugin: 'rpg-hud', key: 'tab' } as const, 'spells' as Tab)
 // Empty until the session rolls its class; a reload keeps the roll.
 const heroClass = atom({ plugin: 'rpg-hud', key: 'heroClass' } as const, '')
 const pets = atom({ plugin: 'rpg-hud', key: 'pets' } as const, [] as Pet[])
+const jobs = atom({ plugin: 'rpg-hud', key: 'jobs' } as const, [] as Job[])
+const stopArmed = atom({ plugin: 'rpg-hud', key: 'stopArmed' } as const, null as string | null)
 const vitals = atom({ plugin: 'rpg-hud', key: 'vitals' } as const, {} as Vitals)
 const combo = atom({ plugin: 'rpg-hud', key: 'combo' } as const, { current: 0, best: 0 } as Combo)
 const boss = atom({ plugin: 'rpg-hud', key: 'boss' } as const, null as Boss | null)
@@ -92,7 +96,7 @@ const markStart = async ($: EngineInterface) => {
 
 // Moving to another session (a /clear, an in-session /resume) empties every figure the HUD keeps for the one
 // it leaves: the calls, the level, the combo, the boss, the files touched, the casts that glow, the tally, and
-// the finished pets (one still questing will still come back). The new session's watch starts now and it rolls
+// the finished pets and jobs (one still questing or running will still come back). The new session's watch starts now and it rolls
 // its own class. The view (tab, filter, scroll of other windows) stays, and what is read from the world (map,
 // bag, loadout, vitals) is read again by the caller.
 async function resetSession($: EngineInterface) {
@@ -110,6 +114,8 @@ async function resetSession($: EngineInterface) {
     update($, waitingFor, () => null),
     update($, startedAt, () => now),
     update($, pets, list => list.filter(pet => pet.status === 'run')),
+    update($, jobs, list => list.filter(job => job.status === 'run')),
+    update($, stopArmed, () => null),
   ])
   await chooseClass($, rollClass(Math.random()))
 }
@@ -139,8 +145,6 @@ const DIFF_LINES = 3000
 const COUNTED_NEW_FILES = 30
 // Outposts beyond this many are listed without their status, which costs a git run each.
 const SURVEYED_OUTPOSTS = 10
-// Midnight to 4 a.m., local time.
-const NIGHT_HOURS = 4
 
 const firstLine = (text: string): string => text.split('\n').find(line => line.trim().length > 0)?.trim() ?? ''
 
@@ -169,14 +173,13 @@ export const skillOfPrompt = (text: string, known: readonly string[]): string | 
 let pendingChanges: ((p: Progress) => Progress)[] = []
 let progressQueue: Promise<void> = Promise.resolve()
 
-// Applies every waiting change to the lifetime progress in one store read and write, and celebrates any trophy
-// they earn. The store is shared by every session, so the changes apply to what the store holds now, other
-// sessions' work included, never to this session's copy; this session's copy then follows the store.
+// Applies every waiting change to the lifetime progress in one store read and write. The store is shared by
+// every session, so the changes apply to what the store holds now, other sessions' work included, never to this
+// session's copy; this session's copy then follows the store.
 async function saveProgress($: EngineInterface) {
   if (pendingChanges.length === 0) return
   const changes = pendingChanges
   pendingChanges = []
-  const now = await $.clock.now()
   // A store that cannot be read is never written: building on nothing would erase every session's progress.
   // This session's copy takes the changes alone until the store answers again.
   const read_ = await $.store.get(PROGRESS_KEY).then(
@@ -184,9 +187,7 @@ async function saveProgress($: EngineInterface) {
     () => ({ isRead: false, value: undefined }),
   )
   const base = read_.isRead ? read_.value : await read($, progress)
-  let next = changes.reduce((p, change) => change(p), { ...EMPTY_PROGRESS, ...base })
-  const fresh = newlyEarned(next)
-  if (fresh.length > 0) next = { ...next, unlocked: { ...next.unlocked, ...Object.fromEntries(fresh.map(t => [t.id, now])) } }
+  const next = changes.reduce((p, change) => change(p), progressOf(base))
   if (read_.isRead) {
     // A failed write keeps the changes for the next save rather than dropping the whole batch.
     const isSaved = await $.store.set(PROGRESS_KEY, next).then(() => true, () => false)
@@ -196,7 +197,6 @@ async function saveProgress($: EngineInterface) {
     }
   }
   await update($, progress, () => next)
-  for (const trophy of fresh) $.ui.toast(`🏆 Trophy unlocked: ${trophy.title}`)
 }
 
 // Queues `change` to the lifetime progress. Changes made while a save runs wait for the next one, which takes
@@ -210,7 +210,7 @@ function advance($: EngineInterface, change: (p: Progress) => Progress): Promise
 
 async function loadProgress($: EngineInterface) {
   const stored = (await $.store.get(PROGRESS_KEY).catch(() => undefined)) as Partial<Progress> | undefined
-  await update($, progress, () => ({ ...EMPTY_PROGRESS, ...stored }))
+  await update($, progress, () => progressOf(stored))
 }
 
 // How full the context gets before mana runs low, warned once each until a compact or /clear empties it again.
@@ -235,7 +235,6 @@ async function refreshVitals($: EngineInterface) {
   const { alarm, warned } = manaAlarm(contextPercent, manaWarned)
   manaWarned = warned
   if (alarm !== undefined) $.ui.toast(`🔮 Mana low: context ${alarm}% full. /compact to restore it`)
-  void advance($, p => ({ ...p, peakContext: Math.max(p.peakContext, Math.round(contextPercent)) }))
 }
 
 // The skills and MCP servers the context lists, from the free local estimate of /context.
@@ -397,9 +396,7 @@ async function joinParty($: EngineInterface, pet: Pet) {
     [...list.filter(one => one.id !== pet.id && (pet.agentId === undefined || one.agentId !== pet.agentId)), joined].slice(-50),
   )
   if (before !== undefined) return
-  const out = (await read($, pets)).filter(one => one.status === 'run').length
   await update($, tally, t => ({ ...t, petsSummoned: t.petsSummoned + 1 }))
-  void advance($, p => ({ ...p, petsSummoned: p.petsSummoned + 1, maxPetsAtOnce: Math.max(p.maxPetsAtOnce, out) }))
   $.ui.toast(`🐾 ${speciesFor(petSeed(pet)).name} summoned: ${pet.description}`)
   await followTo($, 'pets')
 }
@@ -465,14 +462,10 @@ async function campOfPet($: EngineInterface, cwd: string | undefined, isIsolated
 const refreshAll = ($: EngineInterface) =>
   Promise.all([refreshVitals($), refreshLoadout($), refreshMap($)]).then(() => undefined)
 
-// Sets the session's class, counts it as played, and announces it.
+// Sets the session's class and announces it.
 async function chooseClass($: EngineInterface, id: string) {
   const hero = classOf(id)
   await update($, heroClass, () => hero.id)
-  await advance($, p => ({
-    ...p,
-    classesPlayed: p.classesPlayed.includes(hero.id) ? p.classesPlayed : [...p.classesPlayed, hero.id],
-  }))
   $.ui.toast(`⚔ Today Claude plays the ${hero.title.toLowerCase()}: ${hero.ranks[0]}`)
 }
 
@@ -504,6 +497,55 @@ async function finishPet($: EngineInterface, match: (pet: Pet) => boolean, statu
   })
   // A foreground pet's answer arrives as the call's result; only a background one needs announcing.
   for (const pet of finished) if (pet.isBackground === true) $.ui.toast(returnToast(pet, status))
+}
+
+// A shell or monitor a call left running joins the jobs; one the main loop started turns the window there.
+async function startJob($: EngineInterface, job: Job) {
+  await update($, jobs, list => addJob(list, job))
+  if (job.agentId === undefined) await followTo($, 'jobs')
+}
+
+// Ends the jobs the engine reports finished, and toasts the ones that failed: the transcript's own notice is
+// easy to miss while a turn runs.
+async function endJobs($: EngineInterface, ends: readonly JobEnd[]) {
+  if (ends.length === 0) return
+  const now = await $.clock.now()
+  const failed: Job[] = []
+  await update($, jobs, list => {
+    // An update may run its change more than once; only the last run's jobs count.
+    failed.length = 0
+    const next = ends.reduce((all, end) => endJob(all, end, now), list)
+    for (const job of next) if (job.status === 'err' && list.find(one => one.id === job.id)?.status !== 'err') failed.push(job)
+    return trimJobs(next)
+  })
+  for (const job of failed) $.ui.toast(`⚙ Job failed: ${job.description || job.command}`)
+}
+
+// How long a stop pressed once waits for the second press.
+const STOP_ARMED_MS = 3000
+
+// A running job's stop asks twice: the first press arms it for a moment, the second stops the job.
+async function pressStop($: EngineInterface, job: Job) {
+  if ((await read($, stopArmed)) !== job.id) {
+    await update($, stopArmed, () => job.id)
+    void $.clock
+      .sleep(STOP_ARMED_MS)
+      .then(() => update($, stopArmed, armed => (armed === job.id ? null : armed)))
+      .catch(() => undefined)
+    return
+  }
+  await update($, stopArmed, () => null)
+  await stopJob($, job)
+}
+
+// TaskStop, the call the model would make, through the permission check.
+async function stopJob($: EngineInterface, job: Job) {
+  const ran = await $.tool.call({ tool: 'TaskStop', task_id: job.id }).catch(() => undefined)
+  if (ran === undefined || ran.isError === true || isRefusal(ran)) {
+    $.ui.toast(`⚙ Could not stop: ${job.description || job.command}`)
+    return
+  }
+  await endJobs($, [{ id: job.id, status: 'kill' }])
 }
 
 // The pane's animation: blits each tick, stops once a Raster refuses.
@@ -775,10 +817,11 @@ const skillsPage = async ($: EngineInterface, { ui, inner, now, progress: progre
   }
 }
 
-const featsPage = async (_$: EngineInterface, { ui, inner, progress: progressNow }: PageContext): Promise<Page> => ({
-  items: featItems(ui, progressNow, inner),
-  subtitle: featsSubtitle(progressNow),
-})
+const jobsPage = async ($: EngineInterface, { ui, inner, now }: PageContext): Promise<Page> => {
+  const list = await read($, jobs)
+  const armed = await read($, stopArmed)
+  return { items: jobItems(ui, list, now, inner, job => void pressStop($, job), armed), subtitle: jobsSubtitle(list) }
+}
 
 const helpPage = async ($: EngineInterface, { ui }: PageContext): Promise<Page> => ({
   title: '❓ HELP',
@@ -803,21 +846,20 @@ function pageFor($: EngineInterface, key: PageKey, ctx: PageContext): Promise<Pa
       return bagPage($, ctx)
     case 'skills':
       return skillsPage($, ctx)
-    case 'feats':
-      return featsPage($, ctx)
+    case 'jobs':
+      return jobsPage($, ctx)
     case 'help':
       return helpPage($, ctx)
   }
 }
 
 // The session's adventure log for /hud recap.
-// Every figure counts from the HUD's watch start, so the duration, the tally and the trophies agree.
+// Every figure counts from the HUD's watch start, so the duration and the tally agree.
 async function recap($: EngineInterface) {
   await refreshVitals($).catch(() => undefined)
   const now = await $.clock.now()
   const casts = await read($, castCount)
   const callList = (await read($, calls)).map(normalizeCall)
-  const unlocked = (await read($, progress)).unlocked
   const since = await read($, startedAt)
   const vitalsNow = await read($, vitals)
   return recapText({
@@ -832,7 +874,6 @@ async function recap($: EngineInterface) {
     touched: await read($, touched),
     ...(vitalsNow.usd === undefined ? {} : { usd: vitalsNow.usd }),
     ...(vitalsNow.contextPercent === undefined ? {} : { contextPercent: vitalsNow.contextPercent }),
-    trophies: since === 0 ? [] : TROPHIES.filter(t => (unlocked[t.id] ?? 0) >= since).map(t => t.title),
   })
 }
 
@@ -847,10 +888,10 @@ export const register: Register = on => {
   // The last drawn log window; scrolling clamps against it.
   // `key` names the window being scrolled: a tab, or `map:bag` / `map:diff` inside the map tab.
   let layout = { rows: 1, total: 0, key: 'spells' }
-  // Module state: whether the main loop's current turn has fizzled.
-  let turnHadError = false
   // Agent calls asked to run in a worktree of their own, by tool_use_id, until their spawn.
   const isolated = new Set<string>()
+  // The skill a typed slash command just cast, until the prompt it may also submit: counted once, not twice.
+  let commandCast: string | undefined
   // Agent calls sent to run in the background, by tool_use_id, until their spawn.
   const background = new Set<string>()
   // Subagents being looked up in the agent list, so parallel tool calls of one add it once.
@@ -867,7 +908,7 @@ export const register: Register = on => {
     await $.command.register({
       name: COMMAND,
       description:
-        'Open the adventure HUD (args: spell, party, map, skill, feats or 1-5; class [name] rerolls; cards toggles edit cards; follow toggles turning to the tab of what happens; recap sums up the session; help lists them all)',
+        'Open the adventure HUD (args: spell, party, map, skill, jobs or 1-5; class [name] rerolls; cards toggles edit cards; follow toggles turning to the tab of what happens; recap sums up the session; help lists them all)',
     })
     await markStart($)
     await loadProgress($)
@@ -886,6 +927,21 @@ export const register: Register = on => {
     if (e.source === 'clear' || e.source === 'resume') {
       await resetSession($)
       void refreshAll($).catch(() => undefined)
+    }
+    return next(e)
+  })
+
+  // A slash command the person typed is a message of theirs, even one that never reaches the conversation (a
+  // skill forked to the background): the window follows again, and a skill counts as cast.
+  on('command.run', async ($, e, next) => {
+    const isPerson = e.origin?.kind === 'composer' || e.origin?.kind === 'bridge'
+    if (!isPerson || e.command === COMMAND) return next(e)
+    follow.isHeld = false
+    const isSkill = (await read($, loadout)).skills.some(slot => slot.name === e.command)
+    if (isSkill) {
+      commandCast = e.command
+      await castSkill($, e.command)
+      await followTo($, 'skills')
     }
     return next(e)
   })
@@ -945,19 +1001,28 @@ export const register: Register = on => {
 
   on('prompt.submit', async ($, e, next) => {
     await update($, waitingFor, () => null)
+    // A background task's notification says a job ended, and how.
+    if (e.origin?.kind === 'task-notification') await endJobs($, parseJobEnds(e.text))
     // The HUD's own command is no message: `/hud map` and the like set the window themselves.
     if (skillOfPrompt(e.text, [COMMAND]) === COMMAND) return next(e)
     // A new message lets the window follow again, whatever tab was picked during the last.
     follow.isHeld = false
     const known = (await read($, loadout)).skills.map(slot => slot.name)
     const skill = skillOfPrompt(e.text, known)
-    if (skill !== undefined) await castSkill($, skill)
+    // A skill its slash command already counted is not counted again.
+    if (skill !== undefined && skill !== commandCast) await castSkill($, skill)
+    commandCast = undefined
     await followTo($, skill === undefined ? 'spells' : 'skills')
     return next(e)
   })
 
-  on('turn.start', async ($, e, next) => {
-    turnHadError = false
+  // The main loop stopping lists the background work still in flight: the jobs are checked against it.
+  on('classic.Stop', async ($, e, next) => {
+    const inFlight = e.background_tasks
+    if (inFlight !== undefined) {
+      const now = await $.clock.now()
+      await update($, jobs, list => reconcileJobs(list, inFlight, now))
+    }
     return next(e)
   })
 
@@ -969,13 +1034,6 @@ export const register: Register = on => {
     }
     // An interrupted prompt leaves nothing waiting on the person.
     await update($, waitingFor, () => null)
-    if (!e.isAborted) {
-      const isClean = !turnHadError
-      await advance($, p => {
-        const turnStreak = isClean ? p.turnStreak + 1 : 0
-        return { ...p, turnStreak, bestTurnStreak: Math.max(p.bestTurnStreak, turnStreak) }
-      })
-    }
     // The outposts list, while open, is surveyed again after each turn.
     const isSurveying = (await read($, mapView)).view === 'outposts'
     void refreshAll($)
@@ -1090,22 +1148,39 @@ export const register: Register = on => {
       if (fight.event === 'defeat') {
         $.ui.toast('⚔ Boss defeated!')
         await update($, tally, t => ({ ...t, bossesDefeated: t.bossesDefeated + 1 }))
-        void advance($, p => ({ ...p, bossesDefeated: p.bossesDefeated + 1 }))
       }
       if (runsGit(command)) {
         void refreshMap($).catch(() => undefined)
         if (isMain) await followTo($, 'map')
       }
     }
+    // A shell or monitor left running in the background (asked to, ctrl+b, a timeout) becomes a job.
+    if ((e.tool === 'Bash' || e.tool === 'Monitor') && !isRefused && !isError) {
+      const result = ran.result as { backgroundTaskId?: unknown; taskId?: unknown } | undefined
+      const id = e.tool === 'Bash' ? result?.backgroundTaskId : result?.taskId
+      if (typeof id === 'string') {
+        await startJob($, {
+          id,
+          toolUseId: e.tool_use_id,
+          kind: e.tool === 'Bash' ? 'shell' : 'monitor',
+          command: e.tool === 'Bash' ? e.command : (e.command ?? e.ws?.url ?? ''),
+          description: e.description ?? '',
+          startedAt,
+          status: 'run',
+          ...(e.agentId === undefined ? {} : { agentId: e.agentId }),
+        })
+      }
+    }
+    if (e.tool === 'TaskStop' && !isRefused && !isError) {
+      const id = (ran.result as { task_id?: unknown } | undefined)?.task_id
+      if (typeof id === 'string') await endJobs($, [{ id, status: 'kill' }])
+    }
 
     if (!isMain) return ran
 
     const endedAt = await $.clock.now()
     const ms = Math.round(endedAt - startedAt)
-    if (isError) {
-      anim.hurtUntil = endedAt + HURT_MS
-      turnHadError = true
-    }
+    if (isError) anim.hurtUntil = endedAt + HURT_MS
     if (isError || isRefused) {
       await update($, tally, t => (isError ? { ...t, failures: t.failures + 1 } : { ...t, refusals: t.refusals + 1 }))
     }
@@ -1132,22 +1207,13 @@ export const register: Register = on => {
       }
     }
 
-    // A refused call never ran: it gives back the cast counted at its start and earns no lifetime count or level.
+    // A refused call never ran: it gives back the cast counted at its start and earns no level.
     if (isRefused) {
       await update($, castCount, count => count - 1)
       return ran
     }
 
     const total = await read($, castCount)
-    const best = (await read($, combo)).best
-    const isNight = new Date(endedAt).getHours() < NIGHT_HOURS
-    void advance($, p => ({
-      ...p,
-      totalCalls: p.totalCalls + 1,
-      bashCalls: p.bashCalls + (e.tool === 'Bash' ? 1 : 0),
-      bestCombo: Math.max(p.bestCombo, best),
-      isNightOwl: p.isNightOwl || isNight,
-    }))
     if (total % CALLS_PER_LEVEL === 0) {
       const level = 1 + total / CALLS_PER_LEVEL
       $.ui.toast(`✦ Level up! Lv.${level} ${rankOf(classOf(await read($, heroClass)), level)}`)
@@ -1236,7 +1302,9 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const active = await read($, tab)
+    // A tab kept from an older build (`feats`) no longer names a page: the spell book stands in.
+    const kept = await read($, tab)
+    const active: Tab = isTab(kept) ? kept : 'spells'
     const entry = entryOf(active)
     const width = e.props.bodyColumns
     const now = await $.clock.now()
@@ -1268,10 +1336,7 @@ export const register: Register = on => {
         vitals: await read($, vitals),
         combo: await read($, combo),
         boss: bossNow,
-        trophies: {
-          earned: TROPHIES.filter(t => progressNow.unlocked[t.id] !== undefined).length,
-          total: TROPHIES.length,
-        },
+        jobsOut: (await read($, jobs)).filter(job => job.status === 'run').length,
         petsOut: petList.filter(pet => pet.status === 'run').length,
         ...campOf(await read($, outposts)),
         isFlashing: (await read($, flashUntil)) > now,
