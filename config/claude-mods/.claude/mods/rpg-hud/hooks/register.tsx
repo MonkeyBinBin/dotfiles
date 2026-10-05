@@ -90,6 +90,30 @@ const markStart = async ($: EngineInterface) => {
   }
 }
 
+// Moving to another session (a /clear, an in-session /resume) empties every figure the HUD keeps for the one
+// it leaves: the calls, the level, the combo, the boss, the files touched, the casts that glow, the tally, and
+// the finished pets (one still questing will still come back). The new session's watch starts now and it rolls
+// its own class. The view (tab, filter, scroll of other windows) stays, and what is read from the world (map,
+// bag, loadout, vitals) is read again by the caller.
+async function resetSession($: EngineInterface) {
+  const now = await $.clock.now()
+  await Promise.all([
+    update($, calls, () => []),
+    update($, castCount, () => 0),
+    update($, offsets, () => ({})),
+    update($, flashUntil, () => 0),
+    update($, combo, () => ({ current: 0, best: 0 })),
+    update($, boss, () => null),
+    update($, touched, () => []),
+    update($, skillCasts, () => ({})),
+    update($, tally, () => EMPTY_TALLY),
+    update($, waitingFor, () => null),
+    update($, startedAt, () => now),
+    update($, pets, list => list.filter(pet => pet.status === 'run')),
+  ])
+  await chooseClass($, rollClass(Math.random()))
+}
+
 const progress = atom({ plugin: 'rpg-hud', key: 'progress' } as const, EMPTY_PROGRESS)
 
 const PANE = 'rpg-hud'
@@ -857,9 +881,12 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // A /clear starts a new session without session.start.
+  // A /clear or an in-session /resume moves to another session without session.start.
   on('classic.SessionStart', async ($, e, next) => {
-    if (e.source === 'clear') void refreshAll($).catch(() => undefined)
+    if (e.source === 'clear' || e.source === 'resume') {
+      await resetSession($)
+      void refreshAll($).catch(() => undefined)
+    }
     return next(e)
   })
 

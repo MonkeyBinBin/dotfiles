@@ -1442,6 +1442,21 @@ test('/hud recap sums up the session', async ($, on) => {
   ])
 })
 
+test('/hud recap after a /clear sums up the new session alone', async ($, on) => {
+  const { clock } = world(on, { tool: e => (e.tool === 'Bash' ? fail('boom') : undefined) })
+  on('classic.SessionStart', async () => ({}))
+  await $.tool.call({ tool: 'Edit', file_path: '/x/a.md' })
+  await $.tool.call({ tool: 'Bash', command: 'false' })
+  await clock.advance(30 * 60_000)
+  await $.classic.SessionStart({ source: 'clear' } as never)
+  await clock.advance(5 * 60_000)
+  await $.tool.call({ tool: 'Read', file_path: '/x/b.md' })
+  const lines = ((await $.command.run({ command: 'hud', args: 'recap' } as never)) as { text: string }).text.split('\n')
+  expect(lines[0]).toMatch(/· 5m$/)
+  expect(lines[1]).toMatch(/^✦ 1 casts · ✗ 0 /)
+  expect(lines).toContain('🗺 1 file explored · ✎ 0 edited')
+})
+
 // --- Waiting on the person ---
 
 for (const surface of ['terminal', 'desktop'] as const) {
@@ -1717,6 +1732,29 @@ test('a typed /skill turns to the skills', async ($, on) => {
   const ui = await mountPane($, 'terminal', 40)
   await $.prompt.submit({ text: '/commit fix the typo' } as never)
   expect((await texts(ui)).join('|')).toContain('📜 SKILLS')
+})
+
+for (const source of ['clear', 'resume'] as const) {
+  test(`a ${source} puts out the glow of the casts before it`, async ($, on) => {
+    world(on, { usage: ONE_SKILL })
+    on('classic.SessionStart', async () => ({}))
+    await $.turn.complete({ answer: '', durationMs: 5, isAborted: false, turnId: 't' } as never)
+    const ui = await mountPane($, 'terminal', 40)
+    await $.tool.call({ tool: 'Skill', skill: 'commit' } as never)
+    expect((await texts(ui)).join('|')).toContain('✦')
+    await $.classic.SessionStart({ source } as never)
+    expect((await texts(ui)).join('|')).not.toContain('✦')
+  })
+}
+
+test('a compaction keeps the glow of the casts', async ($, on) => {
+  world(on, { usage: ONE_SKILL })
+  on('classic.SessionStart', async () => ({}))
+  await $.turn.complete({ answer: '', durationMs: 5, isAborted: false, turnId: 't' } as never)
+  const ui = await mountPane($, 'terminal', 40)
+  await $.tool.call({ tool: 'Skill', skill: 'commit' } as never)
+  await $.classic.SessionStart({ source: 'compact' } as never)
+  expect((await texts(ui)).join('|')).toContain('✦')
 })
 
 test('a tab the person picks holds the window until their next message', async ($, on) => {
