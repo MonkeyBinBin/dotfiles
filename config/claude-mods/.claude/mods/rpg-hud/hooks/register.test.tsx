@@ -995,6 +995,8 @@ test('each running pet animates with its own creature', async ($, on) => {
   const ui = await mountPane($, 'terminal')
   await showTab($, ui, 'pets')
   await clock.advance(2000)
+  // The two agents must summon different creatures, or one shared sprite would pass for both.
+  expect(speciesFor('agent-1')).not.toBe(speciesFor('agent-2'))
   for (const [key, seed] of [['pet-tu-1', 'agent-1'], ['pet-tu-2', 'agent-2']] as const) {
     const frames = new Set(blitted.filter(one => one.key === key).map(one => one.cells))
     expect(frames).toEqual(new Set([petCells(seed, 'run', 0), petCells(seed, 'run', 1)]))

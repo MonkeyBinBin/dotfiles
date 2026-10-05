@@ -45,7 +45,8 @@ export function petItems(
   }
   const textWidth = Math.max(0, width - (Raster ? PET_COLUMNS + SPRITE_GAP : 0))
   return rosterOrder(list).map(pet => {
-    const species = speciesFor(petSeed(pet))
+    const seed = petSeed(pet)
+    const species = speciesFor(seed)
     const status = statusLine(pet, now)
     const detail =
       pet.status === 'run'
@@ -58,14 +59,17 @@ export function petItems(
         <Box flexDirection="row" height={CARD_ROWS}>
           {Raster && (
             <Box width={PET_COLUMNS + SPRITE_GAP}>
-              <Raster key={`pet-${pet.id}`} columns={PET_COLUMNS} rows={PET_ROWS} cells={petCells(petSeed(pet), pet.status, 0)} />
+              <Raster key={`pet-${pet.id}`} columns={PET_COLUMNS} rows={PET_ROWS} cells={petCells(seed, pet.status, 0)} />
             </Box>
           )}
           <Box flexDirection="column" width={textWidth}>
             <Box height={1}>
               <Box flexGrow={1}>
                 <Text wrap="truncate">
-                  <Text bold color={pet.status === 'err' ? 'gray' : species.color}>{species.name}</Text>
+                  {/* White fades on a light terminal; the default foreground reads on either (as in the bag). */}
+                  <Text bold color={pet.status === 'err' ? 'gray' : species.color === 'white' ? undefined : species.color}>
+                    {species.name}
+                  </Text>
                   <Text dimColor> {oneLine(pet.kind, 16)}</Text>
                   {pet.camp !== undefined && <Text color="cyan"> ⚑{pet.camp}</Text>}
                 </Text>
