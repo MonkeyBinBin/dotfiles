@@ -12,6 +12,7 @@ import { countPatch, patchSource } from './edit-card'
 import { trailStops } from './map'
 import { gaugeColor, heroStats, manaLeft, normalizeCall, rankFor, statusLayout } from './hero'
 import { rosterOrder } from './pets'
+import { petCells, speciesFor } from './pet-sprites'
 import { MANA_ALARMS, campFor, isRefusal, manaAlarm, returnToast, skillOfPrompt, touchFile } from './register'
 import { formatDuration, recapText, topTools } from './recap'
 import { HELP_COMMANDS, helpText } from './help'
@@ -289,7 +290,7 @@ test('a summoned subagent joins the party and reports back', async ($, on) => {
   const ui = await mountPane($, 'terminal')
   await showTab($, ui, 'pets')
   let shown = (await texts(ui)).join('|')
-  expect(shown).toContain('Scout Hawk')
+  expect(shown).toContain(speciesFor('agent-1').name)
   expect(shown).toContain('1 questing · 1 summoned')
   expect(shown).toContain('Find config')
   expect(shown).toContain('⚔ 1 · Grep PLUGIN_DIRS')
@@ -979,6 +980,27 @@ test('a pet working inside the session folder has no camp', async ($, on) => {
   expect((await texts(ui)).join('|')).not.toContain('⚑')
 })
 
+test('each running pet animates with its own creature', async ($, on) => {
+  const { clock } = world(on)
+  const blitted: { key: string; cells: string }[] = []
+  on('ui.blit', async (_$, e) => {
+    if ('cells' in e) blitted.push({ key: e.key, cells: e.cells })
+    return { value: {} }
+  })
+  let spawned = 0
+  on('agent.spawn', async () => ({ model: 'claude-haiku-4-5', agentId: `agent-${(spawned += 1)}` }))
+  await $.agent.spawn({ prompt: 'a', description: 'One', subagentType: 'Explore', tool_use_id: 'tu-1' } as never)
+  await $.agent.spawn({ prompt: 'b', description: 'Two', subagentType: 'Explore', tool_use_id: 'tu-2' } as never)
+
+  const ui = await mountPane($, 'terminal')
+  await showTab($, ui, 'pets')
+  await clock.advance(2000)
+  for (const [key, seed] of [['pet-tu-1', 'agent-1'], ['pet-tu-2', 'agent-2']] as const) {
+    const frames = new Set(blitted.filter(one => one.key === key).map(one => one.cells))
+    expect(frames).toEqual(new Set([petCells(seed, 'run', 0), petCells(seed, 'run', 1)]))
+  }
+})
+
 // --- Subagents met only through their tool calls ---
 
 test("a skill's forked subagent joins the party from its first tool call", async ($, on) => {
@@ -993,7 +1015,7 @@ test("a skill's forked subagent joins the party from its first tool call", async
   await showTab($, ui, 'pets')
   const shown = (await texts(ui)).join('|')
   expect(shown).toContain('1 questing · 1 summoned')
-  expect(shown).toContain('Wisp')
+  expect(shown).toContain(speciesFor('fork-1').name)
   expect(shown).toContain('/code-review high')
   expect(shown).toContain('⚔ 2 · Read a.ts')
 
@@ -1012,7 +1034,7 @@ test('a spawn answered after its first tool call does not add the pet twice', as
   await showTab($, ui, 'pets')
   const shown = (await texts(ui)).join('|')
   expect(shown).toContain('1 questing · 1 summoned')
-  expect(shown).toContain('Scout Hawk')
+  expect(shown).toContain(speciesFor('agent-9').name)
   expect(shown).toContain('Look around')
   expect(shown).toContain('⚔ 1 · Grep x')
 })
@@ -1266,7 +1288,7 @@ test('a background pet announces its return; a foreground one does not', async (
   await $.tool.call({ tool: 'Agent', tool_use_id: 'tu-2', description: 'Read docs', prompt: 'go' } as never)
   await $.turn.complete({ agentId: 'agent-1', answer: 'Mapped 12 modules', durationMs: 5, isAborted: false, turnId: 't' } as never)
   await $.turn.complete({ agentId: 'agent-2', answer: 'Docs read', durationMs: 5, isAborted: false, turnId: 't' } as never)
-  expect(toasts.filter(text => text.includes('returned'))).toEqual(['🐾 Scout Hawk returned: Mapped 12 modules'])
+  expect(toasts.filter(text => text.includes('returned'))).toEqual([`🐾 ${speciesFor('agent-1').name} returned: Mapped 12 modules`])
 })
 
 test('a pet core sends to the background without run_in_background keeps questing until it returns', async ($, on) => {
@@ -1290,8 +1312,15 @@ test('a pet core sends to the background without run_in_background keeps questin
 })
 
 test('a fallen pet says what it was sent to do', () => {
-  expect(returnToast({ kind: 'Explore', description: 'Map the repo', loot: '' }, 'err')).toBe('🐾 Scout Hawk fell: Map the repo')
-  expect(returnToast({ kind: 'Explore', description: 'Map the repo' }, 'ok')).toBe('🐾 Scout Hawk returned: Map the repo')
+  const name = speciesFor('agent-1').name
+  expect(returnToast({ id: 'tu-1', agentId: 'agent-1', description: 'Map the repo', loot: '' }, 'err')).toBe(`🐾 ${name} fell: Map the repo`)
+  expect(returnToast({ id: 'tu-1', agentId: 'agent-1', description: 'Map the repo' }, 'ok')).toBe(`🐾 ${name} returned: Map the repo`)
+})
+
+test('the same agent always summons the same creature, and different agents a mix', () => {
+  expect(speciesFor('agent-1')).toBe(speciesFor('agent-1'))
+  const names = new Set(Array.from({ length: 40 }, (_, at) => speciesFor(`agent-${at}`).name))
+  expect(names.size).toBeGreaterThan(5)
 })
 
 // --- Bosses in chains ---

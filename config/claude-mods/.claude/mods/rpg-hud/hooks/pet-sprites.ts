@@ -62,19 +62,80 @@ const FOX: Species = {
   ],
 }
 
-// Agent type to the creature it summons; types not listed are wisps.
-const BY_KIND: Record<string, Species> = {
-  Explore: HAWK,
-  Plan: OWL,
-  'general-purpose': SLIME,
-  claude: SLIME,
-  fork: WISP,
+const BAT: Species = {
+  name: 'Night Bat',
+  color: 'magenta',
+  palette: { B: 0x6a4690, b: 0x3a2850, R: 0xff3c50 },
+  frames: [
+    ['B......B', 'BB....BB', 'BBBBBBBB', '.BRBBRB.', '..BBBB..', '...bb...'],
+    ['........', '........', '.BBBBBB.', 'BBRBBRBB', 'B.BBBB.B', '...bb...'],
+  ],
 }
 
-export const speciesFor = (kind: string): Species => {
-  if (BY_KIND[kind] !== undefined) return BY_KIND[kind]
-  return /review|code|feature/i.test(kind) ? FOX : WISP
+const FROG: Species = {
+  name: 'Bog Frog',
+  color: 'green',
+  palette: { F: 0x5ac85a, f: 0x2f7a3a, W: 0xffffff, K: 0x191e23, P: 0xff8ca0 },
+  frames: [
+    ['........', '.WW..WW.', 'FKWFFKWF', 'FFFFFFFF', 'FFPPPPFF', 'ff....ff'],
+    ['.WW..WW.', 'FKWFFKWF', 'FFFFFFFF', 'FFPPPPFF', '.f....f.', '........'],
+  ],
 }
+
+const CAT: Species = {
+  name: 'Shadow Cat',
+  color: 'white',
+  palette: { C: 0xc8c8d2, c: 0x8c8c9b, K: 0x191e23, P: 0xffa0b4 },
+  frames: [
+    ['C...C...', 'CCCCC...', 'CKCKC..C', 'CCPCC..C', '.CCCCCCC', '.c.c..c.'],
+    ['C...C...', 'CCCCC..C', 'CKCKC.C.', 'CCPCC.C.', '.CCCCCC.', 'c.c..c..'],
+  ],
+}
+
+const TURTLE: Species = {
+  name: 'Shell Turtle',
+  color: 'green',
+  palette: { S: 0x3c9650, s: 0x8cd264, H: 0xb4dc78, K: 0x191e23 },
+  frames: [
+    ['........', '.SSSS...', 'SsSSsSHH', 'SSSSSSHK', '.H..H...', '........'],
+    ['........', '.SSSS...', 'SsSSsSHH', 'SSSSSSHK', 'H..H....', '........'],
+  ],
+}
+
+const SHROOM: Species = {
+  name: 'Spore Shroom',
+  color: 'red',
+  palette: { R: 0xe63c3c, W: 0xffffff, T: 0xf0dcb4, K: 0x191e23 },
+  frames: [
+    ['..RRRR..', '.RWRRWR.', 'RRRRRRRR', '..TTTT..', '..KTTK..', '..TTTT..'],
+    ['........', '..RRRR..', '.RWRRWR.', 'RRRRRRRR', '..KTTK..', '.TTTTTT.'],
+  ],
+}
+
+const WHELP: Species = {
+  name: 'Jade Whelp',
+  color: 'cyan',
+  palette: { D: 0x3cb48c, d: 0x1e785a, K: 0x191e23 },
+  frames: [
+    ['.....DDD', '.d..DDKD', 'dd.DDDD.', '.DDDDDD.', '.DDDDD..', '.D...D..'],
+    ['.....DDD', '....DDKD', '.d.DDDD.', 'dDDDDDD.', '.DDDDD..', '..D.D...'],
+  ],
+}
+
+// Every creature a summon can bring; a pet's seed picks one, so the party is a mix.
+const ROSTER: readonly Species[] = [SLIME, HAWK, OWL, WISP, FOX, BAT, FROG, CAT, TURTLE, SHROOM, WHELP]
+
+// What picks a pet's creature: the agent, which a pet met by its tool calls and then by its spawn shares.
+export const petSeed = (pet: { id: string; agentId?: string }): string => pet.agentId ?? pet.id
+
+// FNV-1a: the same seed always lands on the same creature.
+const hash = (text: string): number => {
+  let value = 0x811c9dc5
+  for (let at = 0; at < text.length; at += 1) value = Math.imul(value ^ text.charCodeAt(at), 0x01000193)
+  return value >>> 0
+}
+
+export const speciesFor = (seed: string): Species => ROSTER[hash(seed) % ROSTER.length] ?? SLIME
 
 const FAINTED: Record<string, number> = { _: 0x6e6e78 }
 
@@ -85,11 +146,11 @@ const faint = (species: Species): Record<string, number> =>
 const cache = new Map<string, string>()
 
 // The pet's cells: running pets alternate frames, finished ones rest on the first, fainted ones go grey.
-export const petCells = (kind: string, status: ToolCallStatus, frame: number): string => {
-  const key = `${kind}:${status}:${frame % 2}`
+export const petCells = (seed: string, status: ToolCallStatus, frame: number): string => {
+  const species = speciesFor(seed)
+  const key = `${species.name}:${status}:${frame % 2}`
   const hit = cache.get(key)
   if (hit !== undefined) return hit
-  const species = speciesFor(kind)
   const pixels = status === 'run' && frame % 2 === 1 ? species.frames[1] : species.frames[0]
   const cells = composeSprite(pixels, status === 'err' ? faint(species) : species.palette)
   cache.set(key, cells)

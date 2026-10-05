@@ -35,7 +35,7 @@ import { mapItems, mapSubtitle } from './map'
 import { ICON_COLUMNS, ICON_ROWS, MENU, entryOf, iconText, isTab } from './menu'
 import { cardWidth, slotKey } from './menu-client'
 import type { MenuIconProps } from './menu-client'
-import { PET_COLUMNS, PET_ROWS, petCells, speciesFor } from './pet-sprites'
+import { PET_COLUMNS, PET_ROWS, petCells, petSeed, speciesFor } from './pet-sprites'
 import { partySubtitle, petItems } from './pets'
 import { recapText } from './recap'
 import { castText, skillItems, skillKeys, skillRows, skillsSubtitle } from './skills'
@@ -400,7 +400,7 @@ async function joinParty($: EngineInterface, pet: Pet) {
   const out = (await read($, pets)).filter(one => one.status === 'run').length
   await update($, tally, t => ({ ...t, petsSummoned: t.petsSummoned + 1 }))
   void advance($, p => ({ ...p, petsSummoned: p.petsSummoned + 1, maxPetsAtOnce: Math.max(p.maxPetsAtOnce, out) }))
-  $.ui.toast(`🐾 ${speciesFor(pet.kind).name} summoned: ${pet.description}`)
+  $.ui.toast(`🐾 ${speciesFor(petSeed(pet)).name} summoned: ${pet.description}`)
   await followTo($, 'pets')
 }
 
@@ -483,8 +483,8 @@ async function castSkill($: EngineInterface, name: string) {
 }
 
 // The toast a background pet's return raises: what it brought back, or that it fell.
-export const returnToast = (pet: Pick<Pet, 'kind' | 'description' | 'loot'>, status: Pet['status']): string => {
-  const name = speciesFor(pet.kind).name
+export const returnToast = (pet: Pick<Pet, 'id' | 'agentId' | 'description' | 'loot'>, status: Pet['status']): string => {
+  const name = speciesFor(petSeed(pet)).name
   if (status !== 'ok') return `🐾 ${name} fell: ${pet.description}`
   return `🐾 ${name} returned: ${pet.loot || pet.description}`
 }
@@ -540,7 +540,7 @@ async function paintHero($: EngineInterface) {
 async function paintPets($: EngineInterface) {
   const frame = Math.floor(anim.tick / PET_TICKS)
   for (const [key, pet] of anim.pets) {
-    const cells = petCells(pet.kind, 'run', frame)
+    const cells = petCells(pet.seed, 'run', frame)
     if (cells === pet.shown) continue
     if (await blit($, key, cells, PET_COLUMNS, PET_ROWS)) pet.shown = cells
     else anim.pets.delete(key)

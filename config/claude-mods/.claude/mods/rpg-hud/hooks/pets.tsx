@@ -2,7 +2,7 @@ import type { ElementTable } from 'claude-code'
 
 import type { Pet } from '../types'
 import { anim } from './anim'
-import { PET_COLUMNS, PET_ROWS, petCells, speciesFor } from './pet-sprites'
+import { PET_COLUMNS, PET_ROWS, petCells, petSeed, speciesFor } from './pet-sprites'
 import { formatElapsed, oneLine } from './util'
 import type { Item } from './window'
 
@@ -38,14 +38,14 @@ export function petItems(
   anim.pets = new Map(
     list
       .filter(pet => pet.status === 'run')
-      .map(pet => [`pet-${pet.id}`, { kind: pet.kind, shown: anim.pets.get(`pet-${pet.id}`)?.shown ?? '' }]),
+      .map(pet => [`pet-${pet.id}`, { seed: petSeed(pet), shown: anim.pets.get(`pet-${pet.id}`)?.shown ?? '' }]),
   )
   if (list.length === 0) {
     return [{ key: 'empty', rows: 1, node: <Text dimColor>No companions yet. Subagents you summon join the party.</Text> }]
   }
   const textWidth = Math.max(0, width - (Raster ? PET_COLUMNS + SPRITE_GAP : 0))
   return rosterOrder(list).map(pet => {
-    const species = speciesFor(pet.kind)
+    const species = speciesFor(petSeed(pet))
     const status = statusLine(pet, now)
     const detail =
       pet.status === 'run'
@@ -58,7 +58,7 @@ export function petItems(
         <Box flexDirection="row" height={CARD_ROWS}>
           {Raster && (
             <Box width={PET_COLUMNS + SPRITE_GAP}>
-              <Raster key={`pet-${pet.id}`} columns={PET_COLUMNS} rows={PET_ROWS} cells={petCells(pet.kind, pet.status, 0)} />
+              <Raster key={`pet-${pet.id}`} columns={PET_COLUMNS} rows={PET_ROWS} cells={petCells(petSeed(pet), pet.status, 0)} />
             </Box>
           )}
           <Box flexDirection="column" width={textWidth}>

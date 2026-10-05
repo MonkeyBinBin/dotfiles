@@ -45,6 +45,6 @@ export const anim = {
   moodTick: 0,
   tick: 0,
   shownCells: pickFrame('idle', 0),
-  // Running pets on screen, by Raster key, with the kind that picks their sprite.
-  pets: new Map<string, { kind: string; shown: string }>(),
+  // Running pets on screen, by Raster key, with the seed that picks their sprite.
+  pets: new Map<string, { seed: string; shown: string }>(),
 }
