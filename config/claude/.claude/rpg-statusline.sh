@@ -4,7 +4,7 @@
 #   one row of segments, wrapped between segments to fit COLUMNS:
 #     class (model) + effort stars, map (dir, branch, loot, PR), resource bars, clock
 #   resource bars are drawn as what is LEFT, like a game:
-#     MP  context window      ⌛5h / ⌛7d  usage limits      ⛁ cap  spend limit
+#     MP  context window       5h /  7d  usage limits       cap  spend limit
 #
 # Reads everything from Claude Code's stdin JSON: no credentials, no network.
 # The slime band above the prompt covers turns, tokens and changed-file counts,
@@ -123,15 +123,20 @@ gauge_color() {
     esac
 }
 
-# bar <remaining-pct> <width> <colour>: filled ▰ for what is left.
+# Icons are Nerd Font glyphs, so they share the terminal font's size and weight
+# instead of each falling back to whatever font has them.
+
+# bar <remaining-pct> <width> <colour>: filled █ for what is left, ░ for what is spent.
+# Block elements, because Ghostty-based terminals (cmux) draw them to the cell
+# themselves; ▰▱ fell back to an over-wide glyph that overlapped its neighbours.
 bar() {
     local left=$1 width=$2 color=$3 filled i out=""
     filled=$(( (left * width + 50) / 100 ))
     [ "$left" -gt 0 ] && [ "$filled" -eq 0 ] && filled=1
     out+="$color"
-    for ((i = 0; i < filled; i++)); do out+='▰'; done
+    for ((i = 0; i < filled; i++)); do out+='█'; done
     out+="${dim}"
-    for ((i = filled; i < width; i++)); do out+='▱'; done
+    for ((i = filled; i < width; i++)); do out+='░'; done
     printf '%s%s' "$out" "$reset"
 }
 
@@ -150,21 +155,21 @@ link() { printf '%s]8;;%s%s\\%s%s]8;;%s\\' "$esc" "$1" "$esc" "$2" "$esc" "$esc"
 segs=()
 
 case "$f_effort" in
-    low)    stars='★☆☆☆☆' ;;
-    medium) stars='★★☆☆☆' ;;
-    high)   stars='★★★☆☆' ;;
-    xhigh)  stars='★★★★☆' ;;
-    max)    stars='★★★★★' ;;
+    low)    stars='' ;;
+    medium) stars='' ;;
+    high)   stars='' ;;
+    xhigh)  stars='' ;;
+    max)    stars='' ;;
     *)      stars='' ;;
 esac
-seg="${c_gold}⚔${reset} ${bold}${c_blue}${f_model}${reset}"
+seg="${c_gold}󰞇${reset} ${bold}${c_blue}${f_model}${reset}"
 [ -n "$stars" ] && seg+=" ${c_gold}${stars}${reset}"
-[ "$f_fast" = "true" ] && seg+=" ${c_amber}⚡${reset}"
+[ "$f_fast" = "true" ] && seg+=" ${c_amber}${reset}"
 [ -n "$f_agent" ] && seg+=" ${dim}as${reset} ${c_purple}${f_agent}${reset}"
 segs+=("$seg")
 
 cwd=${f_cwd:-$PWD}
-seg="${c_cyan}⌂ $(basename "$cwd")${reset}"
+seg="${c_cyan} $(basename "$cwd")${reset}"
 # One git call for branch and dirty: porcelain v2 heads its entries with `# branch.*` lines.
 if git_status=$(git --no-optional-locks -C "$cwd" status --porcelain=v2 --branch 2>/dev/null); then
     branch="" oid="" dirty=""
@@ -173,11 +178,11 @@ if git_status=$(git --no-optional-locks -C "$cwd" status --porcelain=v2 --branch
             '# branch.head '*) branch=${line#'# branch.head '} ;;
             '# branch.oid '*)  oid=${line#'# branch.oid '} ;;
             '#'*) ;;
-            *) dirty="${c_red}✎"; break ;;
+            *) dirty="${c_red}"; break ;;
         esac
     done <<<"$git_status"
     [ "$branch" = "(detached)" ] && branch=${oid:0:7}
-    seg+=" ${c_green}⎇ ${branch}${dirty}${reset}"
+    seg+=" ${c_green} ${branch}${dirty}${reset}"
     # Lines not yet committed, against HEAD: ` 3 files changed, 93 insertions(+), 67 deletions(-)`.
     # Only a dirty tree is asked, and a repository with no commit yet has no HEAD to diff against.
     if [ -n "$dirty" ] && shortstat=$(git --no-optional-locks -C "$cwd" diff --shortstat HEAD 2>/dev/null); then
@@ -189,7 +194,7 @@ if git_status=$(git --no-optional-locks -C "$cwd" status --porcelain=v2 --branch
         fi
     fi
 fi
-[ -n "$f_worktree" ] && seg+=" ${dim}⑂${reset} ${c_frost}${f_worktree}${reset}"
+[ -n "$f_worktree" ] && seg+=" ${dim}${reset} ${c_frost}${f_worktree}${reset}"
 if [ -n "$f_pr" ]; then
     case "$f_pr_state" in
         approved)          pr_color=$c_green ;;
@@ -197,7 +202,7 @@ if [ -n "$f_pr" ]; then
         draft)             pr_color=$dim ;;
         *)                 pr_color=$c_amber ;;
     esac
-    pr_text="⚑ #${f_pr}"
+    pr_text=" #${f_pr}"
     [ -n "$f_pr_url" ] && pr_text=$(link "$f_pr_url" "$pr_text")
     seg+=" ${pr_color}${pr_text}${reset}"
 fi
@@ -214,25 +219,25 @@ if [ -n "$f_ctx_left" ]; then
 fi
 if [ -n "$f_h5_left" ]; then
     reset_at=$(fmt_reset "$f_h5_reset")
-    segs+=("$(resource '⌛5h' "$c_gold" "$f_h5_left" "$f_h5_level" "$width" "${reset_at:+ ${dim}⟳${reset} ${c_white}${reset_at}${reset}}")")
+    segs+=("$(resource ' 5h' "$c_gold" "$f_h5_left" "$f_h5_level" "$width" "${reset_at:+ ${dim}${reset} ${c_white}${reset_at}${reset}}")")
 fi
 if [ -n "$f_d7_left" ]; then
     reset_at=$(fmt_reset "$f_d7_reset")
-    segs+=("$(resource '⌛7d' "$c_purple" "$f_d7_left" "$f_d7_level" "$width" "${reset_at:+ ${dim}⟳${reset} ${c_white}${reset_at}${reset}}")")
+    segs+=("$(resource ' 7d' "$c_purple" "$f_d7_left" "$f_d7_level" "$width" "${reset_at:+ ${dim}${reset} ${c_white}${reset_at}${reset}}")")
 fi
 if [ -n "$f_sp_left" ]; then
     tail=""
     [ -n "$f_sp_usd" ] && [ -n "$f_sp_limit" ] &&
         tail=" ${dim}$(awk -v u="$f_sp_usd" -v l="$f_sp_limit" 'BEGIN { printf "$%.0f/$%.0f", u, l }')${reset}"
-    segs+=("$(resource '⛁ cap' "$c_green" "$f_sp_left" "$f_sp_level" "$width" "$tail")")
+    segs+=("$(resource ' cap' "$c_green" "$f_sp_left" "$f_sp_level" "$width" "$tail")")
 fi
 
-[ "${f_dur_ms:-0}" -gt 0 ] 2>/dev/null && segs+=("${c_white}◷ $(fmt_duration "$f_dur_ms")${reset}")
+[ "${f_dur_ms:-0}" -gt 0 ] 2>/dev/null && segs+=("${c_white} $(fmt_duration "$f_dur_ms")${reset}")
 [ -n "$f_vim" ] && segs+=("${c_purple}${f_vim}${reset}")
 
 # ── Output: one line, wrapped between segments ─────────────
 # Columns each segment takes on screen, in one perl pass: escapes dropped,
-# East Asian wide / fullwidth glyphs (CJK, ⚡, ⌛) counted twice. Perl decodes
+# East Asian wide / fullwidth glyphs (CJK) counted twice. Perl decodes
 # UTF-8 itself, so this holds under any locale and on bash 3.2, whose bracket
 # patterns mis-match multibyte ranges.
 widths=()
