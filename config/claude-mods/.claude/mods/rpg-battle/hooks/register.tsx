@@ -1,26 +1,31 @@
 import type { EngineInterface, Register } from 'claude-code'
 
+// Each skill's icon and the color its cast bar charges in.
 // Emoji with default emoji presentation only: no VS16, so every terminal gives them two cells.
-const SKILLS: ReadonlyArray<readonly [RegExp, string]> = [
-  [/^(Bash|BashOutput|KillShell|TaskOutput|TaskStop|Monitor)$/, '🔥'],
-  [/^Read$|^NotebookRead$/, '📖'],
-  [/^Grep$|^Glob$|^LS$|^ToolSearch$/, '🔍'],
-  [/^Edit$|^MultiEdit$|^Write$|^NotebookEdit$/, '🔨'],
-  [/^Web(Fetch|Search)$/, '🔭'],
-  [/^(Agent|Task|SendMessage)$/, '🧙'],
-  [/^Todo|^Task(Create|Update|List|Get)$/, '📜'],
-  [/^Skill$/, '✨'],
-  [/^mcp__/, '🔮'],
+const SKILLS: ReadonlyArray<readonly [RegExp, string, number]> = [
+  [/^(Bash|BashOutput|KillShell|TaskOutput|TaskStop|Monitor)$/, '🔥', 0xff7a1a],
+  [/^Read$|^NotebookRead$/, '📖', 0x5aa0ff],
+  [/^Grep$|^Glob$|^LS$|^ToolSearch$/, '🔍', 0x3fd0d0],
+  [/^Edit$|^MultiEdit$|^Write$|^NotebookEdit$/, '🔨', 0xd8b04a],
+  [/^Web(Fetch|Search)$/, '🔭', 0xa078ff],
+  [/^(Agent|Task|SendMessage)$/, '🧙', 0xc060ff],
+  [/^Todo|^Task(Create|Update|List|Get)$/, '📜', 0xc8a070],
+  [/^Skill$/, '✨', 0xffe040],
+  [/^mcp__/, '🔮', 0xff50c8],
 ]
 const DEFAULT_SKILL = '🎯'
+const DEFAULT_SKILL_COLOR = 0xff5050
 const FAILED = '💀'
 const FLED = '🚫'
 const GROUP = '🌀'
 // Runs this long or longer read as a combo.
 export const COMBO_MIN = 3
 
-export const skillIcon = (tool: string): string =>
-  SKILLS.find(([pattern]) => pattern.test(tool))?.[1] ?? DEFAULT_SKILL
+const skillOf = (tool: string) => SKILLS.find(([pattern]) => pattern.test(tool))
+
+export const skillIcon = (tool: string): string => skillOf(tool)?.[1] ?? DEFAULT_SKILL
+
+const skillColor = (tool: string): number => skillOf(tool)?.[2] ?? DEFAULT_SKILL_COLOR
 
 export const rowIcon = (row: { tool: string; isErrored: boolean; isInterrupted: boolean }): string => {
   if (row.isInterrupted) return FLED
@@ -51,10 +56,6 @@ const WHITE = 0xffffff
 const RED = 0xff3b3b
 const DIM_RED = 0x5a1010
 const GRAY = 0x808080
-const SKILL_COLORS: Record<string, number> = {
-  '🔥': 0xff7a1a, '📖': 0x5aa0ff, '🔍': 0x3fd0d0, '🔨': 0xd8b04a, '🔭': 0xa078ff,
-  '🧙': 0xc060ff, '📜': 0xc8a070, '✨': 0xffe040, '🔮': 0xff50c8, '🎯': 0xff5050,
-}
 const TRACK_GLYPH = 0x2500 // ─
 const FILL_GLYPH = 0x2501 // ━
 const HEAD_GLYPH = 0x2588 // █
@@ -122,27 +123,36 @@ const frame = (cast: Cast): string =>
 async function paint($: EngineInterface) {
   if (isPainting) return
   isPainting = true
-  let hasLanded = false
-  for (const [id, cast] of casts) {
-    cast.tick += 1
-    if (cast.landing !== undefined && cast.tick >= FLASH_TICKS) {
-      casts.delete(id)
-      landed.add(id)
-      hasLanded = true
-      continue
+  try {
+    let hasLanded = false
+    // Blits between frames fold into one, so every bar's goes out at once rather than a frame apiece.
+    const blits: Array<Promise<void>> = []
+    for (const [id, cast] of casts) {
+      cast.tick += 1
+      if (cast.landing !== undefined && cast.tick >= FLASH_TICKS) {
+        casts.delete(id)
+        landed.add(id)
+        hasLanded = true
+        continue
+      }
+      blits.push($.ui
+        .blit({ requestId: id, key: 'cast', cells: frame(cast) })
+        .catch(() => ({ deny: 'blit failed' }))
+        .then(shown => {
+          cast.misses = shown.deny === undefined ? 0 : cast.misses + 1
+          if (cast.misses >= MAX_MISSES) casts.delete(id)
+        }))
     }
-    const shown = await $.ui
-      .blit({ requestId: id, key: 'cast', cells: frame(cast) })
-      .catch(() => ({ deny: 'blit failed' }))
-    cast.misses = shown.deny === undefined ? 0 : cast.misses + 1
-    if (cast.misses >= MAX_MISSES) casts.delete(id)
-  }
-  isPainting = false
-  // A finished flash leaves its row: redraw so the bar goes.
-  if (hasLanded) $.ui.invalidate('ui.render')
-  if (casts.size === 0) {
-    ticker?.cancel()
-    ticker = undefined
+    await Promise.all(blits)
+    // A finished flash leaves its row: redraw so the bar goes.
+    if (hasLanded) $.ui.invalidate('ui.render')
+  } finally {
+    // A throw must not leave every later tick skipping.
+    isPainting = false
+    if (casts.size === 0) {
+      ticker?.cancel()
+      ticker = undefined
+    }
   }
 }
 
@@ -162,7 +172,7 @@ export const register: Register = on => {
 
     let cast = casts.get(id)
     if (e.props.isRunning && cast === undefined && !landed.has(id)) {
-      cast = { color: SKILL_COLORS[skillIcon(e.props.tool)] ?? WHITE, tick: 0, misses: 0 }
+      cast = { color: skillColor(e.props.tool), tick: 0, misses: 0 }
       casts.set(id, cast)
     } else if (!e.props.isRunning && cast !== undefined && cast.landing === undefined) {
       cast.landing = landingOf(e.props)
