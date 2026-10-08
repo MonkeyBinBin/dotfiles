@@ -1,0 +1,1 @@
+{ "name": "rpg-prompt", "version": "0.1.0", "description": "The prompt footer flags what still needs you (unpushed commits, running jobs and agents, a failing check) and sums up the turn", "types": "./types/index.d.ts" }
