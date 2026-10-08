@@ -2,7 +2,7 @@
   "env": {
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
     "CLAUDE_CODE_NO_FLICKER": "1",
-    "CLAUDE_CODE_PLUGIN_DIRS": "~/.claude/mods/rpg-hud:~/.claude/mods/slime-band:~/.claude/mods/skill-bar"
+    "CLAUDE_CODE_PLUGIN_DIRS": "~/.claude/mods/rpg-hud:~/.claude/mods/slime-band:~/.claude/mods/skill-bar:~/.claude/mods/rpg-spinner"
   },
   "permissions": {
     "allow": [
