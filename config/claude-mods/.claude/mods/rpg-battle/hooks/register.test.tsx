@@ -1,11 +1,12 @@
 import { expect, test } from 'claude-code/testing'
 
-import { comboLabel, rowIcon, skillIcon } from './register'
+import { comboLabel, groupIcon, rowIcon, skillIcon } from './register'
 
 const ROW = { tool: 'Bash', isErrored: false, isInterrupted: false }
 
 test('gives each kind of tool its skill', () => {
   expect(skillIcon('Bash')).toBe('🔥')
+  expect(skillIcon('TaskStop')).toBe('🔥')
   expect(skillIcon('Edit')).toBe('🔨')
   expect(skillIcon('mcp__github__search')).toBe('🔮')
   expect(skillIcon('SomethingNew')).toBe('🎯')
@@ -15,6 +16,13 @@ test('marks a failed or fled call over its skill', () => {
   expect(rowIcon(ROW)).toBe('🔥')
   expect(rowIcon({ ...ROW, isErrored: true })).toBe('💀')
   expect(rowIcon({ ...ROW, isErrored: true, isInterrupted: true })).toBe('🚫')
+})
+
+test('marks a folded run by its worst call', () => {
+  const ok = { isErrored: false, isInterrupted: false }
+  expect(groupIcon([ok, ok])).toBe('🌀')
+  expect(groupIcon([ok, { ...ok, isErrored: true }])).toBe('💀')
+  expect(groupIcon([{ ...ok, isErrored: true }, { ...ok, isInterrupted: true }])).toBe('🚫')
 })
 
 test('calls a run of three or more a combo', () => {
