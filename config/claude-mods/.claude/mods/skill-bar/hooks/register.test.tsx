@@ -159,12 +159,16 @@ test('number keys no longer cast', async ($, on) => {
   expect(fills).toEqual([])
 })
 
-test('other surfaces draw a button a slot, wearing its rune', async ($, on) => {
+test('other surfaces draw a button a slot, beside a gem in its colour', async ($, on) => {
   hotbarWorld(on, [])
   await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'skill-bar', surface: 'desktop', component: 'PromptHint', props: HINT_PROPS })
-  const buttons = (await ui.findAll({ type: 'Button' })).map(b => b.props?.label)
-  expect(buttons).toEqual(['[C] commit', '[I] issue-start'])
+  const buttons = await ui.findAll({ type: 'Button' })
+  expect(buttons.map(b => b.props.label)).toEqual(['commit', 'issue-start'])
+  // Each slot's gem wears its own colour.
+  const gems = (await ui.findAll({ type: 'Text' })).filter(t => t.text === '◆').map(t => t.props.color)
+  expect(gems).toHaveLength(2)
+  expect(new Set(gems).size).toBe(2)
 })
 
 test('slots wrap into lines that fit the bar', () => {
@@ -235,4 +239,13 @@ test("a hovered slot's sparks twinkle once every few frames", async ($, on) => {
   expect(await hotbarText(ui)).toContain('✧')
   await ui.pointer({ type: 'leave', x: 3, y: 0, in: 'hotbar' })
   expect(await hotbarText(ui)).not.toMatch(/[✦✧]/)
+})
+
+test('on desktop pressing a slot puts its command in the prompt', async ($, on) => {
+  const fills: string[] = []
+  hotbarWorld(on, fills)
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'skill-bar', surface: 'desktop', component: 'PromptHint', props: HINT_PROPS })
+  await ui.press({ key: 'cast-commit' })
+  expect(fills).toEqual(['/commit '])
 })

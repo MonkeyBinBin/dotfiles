@@ -120,19 +120,25 @@ export const register: Register = on => {
       )
     }
 
-    // Other surfaces: a button a slot, wearing its rune.
+    // Other surfaces: the surface's own buttons, a slot each, beside a gem in the slot's colour. The terminal's
+    // half-block keycaps come out as gappy glyphs there, and a Button there takes no coloured children.
+    const { Text } = $.ui.resolve(e)
     return (
       <Box flexDirection="column">
         {engine}
-        <Box flexDirection="row" flexWrap="wrap" columnGap={2} marginY={1}>
+        <Box flexDirection="row" flexWrap="wrap" columnGap={2} rowGap={1} marginY={1}>
           {slots.map(one => (
-            <Button
-              key={one.name}
-              label={`[${one.rune}] ${one.label}`}
-              plain
-              dimColor
-              onPress={() => void $.prompt.fill({ text: commandText(one.name) })}
-            />
+            <Box key={one.name} flexDirection="row" alignItems="center" columnGap={1}>
+              <Text bold color={one.color}>
+                ◆
+              </Text>
+              <Button
+                key={`cast-${one.name}`}
+                label={one.label}
+                variant="secondary"
+                onPress={() => void $.prompt.fill({ text: commandText(one.name) })}
+              />
+            </Box>
           ))}
         </Box>
       </Box>
