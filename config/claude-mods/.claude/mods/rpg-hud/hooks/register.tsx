@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { ElementTable, EngineInterface, Register, RenderChildren } from 'claude-code'
+import type { ElementTable, EngineInterface, Register, RenderChildren, Timer } from 'claude-code'
 
 import type {
   BagItem,
@@ -22,7 +22,11 @@ import type {
   TouchedFile,
   Vitals,
 } from '../types'
-import { FRAME_MS, HERO_CELLS, HURT_MS, PET_TICKS, anim, pickFrame, pickMood } from './anim'
+import { FRAME_MS, FRAME_TICKS, HERO_CELLS, HURT_MS, PET_TICKS, anim, pickFrame, pickMood } from './anim'
+import type { Mood } from './anim'
+import { HERO_CLASS_FRAMES } from './hero-cells'
+import type { HeroClassId } from './hero-cells'
+import { cellsToPixels, gridToPixels, spriteSvg } from './svg'
 import { fightBoss, fightText, runsGit } from './boss'
 import type { BagProps, BagRow } from './bag-client'
 import { GIT_LOG, GIT_NUMSTAT, GIT_REMOTES, GIT_STATUS, GIT_WORKTREES, diffArgv, outpostArgv, parseBag, parseStatus, parseWorktrees, shortAge } from './git'
@@ -33,7 +37,7 @@ import type { EditOutput } from './edit-card'
 import { CALLS_PER_LEVEL, STATUS_ROWS, heroStats, normalizeCall, renderStatus } from './hero'
 import { CLASS_IDS, classOf, isClassId, rankOf, rollClass } from './classes'
 import { mapItems, mapSubtitle } from './map'
-import { ICON_COLUMNS, ICON_ROWS, MENU, entryOf, iconText, isTab } from './menu'
+import { ICON_COLUMNS, ICON_ROWS, MENU, entryOf, iconPalette, iconText, isTab } from './menu'
 import { cardWidth, slotKey } from './menu-client'
 import type { MenuIconProps } from './menu-client'
 import { PET_COLUMNS, PET_ROWS, petCells, petSeed, speciesFor } from './pet-sprites'
@@ -609,6 +613,20 @@ const campOf = (list: readonly Outpost[]): { camp?: string } => {
   const here = list.find(one => one.isHere)
   return here === undefined || here.isMain ? {} : { camp: here.name }
 }
+
+// CSS pixels per sprite pixel where sprites are drawings: about one column's width, as a half-block cell is.
+const SPRITE_PX = 8
+
+// The hero's frames for a mood as one drawing that animates itself.
+const heroSprite = (hero: HeroClassId, mood: Mood) =>
+  spriteSvg(
+    HERO_CLASS_FRAMES[hero][mood].map(cells => cellsToPixels(cells, HERO_CELLS.columns, HERO_CELLS.rows)),
+    SPRITE_PX,
+    FRAME_MS * FRAME_TICKS[mood],
+  )
+
+// Off the terminal nothing blits: when the smoke puff runs out the pane is drawn again, back to the mood under it.
+let hurtRedraw: Timer | undefined
 
 // --- The menu windows ---
 
@@ -1320,6 +1338,7 @@ export const register: Register = on => {
     const ui = $.ui.resolve(e)
     const { Box, Button } = ui
     const Raster = e.surface === 'terminal' ? $.ui.resolve(e).Raster : undefined
+    const Svg = e.surface === 'terminal' ? undefined : $.ui.resolve(e).Svg
     anim.tab = active
 
     const callList = (await read($, calls)).map(normalizeCall)
@@ -1362,13 +1381,23 @@ export const register: Register = on => {
             }),
       },
       Raster,
+      Svg === undefined
+        ? undefined
+        : (() => {
+            const hurtLeft = anim.hurtUntil - now
+            const mood = pickMood(anim.running, hurtLeft)
+            hurtRedraw?.cancel()
+            hurtRedraw = hurtLeft > 0 ? $.clock.after(hurtLeft, () => $.ui.invalidate('ui.render')) : undefined
+            const sprite = heroSprite(hero.id, mood)
+            return <Svg key="hero" source={sprite.source} alt={`${hero.title}, ${mood}`} width={sprite.width} height={sprite.height} isInteractive />
+          })(),
     )
 
     // The icon menu when the slots and the window both have room; one line of labels otherwise.
     const card = cardWidth(width, MENU.length, ICON_COLUMNS)
     const isTerminal = e.surface === 'terminal'
     const roomRows = e.props.scroll.bodyRows - STATUS_ROWS - WINDOW_CHROME_ROWS
-    const isIconMenu = isTerminal && card >= MIN_SLOT_COLUMNS && roomRows - SLOT_ROWS >= MIN_WINDOW_ROWS
+    const isIconMenu = card >= MIN_SLOT_COLUMNS && roomRows - SLOT_ROWS >= MIN_WINDOW_ROWS
     const menuRows = isIconMenu ? SLOT_ROWS : 1
     const rows = Math.max(MIN_WINDOW_ROWS, roomRows - menuRows)
 
@@ -1403,7 +1432,7 @@ export const register: Register = on => {
     // and elsewhere, one row of the buttons alone.
     let menu
     if (isIconMenu) {
-      const { Client } = $.ui.resolve(e)
+      const Client = e.surface === 'terminal' ? $.ui.resolve(e).Client : undefined
       const ids = MENU.map(slot => slot.id)
       // Inside the frame's two columns.
       const inside = Math.max(0, card - 2)
@@ -1433,7 +1462,18 @@ export const register: Register = on => {
                 borderDimColor={!isActive}
                 {...(isActive ? {} : { hover: { scope: `card-${slot.id}`, borderColor: slot.color, borderDimColor: false } })}
               >
-                <Client key={`icon-${slot.id}`} module="./menu-client.tsx" props={iconProps} width={inside} height={ICON_ROWS} />
+                {Client ? (
+                  <Client key={`icon-${slot.id}`} module="./menu-client.tsx" props={iconProps} width={inside} height={ICON_ROWS} />
+                ) : (
+                  Svg && (
+                    <Box key={`icon-${slot.id}`} height={ICON_ROWS} alignItems="center" justifyContent="center">
+                      {(() => {
+                        const icon = spriteSvg([gridToPixels(slot.pixels, iconPalette(isActive))], SPRITE_PX, 0)
+                        return <Svg source={icon.source} alt={slot.label} width={icon.width} height={icon.height} />
+                      })()}
+                    </Box>
+                  )
+                )}
                 <Box flexDirection="row" width={inside} height={1} justifyContent="center">
                   {labelButton(slot, index)}
                 </Box>

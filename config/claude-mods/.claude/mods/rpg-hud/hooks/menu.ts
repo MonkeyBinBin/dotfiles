@@ -72,6 +72,9 @@ const dim = (rgb: number): number => {
 
 const DIM_PALETTE = Object.fromEntries(Object.entries(PALETTE).map(([key, rgb]) => [key, dim(rgb)]))
 
+// The icon's colours, bright on the selected slot and dimmed on the others.
+export const iconPalette = (isSelected: boolean): Record<string, number> => (isSelected ? PALETTE : DIM_PALETTE)
+
 // One terminal cell of an icon drawn as text: the glyph, its colour and the colour behind it.
 export type TextCell = [glyph: string, color: string | null, background: string | null]
 

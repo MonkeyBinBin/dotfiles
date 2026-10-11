@@ -10,7 +10,7 @@ export type Mood = 'idle' | 'cast' | 'hurt'
 
 export const FRAME_MS = 100
 // Ticks each frame of a mood stays on screen.
-const FRAME_TICKS: Record<Mood, number> = { idle: 5, cast: 2, hurt: 3 }
+export const FRAME_TICKS: Record<Mood, number> = { idle: 5, cast: 2, hurt: 3 }
 // Ticks each frame of a running pet stays on screen.
 export const PET_TICKS = 4
 // The smoke puff plays once through after a failed call.

@@ -1,14 +1,27 @@
 import type { ElementTable } from 'claude-code'
 
 import type { Pet } from '../types'
-import { anim } from './anim'
+import { FRAME_MS, PET_TICKS, anim } from './anim'
 import { PET_COLUMNS, PET_ROWS, petCells, petSeed, speciesFor } from './pet-sprites'
 import { formatElapsed, oneLine } from './util'
+import { cellsToPixels, spriteSvg } from './svg'
 import type { Item } from './window'
 
 // Three text rows beside the sprite, then a blank row.
 const CARD_ROWS = 4
 const SPRITE_GAP = 1
+// CSS pixels per sprite pixel where the sprite is a drawing: eight columns at about eight pixels each.
+const PET_PX = 8
+
+// A running pet hops between its two frames; one back or fainted holds the first.
+const petSprite = (seed: string, status: Pet['status']) => {
+  const frames = status === 'run' ? [0, 1] : [0]
+  return spriteSvg(
+    frames.map(frame => cellsToPixels(petCells(seed, status, frame), PET_COLUMNS, PET_ROWS)),
+    PET_PX,
+    FRAME_MS * PET_TICKS,
+  )
+}
 
 // Pets still out first, then the ones back, each newest first.
 export const rosterOrder = (list: readonly Pet[]): Pet[] => {
@@ -43,7 +56,8 @@ export function petItems(
   if (list.length === 0) {
     return [{ key: 'empty', rows: 1, node: <Text dimColor>No companions yet. Subagents you summon join the party.</Text> }]
   }
-  const textWidth = Math.max(0, width - (Raster ? PET_COLUMNS + SPRITE_GAP : 0))
+  const Svg = Raster === undefined && 'Svg' in ui ? ui.Svg : undefined
+  const textWidth = Math.max(0, width - (Raster || Svg ? PET_COLUMNS + SPRITE_GAP : 0))
   return rosterOrder(list).map(pet => {
     const seed = petSeed(pet)
     const species = speciesFor(seed)
@@ -62,6 +76,15 @@ export function petItems(
               <Raster key={`pet-${pet.id}`} columns={PET_COLUMNS} rows={PET_ROWS} cells={petCells(seed, pet.status, 0)} />
             </Box>
           )}
+          {Svg &&
+            (() => {
+              const sprite = petSprite(seed, pet.status)
+              return (
+                <Box width={PET_COLUMNS + SPRITE_GAP}>
+                  <Svg key={`pet-${pet.id}`} source={sprite.source} alt={species.name} width={sprite.width} height={sprite.height} {...(sprite.isAnimated ? { isInteractive: true } : {})} />
+                </Box>
+              )
+            })()}
           <Box flexDirection="column" width={textWidth}>
             <Box height={1}>
               <Box flexGrow={1}>

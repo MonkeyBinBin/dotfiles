@@ -1,8 +1,9 @@
-import type { ElementTable } from 'claude-code'
+import type { ElementTable, RenderChildren } from 'claude-code'
 
 import type { Boss, Combo, ToolCall, Vitals } from '../types'
 import { HERO_CELLS, anim } from './anim'
 import { barParts, oneLine } from './util'
+import { BAR_HEIGHT, COLUMN_PX, barSvg } from './svg'
 import { CLASSES, rankOf } from './classes'
 import type { HeroClass } from './classes'
 
@@ -100,8 +101,23 @@ const FIGHT_LABEL = '⚔ fix'
 
 
 
-const Bar = (ui: ElementTable, label: string, color: string, value: number, max: number, note: string, width: number) => {
+type SvgElement = ElementTable<'desktop'>['Svg']
+
+const Bar = (ui: ElementTable, label: string, color: string, value: number, max: number, note: string, width: number, Svg?: SvgElement) => {
   const { Text } = ui
+  // Block characters leave gaps between glyphs off the terminal: there the bar is a drawing.
+  if (Svg !== undefined) {
+    const { Box } = ui
+    return (
+      <Box flexDirection="row" height={1} alignItems="center">
+        <Text bold color={color}>
+          {label}{' '}
+        </Text>
+        <Svg key={`bar-${label}`} source={barSvg(value, max, width, color)} alt={`${label} ${note}`} width={width * COLUMN_PX} height={BAR_HEIGHT} />
+        <Text color={color}> {note}</Text>
+      </Box>
+    )
+  }
   const { filled, empty } = barParts(value, max, width)
   return (
     <Text wrap="truncate">
@@ -114,21 +130,25 @@ const Bar = (ui: ElementTable, label: string, color: string, value: number, max:
 }
 
 // The hero's status window: always on top, whatever the menu shows below.
-export function renderStatus(ui: ElementTable, data: StatusData, Raster?: ElementTable<'terminal'>['Raster']) {
+// `portrait` stands in for the Raster on surfaces that draw none.
+export function renderStatus(ui: ElementTable, data: StatusData, Raster?: ElementTable<'terminal'>['Raster'], portrait?: RenderChildren) {
   const { Box, Text, Button } = ui
   const { list, vitals, combo, boss, width } = data
   const { level, xp, hp } = heroStats(list, data.casts)
   const mp = manaLeft(vitals)
   const current = list.findLast(call => call.status === 'run')
   const failed = list.filter(call => call.status === 'err').length
-  const { hasPortrait, statsWidth, barWidth } = statusLayout(width, Raster !== undefined)
+  const { hasPortrait, statsWidth, barWidth } = statusLayout(width, Raster !== undefined || portrait !== undefined)
   const { hero } = data
+  // Every surface but the terminal (the one with a Raster) draws SVG.
+  const Svg = Raster === undefined && 'Svg' in ui ? (ui.Svg as SvgElement) : undefined
   const frame = data.isFlashing ? 'yellow' : hero.color
   const fullName = `CLAUDE THE ${hero.title}`
   // Room for `Lv.NN` beside the name, and for the ? after it.
   const name = statsWidth >= fullName.length + 6 + (data.onHelp === undefined ? 0 : 2) ? fullName : 'CLAUDE'
   const { usd } = vitals
-  anim.hasHero = hasPortrait
+  // Only the terminal's Raster takes the animation's blits; a drawing animates itself.
+  anim.hasHero = hasPortrait && Raster !== undefined
 
   const fightRoom = data.onFight === undefined ? 0 : FIGHT_LABEL.length + 1
   const bossBar = barParts(boss?.hp ?? 0, boss?.maxHp ?? 0, Math.max(4, Math.min(10, statsWidth - (boss?.name.length ?? 0) - 9 - fightRoom)))
@@ -136,12 +156,22 @@ export function renderStatus(ui: ElementTable, data: StatusData, Raster?: Elemen
     boss === null ? null : (
       <Box height={1}>
         <Box flexGrow={1}>
-          <Text wrap="truncate">
-            <Text bold color="red">☠ {boss.name} </Text>
-            <Text color="red">{bossBar.filled}</Text>
-            <Text dimColor>{bossBar.empty}</Text>
-            <Text color="red"> {boss.hp}/{boss.maxHp}</Text>
-          </Text>
+          {Svg !== undefined ? (
+            <Box flexDirection="row" height={1} alignItems="center">
+              <Text bold color="red">
+                ☠ {boss.name}{' '}
+              </Text>
+              <Svg key="bar-boss" source={barSvg(boss.hp, boss.maxHp, bossBar.filled.length + bossBar.empty.length, 'red')} alt={`${boss.name} ${boss.hp}/${boss.maxHp}`} width={(bossBar.filled.length + bossBar.empty.length) * COLUMN_PX} height={BAR_HEIGHT} />
+              <Text color="red"> {boss.hp}/{boss.maxHp}</Text>
+            </Box>
+          ) : (
+            <Text wrap="truncate">
+              <Text bold color="red">☠ {boss.name} </Text>
+              <Text color="red">{bossBar.filled}</Text>
+              <Text dimColor>{bossBar.empty}</Text>
+              <Text color="red"> {boss.hp}/{boss.maxHp}</Text>
+            </Text>
+          )}
         </Box>
         {data.onFight !== undefined && <Button key="fight" label={FIGHT_LABEL} plain onPress={data.onFight} />}
       </Box>
@@ -149,9 +179,9 @@ export function renderStatus(ui: ElementTable, data: StatusData, Raster?: Elemen
 
   return (
     <Box flexDirection="row" width={width} height={STATUS_ROWS} borderStyle="double" borderColor={frame} paddingX={1}>
-      {hasPortrait && Raster && (
+      {hasPortrait && (
         <Box width={HERO_CELLS.columns + PORTRAIT_GAP}>
-          <Raster key="hero" {...HERO_CELLS} cells={anim.shownCells} />
+          {Raster ? <Raster key="hero" {...HERO_CELLS} cells={anim.shownCells} /> : portrait}
         </Box>
       )}
       <Box flexDirection="column" width={statsWidth} height={STATS_ROWS}>
@@ -171,12 +201,12 @@ export function renderStatus(ui: ElementTable, data: StatusData, Raster?: Elemen
           <Text italic color="cyan">{rankOf(hero, level)}</Text>
           <Text dimColor> · {data.casts} casts</Text>
         </Text>
-        {Bar(ui, 'HP', gaugeColor(hp, HEARTS, 'green'), hp, HEARTS, `${hp}/${HEARTS}`, barWidth)}
+        {Bar(ui, 'HP', gaugeColor(hp, HEARTS, 'green'), hp, HEARTS, `${hp}/${HEARTS}`, barWidth, Svg)}
         {mp === undefined
-          ? Bar(ui, 'MP', 'blue', 0, MP_MAX, '?', barWidth)
-          : Bar(ui, 'MP', gaugeColor(mp, MP_MAX, 'blue'), mp, MP_MAX, `${mp}%`, barWidth)}
-        {Bar(ui, 'XP', 'magenta', xp, CALLS_PER_LEVEL, `${xp}/${CALLS_PER_LEVEL}`, barWidth)}
-        <Text color={frame} dimColor>
+          ? Bar(ui, 'MP', 'blue', 0, MP_MAX, '?', barWidth, Svg)
+          : Bar(ui, 'MP', gaugeColor(mp, MP_MAX, 'blue'), mp, MP_MAX, `${mp}%`, barWidth, Svg)}
+        {Bar(ui, 'XP', 'magenta', xp, CALLS_PER_LEVEL, `${xp}/${CALLS_PER_LEVEL}`, barWidth, Svg)}
+        <Text color={frame} dimColor wrap="truncate">
           {'┈'.repeat(statsWidth)}
         </Text>
         <Box height={1}>

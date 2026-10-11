@@ -24,6 +24,8 @@ import { cardWidth } from './menu-client'
 import { pageItems } from './window'
 import { CLASSES, CLASS_IDS, rankOf, rollClass } from './classes'
 import { HERO_CLASS_FRAMES } from './hero-cells'
+import { cellsToPixels, gridToPixels, spriteSvg } from './svg'
+import { composeSprite } from './util'
 
 const PANE_PROPS = {
   title: 'Adventure',
@@ -122,7 +124,14 @@ for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await mountPane($, surface)
     const shown = (await texts(ui)).join('|')
     expect(shown).toContain('a.md')
-    expect(shown).toContain(`HP |${'█'.repeat(14)}|${'░'.repeat(4)}| 4/5`)
+    if (surface === 'terminal') {
+      expect(shown).toContain(`HP |${'█'.repeat(14)}|${'░'.repeat(4)}| 4/5`)
+    } else {
+      // Off the terminal the bars are drawings: no block characters, the reading in the drawing's alt.
+      expect(shown).not.toContain('█')
+      const bars = (await ui.findAll({ type: 'Svg' })).map(svg => String(svg.props.alt))
+      expect(bars).toContain('HP 4/5')
+    }
   })
 
   test(`opens on the spell book on ${surface}`, async ($, on) => {
@@ -2059,4 +2068,68 @@ test('a foreground shell is no job', async ($, on) => {
   await $.tool.call({ tool: 'Bash', command: 'ls' })
   await showTab($, ui, 'jobs', 'desktop')
   expect((await texts(ui)).join('|')).toContain('No background jobs.')
+})
+
+test('Raster cells decode back to the pixels they were composed from', () => {
+  const grid = ['.AB.', 'A..B', 'BBAA']
+  const palette = { A: 0x112233, B: 0xaabbcc }
+  // Three pixel rows make two cell rows; the missing fourth row is see-through.
+  expect(cellsToPixels(composeSprite(grid, palette), 4, 2)).toEqual([...gridToPixels(grid, palette), [undefined, undefined, undefined, undefined]])
+})
+
+test('a sprite of several frames animates; one frame is a still', () => {
+  const frame = gridToPixels(['AA', 'AA'], { A: 0xff0000 })
+  const moving = spriteSvg([frame, frame, frame], 8, 100)
+  expect(moving.isAnimated).toBe(true)
+  expect(moving.source.match(/<animate /g)?.length).toBe(3)
+  expect(moving.source).toContain('dur="300ms"')
+  expect(moving.width).toBe(16)
+  const still = spriteSvg([frame], 8, 100)
+  expect(still.isAnimated).toBe(false)
+  expect(still.source).not.toContain('animate')
+})
+
+test('on desktop the hero, the menu icons and the bars are drawings, never half blocks', async ($, on) => {
+  world(on)
+  const ui = await mountPane($, 'desktop')
+  const drawings = (await ui.findAll({ type: 'Svg' })).map(svg => String(svg.props.alt))
+  expect(drawings.some(alt => alt.startsWith('WIZARD, idle'))).toBe(true)
+  // Every drawing is sized: a frame left to size itself takes the browser's default height.
+  for (const svg of await ui.findAll({ type: 'Svg' })) expect(typeof svg.props.height).toBe('number')
+  for (const label of ['Spell', 'Party', 'Map', 'Skill', 'Jobs']) expect(drawings).toContain(label)
+  expect(drawings).toContain('XP 0/10')
+  const shown = (await texts(ui)).join('|')
+  expect(shown).not.toMatch(/[▀▄█░]/)
+})
+
+test('on desktop the hero casts while a call runs, then rests', async ($, on) => {
+  let release = () => {}
+  world(on, { tool: e => (e.tool === 'Bash' ? new Promise(done => (release = () => done({ result: { text: 'ok' } }))) : undefined) as never })
+  const ui = await mountPane($, 'desktop')
+  const heroAlt = async () => (await ui.findAll({ type: 'Svg' })).map(svg => String(svg.props.alt)).find(alt => alt.startsWith('WIZARD'))
+  expect(await heroAlt()).toBe('WIZARD, idle')
+  const running = $.tool.call({ tool: 'Bash', command: 'sleep 1' })
+  for (let turn = 0; turn < 20; turn += 1) await Promise.resolve()
+  expect(await heroAlt()).toBe('WIZARD, cast')
+  release()
+  await running
+  expect(await heroAlt()).toBe('WIZARD, idle')
+})
+
+test('on desktop a questing pet hops as a drawing', async ($, on) => {
+  world(on, {
+    tool: async e => {
+      if (e.tool !== 'Agent') return undefined
+      await $.agent.spawn({ prompt: 'go', description: e.description, subagentType: 'Explore', tool_use_id: e.tool_use_id } as never)
+      return { result: { status: 'async_launched', agentId: 'agent-1', description: e.description ?? '', prompt: 'go' } } as never
+    },
+  })
+  on('agent.spawn', async () => ({ model: 'claude-haiku-4-5', agentId: 'agent-1' }))
+  await $.tool.call({ tool: 'Agent', tool_use_id: 'tu-1', description: 'Map the repo', prompt: 'go' } as never)
+  const ui = await mountPane($, 'desktop')
+  await showTab($, ui, 'pets', 'desktop')
+  const pet = (await ui.findAll({ type: 'Svg' })).find(svg => svg.props.alt === speciesFor('agent-1').name)
+  expect(pet).toBeDefined()
+  expect(pet?.props.isInteractive).toBe(true)
+  expect(String(pet?.props.source)).toContain('<animate ')
 })
