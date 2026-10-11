@@ -2,12 +2,14 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
 import type { BandInfo, ContextInfo } from '../types'
-import { CLOSE, FRAME, CTX_LABEL, OPEN, TITLE, gaugeLine, innerWidth, layoutGauge, legendLines, topFill } from './context-bar'
+import { CLOSE, FRAME, CTX_LABEL, OPEN, TITLE, innerWidth, layoutGauge, legendLines, topFill } from './context-bar'
 import type { ContextGauge } from './context-bar'
 import { SLIME_FRAMES, SLIME_PALETTE, SLIME_ROWS, SLIME_WIDTH } from './slime-sprite'
 import type { SlimePose } from './slime-sprite'
 import { formatTokens, layoutHud } from './hud'
 import type { HudFact, HudPixel } from './hud'
+import { gaugeRuns, sceneSize, sceneSvg, sceneWidth, walkAt } from './desktop'
+import type { SceneSlime } from './desktop'
 
 const info = atom({ plugin: 'slime-band', key: 'info' } as const, {
   branch: '',
@@ -149,6 +151,16 @@ const slime = {
   requestId: '',
   ticker: undefined as Timer | undefined,
   shown: '',
+  // The surface that last drew the band.
+  surface: undefined as string | undefined,
+  // On an SVG surface: the lap the scene animates, from where and when it set off.
+  walk: undefined as { x: number; dir: 1 | -1; last: number; since: number } | undefined,
+  napTimer: undefined as Timer | undefined,
+}
+
+// An SVG surface animates the scene itself and is drawn again only when the slime's state changes.
+const redraw = ($: EngineInterface) => {
+  if (slime.surface !== undefined && slime.surface !== 'terminal') $.ui.invalidate('ui.render')
 }
 
 async function paint($: EngineInterface) {
@@ -217,6 +229,17 @@ const FACT_COLORS = {
   blue: 0x5aa9ff,
   green: 0x5ad27a,
 } as const
+
+const LABEL_HEX: Record<string, string> = Object.fromEntries(
+  Object.entries(FACT_COLORS).map(([name, rgb]) => [name, `#${rgb.toString(16).padStart(6, '0')}`]),
+)
+
+const MODE_ALT: Record<SceneSlime['mode'], string> = {
+  walk: 'hopping while Claude works',
+  sit: 'sitting',
+  sleep: 'napping',
+  wait: 'waiting on you',
+}
 
 const fact = (
   key: string,
@@ -335,6 +358,7 @@ export const register: Register = on => {
     if (result.decision === undefined) {
       slime.waitingFor = e.tool_name
       slime.waitingAgent = e.agent_id
+      redraw($)
     }
     return result
   })
@@ -345,17 +369,22 @@ export const register: Register = on => {
     if (e.tool === 'AskUserQuestion') {
       slime.waitingFor = e.tool
       slime.waitingAgent = e.agentId
+      redraw($)
     }
     try {
       return await next(e)
     } finally {
-      if (slime.waitingFor === e.tool && slime.waitingAgent === e.agentId) slime.waitingFor = undefined
+      if (slime.waitingFor === e.tool && slime.waitingAgent === e.agentId) {
+        slime.waitingFor = undefined
+        redraw($)
+      }
     }
   })
 
   on('prompt.submit', async ($, e, next) => {
     slime.isWorking = true
     slime.waitingFor = undefined
+    redraw($)
 
     return next(e)
   })
@@ -374,6 +403,7 @@ export const register: Register = on => {
         outTokens: usage ? usage.output_tokens : value.outTokens,
       }))
       await refreshGit($).catch(() => undefined)
+      redraw($)
     }
 
     return next(e)
@@ -387,14 +417,70 @@ export const register: Register = on => {
     const value = await read($, info)
     const context = await read($, contextInfo)
 
+    slime.surface = e.surface
     if (e.surface !== 'terminal') {
+      const { Box, Text, Svg } = $.ui.resolve(e)
+      const now = await $.clock.now()
+      if (e.props.isWorking && !slime.isWorking) slime.isWorking = true
+      const segments = infoSegments(value, await $.session.turns())
+      const width = sceneWidth(e.props.bodyColumns)
+      const hud = layoutHud(segments, width)
+      const last = Math.max(0, hud.areaWidth - SLIME_WIDTH)
+      const isWaiting = slime.waitingFor !== undefined
+      // A lap that ends (rest, a wait, a resize) leaves the slime where it had hopped to.
+      if (slime.walk !== undefined && (!slime.isWorking || isWaiting || slime.walk.last !== last)) {
+        const at = walkAt(slime.walk.x, slime.walk.dir, slime.walk.last, now - slime.walk.since)
+        slime.x = at.x
+        slime.dir = at.dir
+        slime.walk = undefined
+      }
+      slime.x = Math.min(slime.x, last)
+      if (slime.isWorking && !isWaiting && slime.walk === undefined) {
+        slime.walk = { x: slime.x, dir: slime.dir, last, since: now }
+      }
+      const idleMs = now - slime.idleSince
+      const mode: SceneSlime['mode'] = isWaiting ? 'wait' : slime.walk ? 'walk' : idleMs >= NAP_AFTER_MS ? 'sleep' : 'sit'
+      slime.napTimer?.cancel()
+      slime.napTimer = mode === 'sit' ? $.clock.after(NAP_AFTER_MS - idleMs, () => $.ui.invalidate('ui.render')) : undefined
+      const scene = sceneSvg(width, hud, { mode, x: slime.walk?.x ?? slime.x, dir: slime.walk?.dir ?? slime.dir, last }, LABEL_HEX)
       const gauge = layoutGauge(context, e.props.bodyColumns, false)
-      const { Box, Text } = $.ui.resolve(e)
+      // Inside the frame's border and padding on each side.
+      const bar = gaugeRuns(context, e.props.bodyColumns - 4)
+      const size = sceneSize(width)
+      const facts = segments.map(s => `${s.icon} ${s.value} ${s.label}`).join(', ')
+
       return (
         <Box flexDirection="column">
-          <Text wrap="truncate">◕‿◕ {infoLine(value, await $.session.turns())}</Text>
-          {gauge && <Text wrap="truncate">{gaugeLine(gauge)}</Text>}
-          {gauge && legendLines(gauge).map(line => <Text key={line}>{line}</Text>)}
+          <Svg key="track" source={scene} alt={`Slime ${MODE_ALT[mode]}. ${facts}`} width={size.width} height={size.height} isInteractive />
+          {gauge && bar && (
+            <Box flexDirection="column" borderStyle="round" borderColor={FRAME_COLOR} paddingX={1}>
+              <Box flexDirection="row" justifyContent="space-between">
+                <Text color={TITLE_COLOR} bold>
+                  {TITLE}
+                </Text>
+                <Text>
+                  <Text color={gauge.percentColor} bold>
+                    {gauge.status}
+                  </Text>
+                  <Text dimColor>{gauge.suffix}</Text>
+                </Text>
+              </Box>
+              <Box key="ctx-bar" flexDirection="row" height={1}>
+                {bar.map((run, at) => (
+                  <Box key={`run-${at}`} width={run.length} height={1} backgroundColor={run.color} />
+                ))}
+              </Box>
+              <Box flexDirection="row" flexWrap="wrap" columnGap={2}>
+                {gauge.legend.map(item => (
+                  <Text key={item.name}>
+                    <Text color={item.color}>■</Text>
+                    <Text dimColor> {item.name} </Text>
+                    {item.tokens}
+                  </Text>
+                ))}
+              </Box>
+            </Box>
+          )}
           {engine}
         </Box>
       )

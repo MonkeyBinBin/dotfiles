@@ -3,6 +3,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import { SLIME_WIDTH } from './slime-sprite'
 import { SLIME_AREA_MIN, layoutHud } from './hud'
 import { allocateCells, frameLines, gaugeLine, layoutGauge, legendLines, percentColor, wrapLegend } from './context-bar'
+import { HOP_MS, gaugeRuns, sceneSize, sceneSvg, walkAt } from './desktop'
 import { NAP_AFTER_MS, TRACK_ROWS, composeTrack, floorAt, formatTokens, infoLine, infoSegments, slimePose, stepSlime } from './register'
 
 const BAND_PROPS = {
@@ -65,12 +66,16 @@ for (const surface of ['terminal', 'desktop'] as const) {
     })
 
     const ui = await $.ui.mount({ plugin: 'slime-band', surface, component: 'AbovePrompt', props: BAND_PROPS })
-    const shown = (await ui.findAll({ type: 'Text' })).map(row => row.text ?? '').join('|')
+    const texts = (await ui.findAll({ type: 'Text' })).map(row => row.text ?? '').join('|')
+    const scene = surface === 'terminal' ? undefined : (await ui.findAll({ type: 'Svg' }))[0]
+    const shown = scene === undefined ? texts : `${texts}|${String(scene.props.alt)}|${String(scene.props.source)}`
     expect(shown).not.toContain('opus')
     expect(shown).toContain('turns')
     expect(shown).toContain('engine band')
     if (surface === 'terminal') {
       expect(await ui.find({ type: 'Raster' })).toBeDefined()
+    } else {
+      expect(String(scene?.props.source)).toContain('<svg')
     }
   })
 }
@@ -399,4 +404,56 @@ test('ending the conversation (/clear, resume) drops the gauge', async ($, on) =
   expect(await shows()).toBe(true)
   await $.session.end({ reason: 'clear' } as never)
   expect(await shows()).toBe(false)
+})
+
+test('on desktop the walk ping-pongs, one pixel per hop, as the terminal steps it', () => {
+  expect(walkAt(5, 1, 20, 0)).toEqual({ x: 5, dir: 1 })
+  expect(walkAt(5, 1, 20, HOP_MS * 3)).toEqual({ x: 8, dir: 1 })
+  expect(walkAt(18, 1, 20, HOP_MS * 4)).toEqual({ x: 18, dir: -1 })
+  expect(walkAt(2, -1, 20, HOP_MS * 4)).toEqual({ x: 2, dir: 1 })
+  expect(walkAt(7, -1, 0, HOP_MS * 9).x).toBe(0)
+})
+
+test('the desktop scene animates the walk and holds still otherwise', () => {
+  const hud = layoutHud([], 60)
+  const walking = sceneSvg(60, hud, { mode: 'walk', x: 4, dir: 1, last: 40 }, {})
+  expect(walking).toContain('animateTransform')
+  expect(walking).toContain(`begin="-${4 * HOP_MS}ms"`)
+  const sitting = sceneSvg(60, hud, { mode: 'sit', x: 4, dir: 1, last: 40 }, {})
+  expect(sitting).not.toContain('animate')
+  expect(sceneSvg(60, hud, { mode: 'wait', x: 4, dir: 1, last: 40 }, {})).toContain('>!<animate')
+  expect(sceneSvg(60, hud, { mode: 'sleep', x: 4, dir: 1, last: 40 }, {})).toContain('>Z<animate')
+})
+
+test('the desktop gauge fills its width with theme keys and marks compaction', () => {
+  const runs = gaugeRuns({ ...CONTEXT, compactAt: 160_000 }, 60) ?? []
+  expect(runs.reduce((sum, run) => sum + run.length, 0)).toBe(60)
+  // The surface colours the keys itself, as it does the legend's.
+  expect(runs.map(run => run.color)).toEqual(['promptBorder', 'permission', 'subtle', 'error', 'subtle', 'inactive'])
+  expect(gaugeRuns({ ...CONTEXT, slices: [] }, 60)).toBeUndefined()
+})
+
+test('the desktop scene is sized for its frame, so no default height pads it', () => {
+  expect(sceneSize(100)).toEqual({ width: 600, height: 60 })
+})
+
+test('on desktop the slime sets off when work starts and settles when it ends', async ($, on) => {
+  const clock = mock.clock(on)
+  on('session.turns', async () => ({ value: 1 }))
+  on('ui.render', { component: 'AbovePrompt' }, async ($$, e) => {
+    const { Text } = $$.ui.resolve(e)
+    return <Text> </Text>
+  })
+  const sceneOf = async (isWorking: boolean) => {
+    const ui = await $.ui.mount({ plugin: 'slime-band', surface: 'desktop', component: 'AbovePrompt', props: { ...BAND_PROPS, isWorking, bodyColumns: 100 } })
+    const scene = (await ui.findAll({ type: 'Svg' }))[0]
+    return { source: String(scene?.props.source), alt: String(scene?.props.alt) }
+  }
+  expect((await sceneOf(true)).alt).toContain('hopping')
+  await clock.advance(HOP_MS * 5)
+  await $.prompt.submit({ text: 'x' } as never).catch(() => undefined)
+  await $.turn.complete({ durationMs: 1000 } as never).catch(() => undefined)
+  const rest = await sceneOf(false)
+  expect(rest.alt).toContain('sitting')
+  expect(rest.source).toContain(`translate(${5 * 6} 0)`)
 })
