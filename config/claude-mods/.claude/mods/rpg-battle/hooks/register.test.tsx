@@ -42,24 +42,25 @@ for (const surface of ['terminal', 'desktop'] as const) {
     })
     const shown = (await ui.findAll({ type: 'Text' })).map(row => row.text ?? '').join('|')
     expect(shown).toContain('Bash(ls)')
-    if (surface === 'terminal') expect(shown).toContain('🔥')
-    else expect(shown).not.toContain('🔥')
+    expect(shown).toContain('🔥')
   })
 }
 
-test('adds MISS under a failed result', async ($, on) => {
-  on('ui.render', { component: 'ToolResult' }, async ($$, e) => {
-    const { Text } = $$.ui.resolve(e)
-    return <Text>Error: exit 1</Text>
+for (const surface of ['terminal', 'desktop'] as const) {
+  test(`adds MISS under a failed result on ${surface}`, async ($, on) => {
+    on('ui.render', { component: 'ToolResult' }, async ($$, e) => {
+      const { Text } = $$.ui.resolve(e)
+      return <Text>Error: exit 1</Text>
+    })
+    const ui = await $.ui.mount({
+      plugin: 'rpg-battle', surface, component: 'ToolResult',
+      props: { tool_use_id: 't1', tool: 'Bash', output: 'exit 1', isErrored: true },
+    })
+    const shown = (await ui.findAll({ type: 'Text' })).map(row => row.text ?? '').join('|')
+    expect(shown).toContain('Error: exit 1')
+    expect(shown).toContain('MISS!')
   })
-  const ui = await $.ui.mount({
-    plugin: 'rpg-battle', surface: 'terminal', component: 'ToolResult',
-    props: { tool_use_id: 't1', tool: 'Bash', output: 'exit 1', isErrored: true },
-  })
-  const shown = (await ui.findAll({ type: 'Text' })).map(row => row.text ?? '').join('|')
-  expect(shown).toContain('Error: exit 1')
-  expect(shown).toContain('MISS!')
-})
+}
 
 test('charges the cast bar one cell per tick, then pulses full', () => {
   const at = (tick: number) => castCells(0xff0000, tick).map(([glyph]) => String.fromCharCode(glyph)).join('')
@@ -109,4 +110,26 @@ test('draws no cast bar for a row that was never seen running', async ($, on) =>
     props: { tool_use_id: 'r1', tool: 'Read', input: { file_path: 'a.ts' }, isRunning: false, isErrored: false, isInterrupted: false },
   })
   expect(await ui.findAll({ type: 'Raster' })).toHaveLength(0)
+})
+
+test('on desktop the cast bar charges as a drawing, flashes as it lands, then clears', async ($, on) => {
+  const clock = mock.clock(on)
+  on('ui.render', { component: 'ToolUse' }, async ($$, e) => {
+    const { Text } = $$.ui.resolve(e)
+    return <Text>Bash(sleep 1)</Text>
+  })
+  const row = { tool_use_id: 'd1', tool: 'Bash', input: { command: 'sleep 1' }, isRunning: true, isErrored: false, isInterrupted: false }
+  const ui = await $.ui.mount({ plugin: 'rpg-battle', surface: 'desktop', component: 'ToolUse', props: row })
+  const bars = async () => (await ui.findAll({ type: 'Svg' })).map(svg => ({ alt: String(svg.props.alt), source: String(svg.props.source) }))
+
+  const charging = await bars()
+  expect(charging).toHaveLength(1)
+  expect(charging[0]?.alt).toBe('casting')
+  expect(charging[0]?.source).toContain('repeatCount="indefinite"')
+  expect((await ui.findAll({ type: 'Svg' }))[0]?.props.height).toBe(6)
+
+  await ui.redraw({ ...row, isRunning: false, isErrored: true })
+  expect((await bars())[0]?.alt).toBe('MISS')
+  await clock.advance(80 * (FLASH_TICKS + 1))
+  expect(await bars()).toHaveLength(0)
 })

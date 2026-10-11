@@ -1,5 +1,7 @@
 import type { EngineInterface, Register } from 'claude-code'
 
+import { castSize, chargeSvg, flashSvg } from './cast-svg'
+
 // Each skill's icon and the color its cast bar charges in.
 // Emoji with default emoji presentation only: no VS16, so every terminal gives them two cells.
 const SKILLS: ReadonlyArray<readonly [RegExp, string, number]> = [
@@ -105,8 +107,8 @@ export const comboLabel = (count: number): string | undefined =>
   count >= COMBO_MIN ? ` ×${count} COMBO` : undefined
 
 // The engine's row stays whole; the icon sits in a gutter beside it.
-// Engine rows open with a blank spacer row, so the gutter starts one row down to meet the title.
-const GUTTER_TOP = 1
+// Terminal rows open with a blank spacer row, so there the gutter starts one row down to meet the title.
+const gutterTop = (surface: string) => (surface === 'terminal' ? 1 : 0)
 
 // Rows seen running, by tool_use_id: charging while running, then flashing once, then done.
 type Cast = { color: number; tick: number; misses: number; landing?: Landing }
@@ -160,6 +162,30 @@ function ensureTicker($: EngineInterface) {
   ticker ??= $.clock.every(TICK_MS, () => void paint($))
 }
 
+// Off the terminal the bar animates itself: a row charges until its call lands, flashes once, then goes.
+type DrawnCast = { color: number; landing?: Landing }
+const drawnCasts = new Map<string, DrawnCast>()
+export const FLASH_MS = FLASH_TICKS * TICK_MS
+const CHARGE_MS = CHARGE_TICKS * TICK_MS
+const PULSE_MS = PULSE_TICKS * TICK_MS
+
+const castFor = ($: EngineInterface, props: { tool_use_id: string; tool: string; isRunning: boolean; isErrored: boolean; isInterrupted: boolean }) => {
+  const id = props.tool_use_id
+  let cast = drawnCasts.get(id)
+  if (props.isRunning && cast === undefined && !landed.has(id)) {
+    cast = { color: skillColor(props.tool) }
+    drawnCasts.set(id, cast)
+  } else if (!props.isRunning && cast !== undefined && cast.landing === undefined) {
+    cast.landing = landingOf(props)
+    $.clock.after(FLASH_MS, () => {
+      drawnCasts.delete(id)
+      landed.add(id)
+      $.ui.invalidate('ui.render')
+    })
+  }
+  return cast
+}
+
 export const register: Register = on => {
   // ToolResult carries no isInterrupted: remember the fled calls from their ToolUse rows.
   const fled = new Set<string>()
@@ -168,7 +194,40 @@ export const register: Register = on => {
     const drawn = await next(e)
     const id = e.props.tool_use_id
     if (e.props.isInterrupted) fled.add(id)
-    if (e.surface !== 'terminal') return drawn
+    if (e.surface !== 'terminal') {
+      const drawnCast = castFor($, e.props)
+      const { Box, Text, Svg } = $.ui.resolve(e)
+      return (
+        <Box flexDirection="row">
+          <Text>{`${rowIcon(e.props)} `}</Text>
+          <Box flexGrow={1} flexDirection="column">
+            {drawn}
+            {drawnCast && (
+              <Box flexDirection="row" alignItems="center" marginLeft={2}>
+                <Svg
+                  key="cast"
+                  source={
+                    drawnCast.landing === undefined
+                      ? chargeSvg(drawnCast.color, CAST_COLUMNS, CHARGE_MS, PULSE_MS)
+                      : flashSvg(drawnCast.landing, drawnCast.color, CAST_COLUMNS, FLASH_MS)
+                  }
+                  alt={drawnCast.landing === undefined ? 'casting' : LANDING_LABEL[drawnCast.landing].trim()}
+                  {...castSize(CAST_COLUMNS)}
+                  isInteractive
+                />
+                {drawnCast.landing === undefined ? (
+                  <Text dimColor>{' casting…'}</Text>
+                ) : (
+                  <Text color={drawnCast.landing === 'hit' ? 'success' : drawnCast.landing === 'miss' ? 'error' : undefined} dimColor={drawnCast.landing === 'fled'} bold>
+                    {LANDING_LABEL[drawnCast.landing]}
+                  </Text>
+                )}
+              </Box>
+            )}
+          </Box>
+        </Box>
+      )
+    }
 
     let cast = casts.get(id)
     if (e.props.isRunning && cast === undefined && !landed.has(id)) {
@@ -191,7 +250,7 @@ export const register: Register = on => {
     )
     return (
       <Box flexDirection="row">
-        <Box marginTop={GUTTER_TOP}><Text>{`${rowIcon(e.props)} `}</Text></Box>
+        <Box marginTop={gutterTop(e.surface)}><Text>{`${rowIcon(e.props)} `}</Text></Box>
         <Box flexGrow={1} flexDirection="column">{drawn}{bar}</Box>
       </Box>
     )
@@ -199,7 +258,7 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'ToolResult' }, async ($, e, next) => {
     const drawn = await next(e)
-    if (e.surface !== 'terminal' || !e.props.isErrored || fled.has(e.props.tool_use_id)) return drawn
+    if (!e.props.isErrored || fled.has(e.props.tool_use_id)) return drawn
     const { Box, Text } = $.ui.resolve(e)
     return (
       <Box flexDirection="column">
@@ -211,14 +270,14 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'ToolGroup' }, async ($, e, next) => {
     const drawn = await next(e)
-    if (e.surface !== 'terminal' || e.props.isExpanded) return drawn
+    if (e.props.isExpanded) return drawn
     const combo = comboLabel(e.props.calls.length)
     const { Box, Text } = $.ui.resolve(e)
     return (
       <Box flexDirection="row">
-        <Box marginTop={GUTTER_TOP}><Text>{`${groupIcon(e.props.calls)} `}</Text></Box>
+        <Box marginTop={gutterTop(e.surface)}><Text>{`${groupIcon(e.props.calls)} `}</Text></Box>
         <Box flexGrow={1} flexDirection="column">{drawn}</Box>
-        {combo === undefined ? null : <Box marginTop={GUTTER_TOP}><Text color="warning" bold>{combo}</Text></Box>}
+        {combo === undefined ? null : <Box marginTop={gutterTop(e.surface)}><Text color="warning" bold>{combo}</Text></Box>}
       </Box>
     )
   })
