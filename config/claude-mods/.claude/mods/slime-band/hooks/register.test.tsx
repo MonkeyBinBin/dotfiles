@@ -140,11 +140,17 @@ test('right-aligns the big numbers and leaves the slime its corner', () => {
   expect(Math.min(...hud.pixels.map(pixel => pixel.x))).toBeGreaterThan(hud.areaWidth)
 })
 
-test('drops the last facts first when the band is narrow', () => {
-  const hud = layoutHud(infoSegments(FACTS, 12), 60)
-  expect(hud.areaWidth).toBeGreaterThanOrEqual(SLIME_AREA_MIN)
-  expect(hud.labels[0]?.text).toBe('✎ changed')
-  expect(hud.labels.map(label => label.text)).not.toContain('↑ out')
+test('a narrow band drops the changed count, then the last turn, before the tokens', () => {
+  const labelsAt = (width: number) => layoutHud(infoSegments(FACTS, 12), width).labels.map(label => label.text)
+  const widths = Array.from({ length: 200 }, (_, at) => at + 1)
+  const firstWithTokens = widths.find(width => labelsAt(width).includes('↑ out'))
+  expect(firstWithTokens).toBeDefined()
+  expect(labelsAt(firstWithTokens ?? 0)).toEqual(['↻ turns', '↓ in', '↑ out'])
+  const firstWithLast = widths.find(width => labelsAt(width).includes('◷ last turn'))
+  expect(labelsAt(firstWithLast ?? 0)).toEqual(['↻ turns', '◷ last turn', '↓ in', '↑ out'])
+  const narrow = layoutHud(infoSegments(FACTS, 12), 60)
+  expect(narrow.areaWidth).toBeGreaterThanOrEqual(SLIME_AREA_MIN)
+  expect(narrow.labels.map(label => label.text)).not.toContain('✎ changed')
 })
 
 test('paints the big numbers into the track', () => {

@@ -252,12 +252,13 @@ const fact = (
 export const infoSegments = (value: BandInfo, turns: number): HudFact[] => {
   const segments: HudFact[] = []
   if (value.branch !== '' && value.dirty > 0) {
-    segments.push(fact('dirty', '✎', `${value.dirty}`, 'changed', 'yellow'))
+    segments.push({ ...fact('dirty', '✎', `${value.dirty}`, 'changed', 'yellow'), dropFirst: true })
   }
   segments.push(fact('turns', '↻', `${turns}`, turns === 1 ? 'turn' : 'turns', 'cyan'))
   if (value.lastMs > 0) {
     segments.push(
-      fact('last', '◷', `${Math.round(value.lastMs / 1000)}s`, 'last turn', 'magenta'),
+      // On a narrow band the turn's time goes, after the changed count, before the token counts.
+      { ...fact('last', '◷', `${Math.round(value.lastMs / 1000)}s`, 'last turn', 'magenta'), dropFirst: true },
       fact('in', '↓', formatTokens(value.inTokens), 'in', 'blue'),
       fact('out', '↑', formatTokens(value.outTokens), 'out', 'green'),
     )

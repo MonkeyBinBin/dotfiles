@@ -26,7 +26,8 @@ const BLOCK_GAP = 3
 // the numbers on the same ground row the slime stands on.
 const GLYPH_TOP = 1
 
-export type HudFact = { key: string; icon: string; value: string; label: string; color: string; rgb: number }
+// `dropFirst` facts go before any other when the band is narrow, in their order; the rest drop from the last.
+export type HudFact = { key: string; icon: string; value: string; label: string; color: string; rgb: number; dropFirst?: boolean }
 export type HudPixel = { x: number; y: number; rgb: number }
 export type HudLabel = { x: number; width: number; text: string; color: string }
 export type HudLayout = { areaWidth: number; pixels: HudPixel[]; labels: HudLabel[] }
@@ -49,13 +50,15 @@ const blockWidth = (fact: HudFact): number =>
   Math.max(valueWidth(fact.value), [...labelText(fact)].length)
 
 // Right-aligned facts, flush with the band's edge (bodyColumns already leaves out
-// the engine's '[-]'); the last ones drop first when the slime would be squeezed.
+// the engine's '[-]'); when the slime would be squeezed the `dropFirst` ones go,
+// then the last ones.
 export const layoutHud = (facts: readonly HudFact[], trackWidth: number): HudLayout => {
   let shown = [...facts]
   const widthOf = (list: readonly HudFact[]) =>
     list.reduce((sum, fact) => sum + blockWidth(fact) + BLOCK_GAP, 0) - BLOCK_GAP
   while (shown.length > 0 && trackWidth - widthOf(shown) - BLOCK_GAP < SLIME_AREA_MIN) {
-    shown = shown.slice(0, -1)
+    const first = shown.findIndex(fact => fact.dropFirst)
+    shown = first === -1 ? shown.slice(0, -1) : shown.filter((_, at) => at !== first)
   }
   if (shown.length === 0) return { areaWidth: trackWidth, pixels: [], labels: [] }
 
