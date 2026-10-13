@@ -148,7 +148,7 @@ fi
 #
 # 判斷準則：只要套件的目標路徑或其上層目錄可能被 dotfiles 以外的程式寫入，
 # 就必須列入，否則折疊後那些程式的檔案會全部落進 repo。
-NO_FOLDING_PKGS=(claude codex)
+NO_FOLDING_PKGS=(claude codex herdr)
 
 # AI CLI 套件（慣例：config/<pkg>/.<pkg>/skills → ~/.<pkg>/skills）
 # skills promote 與 shared skills 注入只對這些套件執行

@@ -10,6 +10,7 @@
 | `tmux`        | tmux 終端多工器設定                            | `~/.tmux.conf`                                    |
 | `ghostty`     | Ghostty 終端模擬器設定                         | `~/.config/ghostty/config`                        |
 | `cmux`        | Cmux 終端機設定                                | `~/.config/cmux/`                                 |
+| `herdr`       | Herdr 終端多工器設定（tmux 風格按鍵、gruvbox） | `~/.config/herdr/config.toml`                     |
 | `claude`      | Claude Code 系統提示 + output styles + hooks 範本 + RPG status line | `~/.claude/CLAUDE.md`、`~/.claude/output-styles/`、`~/.claude/rpg-statusline.sh` |
 | `claude-mods` | Claude Code mods（hooks plugin：pane、band 等） | `~/.claude/mods/<mod>/` → 目錄 symlink |
 | `codex`       | Codex CLI 系統提示                             | `~/.codex/AGENTS.md`                              |
@@ -107,7 +108,7 @@ done
 
 # 部署所有套件
 chmod +x scripts/stow-wrap.sh
-for pkg in zsh tmux ghostty cmux claude claude-mods codex hammerspoon ripgrep git; do
+for pkg in zsh tmux ghostty cmux herdr claude claude-mods codex hammerspoon ripgrep git; do
   ./scripts/stow-wrap.sh "$pkg"
 done
 ```
