@@ -72,8 +72,17 @@ const dim = (rgb: number): number => {
 
 const DIM_PALETTE = Object.fromEntries(Object.entries(PALETTE).map(([key, rgb]) => [key, dim(rgb)]))
 
-// The icon's colours, bright on the selected slot and dimmed on the others.
-export const iconPalette = (isSelected: boolean): Record<string, number> => (isSelected ? PALETTE : DIM_PALETTE)
+// Off the terminal an unselected icon goes grey rather than dark: its own light, lifted toward a mid grey,
+// so it reads as resting next to the selected slot's colours instead of as a muddy smudge.
+const gray = (rgb: number): number => {
+  const luma = 0.299 * ((rgb >> 16) & 0xff) + 0.587 * ((rgb >> 8) & 0xff) + 0.114 * (rgb & 0xff)
+  const level = Math.round(0x50 + luma * 0.45)
+  return (level << 16) | (level << 8) | level
+}
+
+const GRAY_PALETTE = Object.fromEntries(Object.entries(PALETTE).map(([key, rgb]) => [key, gray(rgb)]))
+
+export const drawnIconPalette = (isSelected: boolean): Record<string, number> => (isSelected ? PALETTE : GRAY_PALETTE)
 
 // One terminal cell of an icon drawn as text: the glyph, its colour and the colour behind it.
 export type TextCell = [glyph: string, color: string | null, background: string | null]

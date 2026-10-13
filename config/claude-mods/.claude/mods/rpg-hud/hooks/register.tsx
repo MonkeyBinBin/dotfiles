@@ -37,7 +37,7 @@ import type { EditOutput } from './edit-card'
 import { CALLS_PER_LEVEL, STATUS_ROWS, heroStats, normalizeCall, renderStatus } from './hero'
 import { CLASS_IDS, classOf, isClassId, rankOf, rollClass } from './classes'
 import { mapItems, mapSubtitle } from './map'
-import { ICON_COLUMNS, ICON_ROWS, MENU, entryOf, iconPalette, iconText, isTab } from './menu'
+import { ICON_COLUMNS, ICON_ROWS, MENU, drawnIconPalette, entryOf, iconText, isTab } from './menu'
 import { cardWidth, slotKey } from './menu-client'
 import type { MenuIconProps } from './menu-client'
 import { PET_COLUMNS, PET_ROWS, petCells, petSeed, speciesFor } from './pet-sprites'
@@ -137,10 +137,19 @@ const CARD_TOOLS = new Set(['Edit', 'Write'])
 
 // A menu card: its frame's top and bottom, the pixel icon and the label button between.
 const SLOT_ROWS = 1 + ICON_ROWS + 1 + 1
+// CSS pixels per icon pixel on a drawn card: the 8×6 icon at 48×36, three rows tall.
+const DRAWN_ICON_PX = 6
+const DRAWN_ICON_ROWS = 3
+// Off the terminal a card is compact: its frame, the drawn icon and the label.
+const DRAWN_SLOT_ROWS = 1 + DRAWN_ICON_ROWS + 1 + 1
 // The narrowest card that holds the 8-column icon, and the longest label, inside its frame.
 const MIN_SLOT_COLUMNS = 10
 // The window keeps at least this many rows before the menu shrinks to one line.
 const MIN_WINDOW_ROWS = 4
+// Off the terminal the frames are drawn as CSS borders with no cell of air around them, so the status, the
+// menu and the window stand this many rows apart, and the menu cards this many columns apart.
+const SECTION_GAP = 1
+const CARD_GAP = 1
 // The status panel glows this long after a level up.
 const FLASH_MS = 2500
 
@@ -1394,11 +1403,14 @@ export const register: Register = on => {
     )
 
     // The icon menu when the slots and the window both have room; one line of labels otherwise.
-    const card = cardWidth(width, MENU.length, ICON_COLUMNS)
     const isTerminal = e.surface === 'terminal'
-    const roomRows = e.props.scroll.bodyRows - STATUS_ROWS - WINDOW_CHROME_ROWS
-    const isIconMenu = card >= MIN_SLOT_COLUMNS && roomRows - SLOT_ROWS >= MIN_WINDOW_ROWS
-    const menuRows = isIconMenu ? SLOT_ROWS : 1
+    const sectionGap = isTerminal ? 0 : SECTION_GAP
+    const cardGap = isTerminal ? 0 : CARD_GAP
+    const card = cardWidth(width - cardGap * (MENU.length - 1), MENU.length, ICON_COLUMNS)
+    const roomRows = e.props.scroll.bodyRows - STATUS_ROWS - WINDOW_CHROME_ROWS - sectionGap * 2
+    const slotRows = isTerminal ? SLOT_ROWS : DRAWN_SLOT_ROWS
+    const isIconMenu = card >= MIN_SLOT_COLUMNS && roomRows - slotRows >= MIN_WINDOW_ROWS
+    const menuRows = isIconMenu ? slotRows : 1
     const rows = Math.max(MIN_WINDOW_ROWS, roomRows - menuRows)
 
     // Each slot's label is a button carrying its number as a hotkey, so once the pane has the keys (a click,
@@ -1408,7 +1420,7 @@ export const register: Register = on => {
       void update($, isHelpOpen, () => false)
     }
     // On the terminal plain buttons, which draw their hotkey before the label: `1: SPELL`; elsewhere the
-    // surface's own buttons, the active one primary.
+    // surface's own buttons, the active one primary in the one-line menu; on a card the frame marks it.
     const labelButton = (slot: (typeof MENU)[number], index: number) => {
       const isActive = slot.id === active
       return (
@@ -1416,7 +1428,7 @@ export const register: Register = on => {
           key={`menu-${slot.id}`}
           label={isTerminal ? slot.label.toUpperCase() : slot.label}
           hotkey={slotKey(index)}
-          {...(isTerminal ? { plain: true as const } : { variant: isActive ? ('primary' as const) : ('secondary' as const) })}
+          {...(isTerminal ? { plain: true as const } : isIconMenu ? {} : { variant: isActive ? ('primary' as const) : ('secondary' as const) })}
           dimColor={!isActive}
           {...(isActive ? {} : { hover: { scope: `card-${slot.id}`, color: slot.color } })}
           onPress={() => pickTab(slot.id)}
@@ -1437,7 +1449,7 @@ export const register: Register = on => {
       // Inside the frame's two columns.
       const inside = Math.max(0, card - 2)
       menu = (
-        <Box flexDirection="row" width={width} height={menuRows} justifyContent="space-between">
+        <Box flexDirection="row" width={width} height={menuRows} justifyContent="space-between" columnGap={cardGap}>
           {MENU.map((slot, index) => {
             const isActive = slot.id === active
             const iconProps = {
@@ -1458,7 +1470,7 @@ export const register: Register = on => {
                 width={card}
                 height={menuRows}
                 borderStyle="round"
-                borderColor={isActive ? 'yellow' : 'gray'}
+                borderColor={isActive ? (isTerminal ? 'yellow' : slot.color) : 'gray'}
                 borderDimColor={!isActive}
                 {...(isActive ? {} : { hover: { scope: `card-${slot.id}`, borderColor: slot.color, borderDimColor: false } })}
               >
@@ -1466,9 +1478,9 @@ export const register: Register = on => {
                   <Client key={`icon-${slot.id}`} module="./menu-client.tsx" props={iconProps} width={inside} height={ICON_ROWS} />
                 ) : (
                   Svg && (
-                    <Box key={`icon-${slot.id}`} height={ICON_ROWS} alignItems="center" justifyContent="center">
+                    <Box key={`icon-${slot.id}`} height={DRAWN_ICON_ROWS} alignItems="center" justifyContent="center">
                       {(() => {
-                        const icon = spriteSvg([gridToPixels(slot.pixels, iconPalette(isActive))], SPRITE_PX, 0)
+                        const icon = spriteSvg([gridToPixels(slot.pixels, drawnIconPalette(isActive))], DRAWN_ICON_PX, 0)
                         return <Svg source={icon.source} alt={slot.label} width={icon.width} height={icon.height} />
                       })()}
                     </Box>
@@ -1511,7 +1523,7 @@ export const register: Register = on => {
     if (anim.hasHero || (active === 'pets' && anim.pets.size > 0)) startAnim($)
 
     return (
-      <Box flexDirection="column" width={width}>
+      <Box flexDirection="column" width={width} rowGap={sectionGap}>
         {status}
         {menu}
         {renderWindow(ui, {
@@ -1528,6 +1540,7 @@ export const register: Register = on => {
             up: () => void scrollWindow($, layout, -1),
             down: () => void scrollWindow($, layout, 1),
           },
+          ...(Svg === undefined ? {} : { Svg }),
         })}
       </Box>
     )

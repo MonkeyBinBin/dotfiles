@@ -1,4 +1,5 @@
 import type { ElementTable, RenderChildren } from 'claude-code'
+import { ruleSvg, RULE_HEIGHT, COLUMN_PX } from './svg'
 
 // One entry of a window's scrolling body: `rows` tall, never cut in half.
 export type Item = { key: string; rows: number; node: RenderChildren }
@@ -50,11 +51,14 @@ export type WindowProps = {
   width: number
   // Scrolls the window a step; given, a window with more than it shows carries ▲ and ▼ buttons keyed k and j.
   scroll?: { up: () => void; down: () => void }
+  // The surface's Svg where it draws SVG (never the terminal): the rule is then one drawn grey line.
+  Svg?: ElementTable<'desktop'>['Svg']
 }
 
 // A framed RPG window: the title bar, a rule, and the items that fit, with a scroll gauge when they do not all fit.
 export function renderWindow(ui: ElementTable, props: WindowProps) {
   const { Box, Button, Text } = ui
+  const { Svg } = props
   const paged = pageItems(props.items, props.offset, props.rows)
   const { shown } = paged
   let { start, total, end } = paged
@@ -95,9 +99,15 @@ export function renderWindow(ui: ElementTable, props: WindowProps) {
         )}
         {gauge !== '' && <Text color={props.color}> {gauge}</Text>}
       </Box>
-      <Text color={props.color} dimColor>
-        {'─'.repeat(inner)}
-      </Text>
+      {Svg !== undefined ? (
+        <Box key="rule" height={1} alignItems="center">
+          <Svg source={ruleSvg(inner)} alt="divider" width={inner * COLUMN_PX} height={RULE_HEIGHT} />
+        </Box>
+      ) : (
+        <Text color={props.color} dimColor>
+          {'─'.repeat(inner)}
+        </Text>
+      )}
       {props.body !== undefined
         ? props.body.node
         : shown.map(item => (

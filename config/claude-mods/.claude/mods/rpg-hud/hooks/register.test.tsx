@@ -1633,6 +1633,43 @@ test('desktop menu buttons carry their number as a hotkey', async ($, on) => {
   expect(buttons.map(b => b.props?.hotkey)).toEqual(['1', '2', '3', '4', '5'])
 })
 
+for (const [surface, gap] of [['terminal', 0], ['desktop', 1]] as const) {
+  test(`on ${surface} the status, menu and window stand ${gap} apart`, async ($, on) => {
+    world(on)
+    const ui = await mountPane($, surface)
+    const boxes = await ui.findAll({ type: 'Box' })
+    expect(boxes.some(box => box.props?.rowGap === gap && box.props?.flexDirection === 'column' && box.props?.width === 60)).toBe(true)
+    expect(boxes.some(box => box.props?.columnGap === gap && box.props?.justifyContent === 'space-between')).toBe(true)
+  })
+}
+
+test('desktop cards are compact: a three-row icon, the frame in the tab colour, no primary label', async ($, on) => {
+  world(on)
+  const ui = await mountPane($, 'desktop')
+  const spells = await cardOf(ui, 'spells')
+  expect(spells?.height).toBe(6)
+  expect(spells?.borderColor).toBe('magenta')
+  const icon = (await ui.findAll({ type: 'Svg' })).find(svg => svg.props.alt === 'Spell')
+  expect(icon?.props.width).toBe(48)
+  const buttons = (await ui.findAll({ type: 'Button' })).filter(b => String(b.props?.key ?? '').startsWith('menu-'))
+  expect(buttons.some(b => b.props?.variant !== undefined)).toBe(false)
+})
+
+test("on desktop the window's rule is one drawn line, never a run of glyphs that wraps", async ($, on) => {
+  world(on)
+  const ui = await mountPane($, 'desktop')
+  expect((await texts(ui)).some(text => /^─{8,}$/.test(text))).toBe(false)
+  const rule = (await ui.findAll({ type: 'Svg' })).find(svg => svg.props.alt === 'divider')
+  expect(String(rule?.props.source)).toContain('fill="#8a8a8a"')
+  expect(rule).toBeDefined()
+})
+
+test("on the terminal the window's rule stays a run of glyphs", async ($, on) => {
+  world(on)
+  const ui = await mountPane($, 'terminal')
+  expect((await texts(ui)).some(text => /^─{8,}$/.test(text))).toBe(true)
+})
+
 test("a card's icon sits centred inside its frame", async ($, on) => {
   world(on)
   const ui = await mountPane($, 'terminal')

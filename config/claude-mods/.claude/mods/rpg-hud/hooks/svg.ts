@@ -113,6 +113,18 @@ export const fillOf = (color: string): string => NAMED[color] ?? color
 export const COLUMN_PX = 8
 export const BAR_HEIGHT = 8
 
+// A grey rule `columns` cells wide, the terminal's dim rule as a drawing: a run of box-drawing glyphs off the
+// terminal is wider than the cells it was counted in and wraps onto a second line. It fills its own height and
+// stretches rather than scales, so the slot shrinking it to fit never thins it to nothing.
+export const RULE_HEIGHT = 2
+export const ruleSvg = (columns: number): string => {
+  const width = Math.max(1, columns) * COLUMN_PX
+  return (
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${RULE_HEIGHT}" viewBox="0 0 ${width} ${RULE_HEIGHT}" preserveAspectRatio="none">` +
+    `<rect width="${width}" height="${RULE_HEIGHT}" fill="${fillOf('gray')}" fill-opacity="0.6"/></svg>`
+  )
+}
+
 // A rounded gauge `columns` cells wide: the filled share in `color`, the rest a faint track.
 export const barSvg = (value: number, max: number, columns: number, color: string): string => {
   const width = Math.max(1, columns) * COLUMN_PX
