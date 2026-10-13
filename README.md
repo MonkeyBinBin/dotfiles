@@ -168,7 +168,7 @@ which fzf eza
 ./scripts/stow-wrap.sh -D zsh          # 移除套件 symlink
 ```
 
-> `bin`、`claude`、`codex` 套件會自動以 `--no-folding` 模式部署（腳本內的 `NO_FOLDING_PKGS`），避免將目標目錄折疊為單一 symlink，確保非 dotfiles 管理的檔案不受影響。多套件混合執行時會自動拆分為獨立呼叫。
+> `claude`、`codex`、`herdr` 套件會自動以 `--no-folding` 模式部署（腳本內的 `NO_FOLDING_PKGS`），避免將目標目錄折疊為單一 symlink，確保非 dotfiles 管理的檔案不受影響。多套件混合執行時會自動拆分為獨立呼叫。
 >
 > 部署完成後，`config/shared/skills/` 內的共享 skills 會自動 symlink 至各 AI CLI 工具的 `~/.<tool>/skills/`（腳本內的 `AI_CLI_PKGS`，目前為 `claude`、`codex`）；工具專屬 skill 優先，不會被覆蓋。`bin` 雖同為 no-folding 套件但不參與 skills 注入。`shared` 不是合法的套件名稱，傳入會直接報錯。
 
