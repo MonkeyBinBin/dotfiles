@@ -308,13 +308,7 @@ realpath 落在 plugin 目錄外會被判為 path traversal，逐檔 symlink 會
 - 冪等：在已清理或全新的機器上執行應為 no-op
 - 修改前先備份（`cp -p` 保留權限），並在輸出中告知備份路徑
 - 需要大量資料搬移或有風險的操作只偵測並提示，不自動執行
-
-現有腳本：
-
-```bash
-./scripts/migrate-20260812-remove-cmux-notify.sh --dry-run   # 預覽
-./scripts/migrate-20260812-remove-cmux-notify.sh             # 執行
-```
+- 所有機器都清理完成後即可刪除該腳本，需要時從 git 歷史取回
 
 > 若尚未 pull，優先在 pull **之前**執行 `./scripts/stow-wrap.sh -D <套件>` 解除部署——套件目錄一旦被 pull 刪除，`stow -D` 就無法再運作。
 
