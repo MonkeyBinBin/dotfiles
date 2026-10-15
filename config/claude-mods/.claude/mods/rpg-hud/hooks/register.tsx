@@ -34,7 +34,8 @@ import type { OutpostRow, OutpostsProps } from './outposts-client'
 import { bagSubtitle, inspectItems } from './inspect'
 import { renderEditCard } from './edit-card'
 import type { EditOutput } from './edit-card'
-import { CALLS_PER_LEVEL, STATUS_ROWS, heroStats, normalizeCall, renderStatus } from './hero'
+import { CALLS_PER_LEVEL, STATUS_ROWS, heroStats, normalizeCall, renderStatus, statusLayout } from './hero'
+import { PORTRAIT_BUSTS, PORTRAIT_FRAMES } from './portrait-cells'
 import { CLASS_IDS, classOf, isClassId, rankOf, rollClass } from './classes'
 import { mapItems, mapSubtitle } from './map'
 import { ICON_COLUMNS, ICON_ROWS, MENU, drawnIconPalette, entryOf, iconText, isTab } from './menu'
@@ -568,6 +569,53 @@ const stop = () => {
   anim.ticker = undefined
 }
 
+// `tick` counts from the moment the mood began, as pickFrame's does.
+const frameOf = <T,>(frames: readonly T[], mood: Mood, tick: number): T => frames[Math.floor(tick / FRAME_TICKS[mood]) % frames.length]!
+
+// A class with a portrait shows its bust where the terminal draws cells instead of the picture.
+const heroCells = (mood: Mood, tick: number, hero: HeroClassId): string => {
+  const busts = PORTRAIT_BUSTS[hero]
+  return busts === undefined ? pickFrame(mood, tick, hero) : frameOf(busts[mood], mood, tick)
+}
+
+// Whether the terminal draws an Image: unknown until a blit to the drawn portrait answers. One that draws
+// its alt instead (a multiplexer without kitty's placeholder images) refuses the blit.
+let canDrawImage: boolean | undefined
+const PROBE_MS = 500
+let probe: Timer | undefined
+
+// Every frame of a class's portrait as PNG base64, read once.
+const portraits = new Map<HeroClassId, Record<Mood, string[]>>()
+const portraitFrames = async ($: EngineInterface, hero: HeroClassId): Promise<Record<Mood, string[]>> => {
+  const hit = portraits.get(hero)
+  if (hit !== undefined) return hit
+  // Inline bytes rather than a file: a multiplexer may forward kitty graphics yet not file transmission.
+  const read = (mood: Mood) =>
+    Promise.all(
+      Array.from({ length: PORTRAIT_FRAMES[mood] }, async (_, n) => {
+        const { base64 } = await $.fs.read(`${$.plugin.root}/assets/portraits/${hero}/${mood}-${n}.png`, { as: 'bytes' })
+        return base64
+      }),
+    )
+  const [idle, cast, hurt] = await Promise.all([read('idle'), read('cast'), read('hurt')])
+  const frames = { idle, cast, hurt }
+  portraits.set(hero, frames)
+  return frames
+}
+
+// Asks the drawn portrait for a blit of its own picture once the frame is up; a refusal falls back to the
+// bust, a success starts the picture's animation. Either way the pane is drawn again to match.
+const probeImage = ($: EngineInterface, png: string) => {
+  probe ??= $.clock.after(PROBE_MS, async () => {
+    probe = undefined
+    const done = await $.ui
+      .blit({ requestId: PANE, key: 'hero', source: { png }, columns: HERO_CELLS.columns, rows: HERO_CELLS.rows })
+      .catch(() => ({ deny: 'blit failed' }))
+    canDrawImage = done.deny === undefined
+    $.ui.invalidate('ui.render')
+  })
+}
+
 // A refusal and a failed blit both mean nothing of ours is on screen to paint.
 const blit = async ($: EngineInterface, key: string, cells: string, columns: number, rows: number) => {
   const done = await $.ui
@@ -585,7 +633,19 @@ async function paintHero($: EngineInterface) {
     anim.mood = nextMood
     anim.moodTick = 0
   }
-  const cells = pickFrame(anim.mood, anim.moodTick, anim.heroClass)
+  if (anim.heroImage) {
+    const frames = portraits.get(anim.heroClass)
+    if (frames === undefined) return true
+    const png = frameOf(frames[anim.mood], anim.mood, anim.moodTick)
+    if (png === anim.shownPng) return true
+    const done = await $.ui
+      .blit({ requestId: PANE, key: 'hero', source: { png }, columns: HERO_CELLS.columns, rows: HERO_CELLS.rows })
+      .catch(() => ({ deny: 'blit failed' }))
+    if (done.deny !== undefined) return false
+    anim.shownPng = png
+    return true
+  }
+  const cells = heroCells(anim.mood, anim.moodTick, anim.heroClass)
   if (cells === anim.shownCells) return true
   if (!(await blit($, 'hero', cells, HERO_CELLS.columns, HERO_CELLS.rows))) return false
   anim.shownCells = cells
@@ -1362,8 +1422,15 @@ export const register: Register = on => {
       anim.heroClass = hero.id
       anim.mood = 'idle'
       anim.moodTick = 0
-      anim.shownCells = pickFrame('idle', 0, hero.id)
+      anim.shownCells = heroCells('idle', 0, hero.id)
     }
+    // A class with a portrait draws it as a picture until the terminal is found not to draw one.
+    const portraitSet = Raster !== undefined && PORTRAIT_BUSTS[hero.id] !== undefined && canDrawImage !== false ? await portraitFrames($, hero.id) : undefined
+    const portrait = portraitSet === undefined ? undefined : frameOf(portraitSet[anim.mood], anim.mood, anim.moodTick)
+    anim.heroImage = portrait !== undefined
+    if (portrait !== undefined) anim.shownPng = portrait
+    const fitsPortrait = statusLayout(width, true).hasPortrait
+    if (portrait !== undefined && canDrawImage === undefined && fitsPortrait) probeImage($, portrait)
     const status = renderStatus(
       ui,
       {
@@ -1389,8 +1456,13 @@ export const register: Register = on => {
               onFight: () => fillPrompt($, fightText(bossNow), `Ask Claude: ${fightText(bossNow)}`),
             }),
       },
-      Raster,
-      Svg === undefined
+      portrait === undefined ? Raster : undefined,
+      portrait !== undefined
+        ? (() => {
+            const { Image } = $.ui.resolve(e) as ElementTable<'terminal'>
+            return <Image key="hero" source={{ png: portrait }} columns={HERO_CELLS.columns} rows={HERO_CELLS.rows} alt={hero.title} />
+          })()
+        : Svg === undefined
         ? undefined
         : (() => {
             const hurtLeft = anim.hurtUntil - now
@@ -1401,6 +1473,8 @@ export const register: Register = on => {
             return <Svg key="hero" source={sprite.source} alt={`${hero.title}, ${mood}`} width={sprite.width} height={sprite.height} isInteractive />
           })(),
     )
+    // A picture animates by blits too, once the terminal is known to draw it.
+    if (anim.heroImage) anim.hasHero = canDrawImage === true && fitsPortrait
 
     // The icon menu when the slots and the window both have room; one line of labels otherwise.
     const isTerminal = e.surface === 'terminal'

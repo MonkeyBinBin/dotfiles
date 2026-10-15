@@ -45,6 +45,9 @@ export const anim = {
   moodTick: 0,
   tick: 0,
   shownCells: pickFrame('idle', 0),
+  // Whether the portrait is a picture (an Image swapped frame by frame) rather than Raster cells.
+  heroImage: false,
+  shownPng: '',
   // Running pets on screen, by Raster key, with the seed that picks their sprite.
   pets: new Map<string, { seed: string; shown: string }>(),
 }
