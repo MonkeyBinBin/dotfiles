@@ -180,7 +180,8 @@ export function renderStatus(ui: ElementTable, data: StatusData, Raster?: Elemen
   return (
     <Box flexDirection="row" width={width} height={STATUS_ROWS} borderStyle="double" borderColor={frame} paddingX={1}>
       {hasPortrait && (
-        <Box width={HERO_CELLS.columns + PORTRAIT_GAP}>
+        // A drawing sits at the top of its box: off the terminal the portrait is centred down the stats column.
+        <Box width={HERO_CELLS.columns + PORTRAIT_GAP} {...(Svg === undefined ? {} : { height: STATS_ROWS, alignItems: 'center' as const })}>
           {Raster ? <Raster key="hero" {...HERO_CELLS} cells={anim.shownCells} /> : portrait}
         </Box>
       )}

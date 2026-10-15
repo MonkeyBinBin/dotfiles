@@ -38,7 +38,7 @@ import { CALLS_PER_LEVEL, STATUS_ROWS, heroStats, normalizeCall, renderStatus, s
 import { PORTRAIT_BUSTS, PORTRAIT_FRAMES } from './portrait-cells'
 import { CLASS_IDS, classOf, isClassId, rankOf, rollClass } from './classes'
 import { mapItems, mapSubtitle } from './map'
-import { ICON_COLUMNS, ICON_ROWS, MENU, drawnIconPalette, entryOf, iconText, isTab } from './menu'
+import { ICON_COLUMNS, ICON_ROWS, MENU, drawnIcon, entryOf, iconText, isTab } from './menu'
 import { cardWidth, slotKey } from './menu-client'
 import type { MenuIconProps } from './menu-client'
 import { PET_COLUMNS, PET_ROWS, petCells, petSeed, speciesFor } from './pet-sprites'
@@ -138,13 +138,20 @@ const CARD_TOOLS = new Set(['Edit', 'Write'])
 
 // A menu card: its frame's top and bottom, the pixel icon and the label button between.
 const SLOT_ROWS = 1 + ICON_ROWS + 1 + 1
-// CSS pixels per icon pixel on a drawn card: the 8×6 icon at 48×36, three rows tall.
-const DRAWN_ICON_PX = 6
+// CSS pixels per icon pixel on a drawn card: the 9×8 icon at 36×32, three rows tall.
+const DRAWN_ICON_PX = 4
 const DRAWN_ICON_ROWS = 3
 // Off the terminal a card is compact: its frame, the drawn icon and the label.
 const DRAWN_SLOT_ROWS = 1 + DRAWN_ICON_ROWS + 1 + 1
-// The narrowest card that holds the 8-column icon, and the longest label, inside its frame.
-const MIN_SLOT_COLUMNS = 10
+// The narrowest card that holds the 9-column icon, and the longest label, inside its frame. From 65 columns the
+// cards widen to 13 and leave the icon a column either side; narrower, it fills its frame edge to edge.
+const MIN_SLOT_COLUMNS = 11
+// The columns a menu icon's picture spans: the 24×18 art at four rows tall keeps about its 4:3 at eleven.
+const PICTURE_COLUMNS = 11
+// Off the terminal the card holds the 36×32 drawing, under five columns, and a five-letter label button: a
+// card of eight columns does, so a side panel some 44 columns wide still shows the icon menu.
+const DRAWN_ICON_COLUMNS = 5
+const DRAWN_MIN_SLOT_COLUMNS = 8
 // The window keeps at least this many rows before the menu shrinks to one line.
 const MIN_WINDOW_ROWS = 4
 // Off the terminal the frames are drawn as CSS borders with no cell of air around them, so the status, the
@@ -584,11 +591,11 @@ let canDrawImage: boolean | undefined
 const PROBE_MS = 500
 let probe: Timer | undefined
 
-// Every frame of a class's portrait as PNG base64, read once.
-const portraits = new Map<HeroClassId, Record<Mood, string[]>>()
-const portraitFrames = async ($: EngineInterface, hero: HeroClassId): Promise<Record<Mood, string[]>> => {
-  const hit = portraits.get(hero)
-  if (hit !== undefined) return hit
+// Every frame of a class's portrait as PNG base64, read once. A read that fails leaves the bust, and is not
+// tried again: a missing picture costs the portrait, never the pane.
+const portraits = new Map<HeroClassId, Record<Mood, string[]> | null>()
+const portraitFrames = async ($: EngineInterface, hero: HeroClassId): Promise<Record<Mood, string[]> | undefined> => {
+  if (portraits.has(hero)) return portraits.get(hero) ?? undefined
   // Inline bytes rather than a file: a multiplexer may forward kitty graphics yet not file transmission.
   const read = (mood: Mood) =>
     Promise.all(
@@ -597,10 +604,25 @@ const portraitFrames = async ($: EngineInterface, hero: HeroClassId): Promise<Re
         return base64
       }),
     )
-  const [idle, cast, hurt] = await Promise.all([read('idle'), read('cast'), read('hurt')])
-  const frames = { idle, cast, hurt }
+  const frames = await Promise.all([read('idle'), read('cast'), read('hurt')])
+    .then(([idle, cast, hurt]) => ({ idle, cast, hurt }))
+    .catch(() => null)
   portraits.set(hero, frames)
-  return frames
+  return frames ?? undefined
+}
+
+// Each menu icon as pictures, PNG base64, read once: the selected card's and the others' (dimmed). A read that
+// fails leaves the half-block icons, and is not tried again.
+let menuIcons: Map<Tab, [lit: string, dim: string]> | null | undefined
+const menuIconPngs = async ($: EngineInterface): Promise<Map<Tab, [lit: string, dim: string]> | undefined> => {
+  if (menuIcons === undefined) {
+    const read = async (id: Tab, suffix: string) =>
+      (await $.fs.read(`${$.plugin.root}/assets/icons/${id}${suffix}.png`, { as: 'bytes' })).base64
+    menuIcons = await Promise.all(MENU.map(async slot => [slot.id, [await read(slot.id, ''), await read(slot.id, '-dim')]] as const))
+      .then(entries => new Map<Tab, [string, string]>(entries))
+      .catch(() => null)
+  }
+  return menuIcons ?? undefined
 }
 
 // Asks the drawn portrait for a blit of its own picture once the frame is up; a refusal falls back to the
@@ -635,7 +657,7 @@ async function paintHero($: EngineInterface) {
   }
   if (anim.heroImage) {
     const frames = portraits.get(anim.heroClass)
-    if (frames === undefined) return true
+    if (frames == null) return true
     const png = frameOf(frames[anim.mood], anim.mood, anim.moodTick)
     if (png === anim.shownPng) return true
     const done = await $.ui
@@ -686,10 +708,11 @@ const campOf = (list: readonly Outpost[]): { camp?: string } => {
 // CSS pixels per sprite pixel where sprites are drawings: about one column's width, as a half-block cell is.
 const SPRITE_PX = 8
 
-// The hero's frames for a mood as one drawing that animates itself.
+// The hero's frames for a mood as one drawing that animates itself: a class with a portrait draws its bust, the
+// same frames a terminal without pictures shows, since the desktop draws no pictures either.
 const heroSprite = (hero: HeroClassId, mood: Mood) =>
   spriteSvg(
-    HERO_CLASS_FRAMES[hero][mood].map(cells => cellsToPixels(cells, HERO_CELLS.columns, HERO_CELLS.rows)),
+    (PORTRAIT_BUSTS[hero]?.[mood] ?? HERO_CLASS_FRAMES[hero][mood]).map(cells => cellsToPixels(cells, HERO_CELLS.columns, HERO_CELLS.rows)),
     SPRITE_PX,
     FRAME_MS * FRAME_TICKS[mood],
   )
@@ -1480,10 +1503,10 @@ export const register: Register = on => {
     const isTerminal = e.surface === 'terminal'
     const sectionGap = isTerminal ? 0 : SECTION_GAP
     const cardGap = isTerminal ? 0 : CARD_GAP
-    const card = cardWidth(width - cardGap * (MENU.length - 1), MENU.length, ICON_COLUMNS)
+    const card = cardWidth(width - cardGap * (MENU.length - 1), MENU.length, isTerminal ? ICON_COLUMNS : DRAWN_ICON_COLUMNS)
     const roomRows = e.props.scroll.bodyRows - STATUS_ROWS - WINDOW_CHROME_ROWS - sectionGap * 2
     const slotRows = isTerminal ? SLOT_ROWS : DRAWN_SLOT_ROWS
-    const isIconMenu = card >= MIN_SLOT_COLUMNS && roomRows - slotRows >= MIN_WINDOW_ROWS
+    const isIconMenu = card >= (isTerminal ? MIN_SLOT_COLUMNS : DRAWN_MIN_SLOT_COLUMNS) && roomRows - slotRows >= MIN_WINDOW_ROWS
     const menuRows = isIconMenu ? slotRows : 1
     const rows = Math.max(MIN_WINDOW_ROWS, roomRows - menuRows)
 
@@ -1519,6 +1542,10 @@ export const register: Register = on => {
     let menu
     if (isIconMenu) {
       const Client = e.surface === 'terminal' ? $.ui.resolve(e).Client : undefined
+      // A terminal found to draw pictures shows the icons' full pixel art; the price is the icon's own click
+      // and hover, which only a Client takes: the label button and the number keys still pick the tab.
+      const iconPngs = Client !== undefined && canDrawImage === true ? await menuIconPngs($) : undefined
+      const Image = iconPngs === undefined ? undefined : ($.ui.resolve(e) as ElementTable<'terminal'>).Image
       const ids = MENU.map(slot => slot.id)
       // Inside the frame's two columns.
       const inside = Math.max(0, card - 2)
@@ -1548,13 +1575,24 @@ export const register: Register = on => {
                 borderDimColor={!isActive}
                 {...(isActive ? {} : { hover: { scope: `card-${slot.id}`, borderColor: slot.color, borderDimColor: false } })}
               >
-                {Client ? (
+                {Image && iconPngs ? (
+                  <Box key={`icon-box-${slot.id}`} width={inside} height={ICON_ROWS} justifyContent="center">
+                    <Image
+                      key={`icon-${slot.id}`}
+                      source={{ png: iconPngs.get(slot.id)![isActive ? 0 : 1] }}
+                      columns={Math.min(PICTURE_COLUMNS, inside)}
+                      rows={ICON_ROWS}
+                      alt={slot.label}
+                    />
+                  </Box>
+                ) : Client ? (
                   <Client key={`icon-${slot.id}`} module="./menu-client.tsx" props={iconProps} width={inside} height={ICON_ROWS} />
                 ) : (
                   Svg && (
                     <Box key={`icon-${slot.id}`} height={DRAWN_ICON_ROWS} alignItems="center" justifyContent="center">
                       {(() => {
-                        const icon = spriteSvg([gridToPixels(slot.pixels, drawnIconPalette(isActive))], DRAWN_ICON_PX, 0)
+                        const { art, palette } = drawnIcon(slot, isActive)
+                        const icon = spriteSvg([gridToPixels(art, palette)], DRAWN_ICON_PX, 0)
                         return <Svg source={icon.source} alt={slot.label} width={icon.width} height={icon.height} />
                       })()}
                     </Box>

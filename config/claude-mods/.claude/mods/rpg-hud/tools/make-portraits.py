@@ -759,7 +759,7 @@ def main():
     for name, (moods, bust_moods) in built.items():
         out_dir = ROOT / 'assets' / 'portraits' / name
         out_dir.mkdir(parents=True, exist_ok=True)
-        for stale in out_dir.glob('*.png'):
+        for stale in [*out_dir.glob('*.png'), *out_dir.glob('*.svg')]:
             stale.unlink()
         lines.append(f'  {name}: {{')
         for mood, sprites in moods.items():

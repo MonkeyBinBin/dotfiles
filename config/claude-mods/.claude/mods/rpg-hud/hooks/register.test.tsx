@@ -24,6 +24,7 @@ import { cardWidth } from './menu-client'
 import { pageItems } from './window'
 import { CLASSES, CLASS_IDS, rankOf, rollClass } from './classes'
 import { HERO_CLASS_FRAMES } from './hero-cells'
+import { PORTRAIT_BUSTS } from './portrait-cells'
 import { cellsToPixels, gridToPixels, spriteSvg } from './svg'
 import { composeSprite } from './util'
 
@@ -225,11 +226,11 @@ test('scrolls the spell book window under the fixed panel and menu', async ($, o
   for (let n = 1; n <= 15; n += 1) {
     await $.tool.call({ tool: 'Read', file_path: `/x/f${n}.md` })
   }
-  // 30 rows less the status panel (12), the icon menu (6) and the window's chrome (4) leave 8.
-  const ui = await mountPane($, 'terminal', 30)
+  // 31 rows less the status panel (12), the icon menu (7) and the window's chrome (4) leave 8.
+  const ui = await mountPane($, 'terminal', 31)
   const shown = async () => (await texts(ui)).join('|')
   const scroll = (by: number) =>
-    $.ui.scroll({ component: 'Pane', requestId: 'rpg-hud', offset: 0, by, bodyRows: 30, contentRows: 30, origin: { kind: 'person' } })
+    $.ui.scroll({ component: 'Pane', requestId: 'rpg-hud', offset: 0, by, bodyRows: 31, contentRows: 31, origin: { kind: 'person' } })
 
   expect(await shown()).toContain('1–8/15')
   expect(await shown()).toContain('f15.md')
@@ -745,13 +746,15 @@ test('puffs smoke on the pane after a failed call, then rests', async ($, on) =>
     return { value: {} }
   })
 
+  // The wizard has a portrait: a terminal without pictures (no Image here) animates its bust.
+  const bust = PORTRAIT_BUSTS.wizard!
   await mountPane($, 'terminal')
   await $.tool.call({ tool: 'Bash', command: 'false' })
   await clock.advance(100)
-  expect(blitted).toContain(HERO_FRAMES.hurt[0])
+  expect(blitted).toContain(bust.hurt[0])
 
   await clock.advance(HURT_MS + 600)
-  expect(HERO_FRAMES.idle).toContain(blitted.at(-1))
+  expect(bust.idle).toContain(blitted.at(-1))
 })
 
 test('draws a multi-line command as one log row', async ($, on) => {
@@ -1649,8 +1652,10 @@ test('desktop cards are compact: a three-row icon, the frame in the tab colour, 
   const spells = await cardOf(ui, 'spells')
   expect(spells?.height).toBe(6)
   expect(spells?.borderColor).toBe('magenta')
+  // The 9×8 icon at 4 CSS pixels a pixel: 36×32, three rows tall.
   const icon = (await ui.findAll({ type: 'Svg' })).find(svg => svg.props.alt === 'Spell')
-  expect(icon?.props.width).toBe(48)
+  expect(icon?.props.width).toBe(36)
+  expect(icon?.props.height).toBe(32)
   const buttons = (await ui.findAll({ type: 'Button' })).filter(b => String(b.props?.key ?? '').startsWith('menu-'))
   expect(buttons.some(b => b.props?.variant !== undefined)).toBe(false)
 })
@@ -1672,12 +1677,12 @@ test("on the terminal the window's rule stays a run of glyphs", async ($, on) =>
 
 test("a card's icon sits centred inside its frame", async ($, on) => {
   world(on)
-  const ui = await mountPane($, 'terminal')
-  // A 60-column pane: 12-column cards, 10 inside the frame, the 8-column icon with one column each side.
+  const ui = await mountPane($, 'terminal', 32, 69)
+  // A 69-column pane: 13-column cards, 11 inside the frame, the 9-column icon with one column each side.
   const icon = (await ui.findAll({ type: 'Client' })).find(one => (one as { key?: string }).key === 'icon-map' || one.props?.key === 'icon-map')
-  expect((icon?.props as { width?: number } | undefined)?.width).toBe(10)
+  expect((icon?.props as { width?: number } | undefined)?.width).toBe(11)
   const rows = (await ui.findAll({ type: 'Text', in: 'icon-map' })).map(row => row.text ?? '')
-  expect(rows.filter(text => text === ' ')).toHaveLength(6)
+  expect(rows.filter(text => text === ' ')).toHaveLength(8)
 })
 
 test("a pointer passing over a card's icon leaves nothing lit behind it", async ($, on) => {
@@ -1715,7 +1720,7 @@ test('j and k scroll the window: its buttons, or keys a menu icon hears', async 
   for (let n = 1; n <= 15; n += 1) {
     await $.tool.call({ tool: 'Read', file_path: `/x/f${n}.md` })
   }
-  const ui = await mountPane($, 'terminal', 30)
+  const ui = await mountPane($, 'terminal', 31)
   const shown = async () => (await texts(ui)).join('|')
   const scrollButtons = async () => (await ui.findAll({ type: 'Button' })).filter(b => String(b.props?.key ?? '').startsWith('scroll-'))
   // Keyed as vim's, the up one dim at the top.
