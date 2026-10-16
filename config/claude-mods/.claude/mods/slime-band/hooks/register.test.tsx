@@ -173,9 +173,22 @@ test('the HUD ends flush with the band, lined up with the context window', () =>
 test('the big numbers stand on the same ground row as the slime', () => {
   const hud = layoutHud(infoSegments(FACTS, 12), 120)
   const rows = hud.pixels.map(pixel => pixel.y)
-  // The bottom pixel row of the track (row 5) is the slime's ground.
+  // The bottom pixel row of the track (row 5) is the slime's ground; the extrusion stands on it.
   expect(Math.max(...rows)).toBe(5)
-  expect(Math.min(...rows)).toBe(1)
+  expect(Math.min(...rows)).toBe(0)
+})
+
+test('the big numbers have a darker extrusion down and right of their face', () => {
+  const hud = layoutHud([{ key: 'turns', icon: '↻', value: '1', label: 'turn', color: 'cyan', rgb: 0x56c8dc }], 60)
+  const at = new Map(hud.pixels.map(pixel => [`${pixel.x},${pixel.y}`, pixel.rgb]))
+  const face = hud.pixels.filter(pixel => pixel.rgb === 0x56c8dc)
+  const side = hud.pixels.filter(pixel => pixel.rgb !== 0x56c8dc)
+  expect(face.length).toBeGreaterThan(0)
+  expect(side.length).toBeGreaterThan(0)
+  for (const pixel of side) {
+    expect(at.get(`${pixel.x - 1},${pixel.y - 1}`)).toBe(0x56c8dc)
+    expect(pixel.rgb).toBeLessThan(0x56c8dc)
+  }
 })
 
 test('a grass and soil floor runs under the whole track', () => {
