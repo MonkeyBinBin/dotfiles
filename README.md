@@ -253,14 +253,16 @@ dotfiles**——否則 cmux 更新格式時 repo 內的手寫版本會悄悄失�
 #### Claude Code Telegram 完成通知（`cc-notify.sh`）
 
 `claude` 套件另含 `~/.config/claude/cc-notify.sh`（由 stow 部署為 symlink），在 Claude Code
-「工作真正完成」時發一則 Telegram 訊息。設計為 trailing-edge idle debounce：主 agent 閒置
-`CC_NOTIFY_IDLE_WINDOW` 秒後才發，任何後續活動（新 prompt、工具呼叫、subagent 結束）都會
-取消待發通知，因此多 subagent／多 turn 的工作會 collapse 成單一通知。相關 hooks
-（`UserPromptSubmit`/`PreToolUse`/`SubagentStop`/`Stop`）已寫入 `settings.json.example`，由 sync 合併。
+「工作真正完成」時發一則 Telegram 訊息。完成的判定依據 `Stop` hook payload 的 `background_tasks`
+與 `session_crons`：主對話停下且沒有在等自己啟動的背景 shell、subagent、monitor、workflow 或排程喚醒，
+才視為完成；另加 `CC_NOTIFY_IDLE_WINDOW` 秒的 trailing-edge debounce，期間有新 prompt 就取消，
+讓快速回覆的 checkpoint collapse 成單一通知。相關 hooks（`UserPromptSubmit`/`SubagentStart`/`Stop`）
+已寫入 `settings.json.example`，由 sync 合併（合併只取聯集，移除舊 hook 需手動刪 live 設定）。
 
 設定：複製 `~/.config/claude/telegram.env.example` 為 `telegram.env` 並填入 `TELEGRAM_BOT_TOKEN`、
-`TELEGRAM_CHAT_ID`（此檔含 secret，不納入版控）；可選用 `CC_NOTIFY_IDLE_WINDOW`（預設 25s）與
-`CC_NOTIFY_MIN_SECONDS`（預設 30s，主 turn 短於此不通知）。未設定 `telegram.env` 時腳本靜默略過。
+`TELEGRAM_CHAT_ID`（此檔含 secret，不納入版控）；可選用 `CC_NOTIFY_IDLE_WINDOW`（預設 25s）、
+`CC_NOTIFY_MIN_SECONDS`（預設 30s，整個工作短於此不通知）與 `CC_NOTIFY_DEBUG=1`（hook 輸入寫入
+`/tmp/claude-cc-debug.log`）。未設定 `telegram.env` 時腳本靜默略過。
 
 #### Claude Code Output Styles
 

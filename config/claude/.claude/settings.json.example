@@ -78,26 +78,6 @@
         ]
       }
     ],
-    "PreToolUse": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "sh \"$HOME/.config/claude/cc-notify.sh\" pretool"
-          }
-        ]
-      }
-    ],
-    "SubagentStop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "sh \"$HOME/.config/claude/cc-notify.sh\" dec"
-          }
-        ]
-      }
-    ],
     "Stop": [
       {
         "hooks": [
@@ -105,6 +85,16 @@
             "type": "command",
             "command": "sh \"$HOME/.config/claude/cc-notify.sh\" stop",
             "timeout": 15
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$HOME/.config/claude/cc-notify.sh\" subagent"
           }
         ]
       }
