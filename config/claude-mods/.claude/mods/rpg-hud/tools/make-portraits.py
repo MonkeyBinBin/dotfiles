@@ -5,8 +5,11 @@ Each source is a pixel-art sprite on a 64x64 grid (any whole-number upscale) ove
 Per class it animates the figure without reshaping it, only moving, recolouring and decorating it whole (idle:
 a float and a twinkling focus; cast: a bob, a flaring focus, a pulsing aura and a spreading ring of sparks;
 hurt: a flash, a shake and smoke), and writes every frame twice:
-assets/portraits/<class>/<mood>-<n>.png, keyed out and upscaled 8x, for the terminal's Image; and a 20x20
-bust (the head, cropped and shrunk) as half-block Raster cells, for terminals that cannot draw pictures.
+assets/portraits/<class>/<mood>-<n>.png, keyed out, laid over the class's scene and upscaled 8x, for the
+terminal's Image; and a 20x20 bust (the head, cropped and shrunk) as half-block Raster cells, for terminals that
+cannot draw pictures. The scene, tools/backgrounds/<class>.png, is a pixel-art backdrop on the same 64x64 grid
+(any whole-number upscale) filling the frame; a class without one keeps a see-through picture. The busts never
+take the scene: a half-block cell holds two colours, too few for a figure over a backdrop.
 tools/portraits-preview.png shows every frame, figure above bust.
 """
 import base64
@@ -49,7 +52,8 @@ BUST = 20
 # area such as the shading inside a hood. `smooth` sweeps the bust for specks, pixels unlike all eight
 # around them, and gives each its neighbours' commonest colour, in the source like a patch; pixels drawn by
 # `bust_rows` or `bust_patch`, `keep` colours, and the boxes (left, top, right, bottom) in `bust_hold` (a
-# mouth, a buckle) are left alone.
+# mouth, a buckle) are left alone. `scene_dim` darkens the class's scene by that share (default 0), for a
+# backdrop as light as the figure it sits behind (silver armour against stone, a white robe in a sunlit hall).
 STAFF, INK = (177, 84, 48), (2, 1, 7)
 CLASSES = {
     'wizard': {
@@ -84,6 +88,7 @@ CLASSES = {
     },
     'knight': {
         'crop': (11, 4, 40),
+        'scene_dim': 0.4,
         'focus': (18, 45),
         'mirror': (62, 32, 27, 40, 31),
         # The visor's shadow fills the helmet down to the cheeks; the eyes glow amber in it, set in from the
@@ -195,6 +200,7 @@ CLASSES = {
     },
     'cleric': {
         'crop': (12, 4, 40),
+        'scene_dim': 0.45,
         'focus': (49, 25),
         'mirror': (64, 33, 27, 39, 30),
         # The fringe shades the brow; the eyes are amber, deep enough to read on the pale skin.
@@ -271,6 +277,28 @@ def load(path):
         return None if a < 128 or (r > 200 and g < 60 and b > 200) else (r, g, b)
 
     return [[pixel(px[x, y]) for x in range(GRID)] for y in range(GRID)]
+
+
+SCENE_COLOURS = 32
+
+
+# The class's scene as a GRID x GRID picture, or None when it has none. Generated art carries faint noise
+# inside its pixels; folding it to a small palette, undithered, keeps every grid pixel one flat colour.
+def backdrop(name, dim):
+    path = ROOT / 'tools' / 'backgrounds' / f'{name}.png'
+    if not path.exists():
+        return None
+    scene = Image.open(path).convert('RGB').resize((GRID, GRID), Image.NEAREST)
+    scene = scene.quantize(SCENE_COLOURS, dither=Image.Dither.NONE).convert('RGB')
+    if dim:
+        scene = Image.eval(scene, lambda v: round(v * (1 - dim)))
+    return scene.convert('RGBA')
+
+
+# The figure over its scene: the picture the terminal shows.
+def picture(sprite, scene):
+    figure = to_image(sprite)
+    return figure if scene is None else Image.alpha_composite(scene, figure)
 
 
 def copy(sprite):
@@ -758,6 +786,7 @@ def main():
     previews = []
     for name, (moods, bust_moods) in built.items():
         out_dir = ROOT / 'assets' / 'portraits' / name
+        scene = backdrop(name, CLASSES[name].get('scene_dim', 0))
         out_dir.mkdir(parents=True, exist_ok=True)
         for stale in [*out_dir.glob('*.png'), *out_dir.glob('*.svg')]:
             stale.unlink()
@@ -767,13 +796,14 @@ def main():
                 raise SystemExit(f'{name} {mood}: {len(sprites)} frames, not {counts[mood]}')
             lines.append(f'    {mood}: [')
             for n, sprite in enumerate(sprites):
-                to_image(sprite).resize((GRID * SCALE, GRID * SCALE), Image.NEAREST).save(out_dir / f'{mood}-{n}.png', optimize=True)
+                shown = picture(sprite, scene)
+                shown.resize((GRID * SCALE, GRID * SCALE), Image.NEAREST).save(out_dir / f'{mood}-{n}.png', optimize=True)
                 spec = {**DEFAULTS, **CLASSES[name]}
                 small = bust(bust_moods[mood][n], spec['crop'], keep=spec.get('keep', ()), ink=spec.get('ink', 1), reink=spec.get('reink', False))
                 if 'charm' in spec:
                     small = decorate(small, mood, n, spec)
                 lines.append(f"      '{encode(small)}',")
-                previews.append((sprite, small))
+                previews.append((shown, small))
             lines.append('    ],')
         lines.append('  },')
     lines += ['}', '']
@@ -781,9 +811,9 @@ def main():
 
     tile, gap = 192, 12
     sheet = Image.new('RGBA', (len(previews) * (tile + gap), tile * 2 + gap), (30, 30, 30, 255))
-    for n, (sprite, small) in enumerate(previews):
+    for n, (shown, small) in enumerate(previews):
         x = n * (tile + gap)
-        sheet.alpha_composite(to_image(sprite).resize((tile, tile), Image.NEAREST), (x, 0))
+        sheet.alpha_composite(shown.resize((tile, tile), Image.NEAREST), (x, 0))
         sheet.alpha_composite(to_image(small).resize((tile, tile), Image.NEAREST), (x, tile + gap))
     sheet.save(ROOT / 'tools' / 'portraits-preview.png')
     print(f'{len(built)} portraits ({", ".join(built)}), frames {counts}')
