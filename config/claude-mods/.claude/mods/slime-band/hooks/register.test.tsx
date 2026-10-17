@@ -8,7 +8,7 @@ import { hexOf, iconOf, liquidOf } from './liquids'
 import type { ContextInfo } from '../types'
 import { HOP_MS, sceneSize, sceneSvg, walkAt } from './desktop'
 import { BANNER_MS, bannerFor } from './banner'
-import { NAP_AFTER_MS, TRACK_ROWS, composeTrack, floorAt, formatTokens, infoLine, infoSegments, slimePose, stepSlime } from './register'
+import { CAST_TICKS, LISTEN_MS, NAP_AFTER_MS, TRACK_ROWS, composeTrack, floorAt, formatTokens, infoLine, infoSegments, slimePose, stepSlime } from './register'
 
 const BAND_PROPS = {
   hasSurvey: false,
@@ -588,4 +588,51 @@ test('the ground under the grass is the tube set in soil, and cracks glow near t
   expect(composeTrack(40, { ...slimeAt, embers: true }, [], ground)).not.toBe(plain)
   // No ground, and the track ends at the soil as before.
   expect(atob(composeTrack(40, slimeAt)).length).toBe(40 * TRACK_ROWS * 3 * 4)
+})
+
+test('listening, a note sits over the slime; casting, it flashes white and sparks fly off it', () => {
+  const at = { x: 10, dir: 1 as const, pose: 'sit' as const, snore: 0 }
+  const glyphs = (cells: string) => {
+    const words = new Uint32Array(Uint8Array.from(atob(cells), ch => ch.charCodeAt(0)).buffer)
+    return Array.from({ length: words.length / 3 }, (_, n) => [words[n * 3], words[n * 3 + 1], words[n * 3 + 2]] as const)
+  }
+  expect(glyphs(composeTrack(40, { ...at, note: 0 })).some(([glyph]) => glyph === 0x266a)).toBe(true)
+  expect(glyphs(composeTrack(40, at)).some(([glyph]) => glyph === 0x266a)).toBe(false)
+  // The leap's flash: every lit pixel of the slime white.
+  const flash = glyphs(composeTrack(40, { ...at, pose: 'run2', cast: 2 }))
+  expect(flash.some(([, fg]) => fg === 0xffffff)).toBe(true)
+  // Sparks out past the slime's sides, gone once the cast ends.
+  const sparked = composeTrack(40, { ...at, cast: 6 })
+  expect(sparked).not.toBe(composeTrack(40, at))
+  expect(composeTrack(40, { ...at, cast: CAST_TICKS + 5 })).not.toBe(sparked)
+})
+
+test('on desktop the slime listens while the person types, then casts what they send', async ($, on) => {
+  const start = Date.UTC(2026, 9, 2, 12)
+  const clock = mock.clock(on, { now: start })
+  on('session.turns', async () => ({ value: 1 }))
+  on('prompt.edit', async (_$, e) => ({ text: `${(e as { text: string }).text}h`, cursor: 1 }) as never)
+  on('prompt.submit', async (_$, e) => ({ text: (e as { text: string }).text }) as never)
+  on('ui.render', { component: 'AbovePrompt' }, async ($$, e) => {
+    const { Text } = $$.ui.resolve(e)
+    return <Text> </Text>
+  })
+  const scene = async () => {
+    const ui = await $.ui.mount({ plugin: 'slime-band', surface: 'desktop', component: 'AbovePrompt', props: { ...BAND_PROPS, bodyColumns: 100 } })
+    const svg = (await ui.findAll({ type: 'Svg' }))[0]
+    return { alt: String(svg?.props.alt), source: String(svg?.props.source) }
+  }
+  expect((await scene()).alt).not.toContain('listening')
+  // The engine raises prompt.edit as the person types; a test raises it as the engine does.
+  await ($.prompt as unknown as { edit: (e: unknown) => Promise<unknown> }).edit({ origin: { kind: 'person' }, text: '', cursor: 0, start: 0, end: 0, inputText: 'h' } as never)
+  const listening = await scene()
+  expect(listening.alt).toContain('listening to you type')
+  expect(listening.source).toContain('♪')
+  await clock.advance(LISTEN_MS + 10)
+  expect((await scene()).alt).not.toContain('listening')
+
+  await $.prompt.submit({ text: 'go', origin: { kind: 'person' } } as never)
+  const cast = await scene()
+  expect(cast.source).toContain('attributeName="opacity"')
+  expect(cast.alt).not.toContain('listening')
 })

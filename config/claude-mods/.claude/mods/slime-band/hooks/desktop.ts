@@ -78,12 +78,41 @@ export const walkAt = (x: number, dir: 1 | -1, last: number, ms: number): { x: n
 }
 
 export type SceneSlime = {
-  // 'walk' hops back and forth from (x, dir); the others hold still at x.
-  mode: 'walk' | 'sit' | 'sleep' | 'wait'
+  // 'walk' hops back and forth from (x, dir); the others hold still at x. 'listen' sits with a note, the
+  // person typing.
+  mode: 'walk' | 'sit' | 'sleep' | 'wait' | 'listen'
   x: number
   dir: 1 | -1
   // The slime's last column in the area left of the HUD.
   last: number
+  // How far into a cast the scene is drawn, in ms: the ring of sparks plays once from there.
+  castMs?: number
+}
+
+// A cast's length, as the terminal plays it (CAST_TICKS of 80ms).
+export const CAST_MS = 720
+const NOTE_COLOR = '#ffb4dc'
+const SPARK_COLORS = ['#fff07a', '#ffffff', '#ffd23c']
+
+// Sparks flying out from the slime's middle and fading, once, `castMs` into the cast.
+const castGroup = (slime: SceneSlime): string => {
+  if (slime.castMs === undefined || slime.castMs >= CAST_MS) return ''
+  const cx = (slime.x + SLIME_WIDTH / 2) * PX
+  const cy = (LABEL_ROWS + 3) * PX
+  const begin = `-${slime.castMs}ms`
+  const rays: ReadonlyArray<readonly [number, number]> = [[1, 0], [-1, 0], [0, -1], [0.7, -0.7], [-0.7, -0.7], [1, -0.4], [-1, -0.4]]
+  return rays
+    .map(([dx, dy], at) => {
+      const to = PX * 9
+      return (
+        `<rect width="${PX}" height="${PX}" fill="${SPARK_COLORS[at % SPARK_COLORS.length]}" x="${cx}" y="${cy}" opacity="0">` +
+        `<animate attributeName="x" from="${cx}" to="${cx + dx * to}" dur="${CAST_MS}ms" begin="${begin}" fill="freeze"/>` +
+        `<animate attributeName="y" from="${cy}" to="${cy + dy * to * 0.5}" dur="${CAST_MS}ms" begin="${begin}" fill="freeze"/>` +
+        `<animate attributeName="opacity" values="1;1;0" keyTimes="0;0.6;1" dur="${CAST_MS}ms" begin="${begin}" fill="freeze"/>` +
+        `</rect>`
+      )
+    })
+    .join('')
 }
 
 const slimeGroup = (slime: SceneSlime): string => {
@@ -91,6 +120,9 @@ const slimeGroup = (slime: SceneSlime): string => {
     const pose: SlimePose = slime.mode === 'sleep' ? 'sleep' : slime.mode === 'walk' ? 'run1' : 'sit'
     let group = `<g transform="translate(${slime.x * PX} 0)">${spriteRects(pose, slime.dir)}</g>`
     const ahead = slime.dir === 1 ? slime.x + SLIME_WIDTH : slime.x - 1
+    if (slime.mode === 'listen') {
+      group += `<text x="${(slime.x + SLIME_WIDTH - 3) * PX}" y="${(LABEL_ROWS + 1.5) * PX}" fill="${NOTE_COLOR}" font-size="${PX * 2.2}">♪${blink(ALERT_MS * 2, 'visible')}</text>`
+    }
     if (slime.mode === 'wait') {
       group += `<text x="${(Math.max(0, ahead) + 0.5) * PX}" y="${(LABEL_ROWS + 3) * PX}" fill="${ALERT_COLOR}" font-weight="bold" font-size="${PX * 2.4}" text-anchor="middle">!${blink(ALERT_MS, 'visible')}</text>`
     }
@@ -152,6 +184,7 @@ export const sceneSvg = (width: number, hud: HudLayout, slime: SceneSlime, label
     labels +
     digits +
     slimeGroup(slime) +
+    castGroup(slime) +
     runsToRects(floor, LABEL_ROWS + SPRITE_ROWS) +
     (ground === undefined ? '' : groundSvg(ground.info, width, ground.isWorking, PX, ground.frameMs, (LABEL_ROWS + TRACK_PIXELS) * PX)) +
     `</svg>`

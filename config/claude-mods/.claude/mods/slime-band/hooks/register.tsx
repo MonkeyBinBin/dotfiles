@@ -9,7 +9,7 @@ import { SLIME_FRAMES, SLIME_PALETTE, SLIME_ROWS, SLIME_WIDTH } from './slime-sp
 import type { SlimePose } from './slime-sprite'
 import { formatTokens, layoutHud } from './hud'
 import type { HudFact, HudPixel } from './hud'
-import { sceneSize, sceneSvg, sceneWidth, walkAt } from './desktop'
+import { CAST_MS, sceneSize, sceneSvg, sceneWidth, walkAt } from './desktop'
 import { SHIMMER_TICKS, bannerFor, readMoments } from './banner'
 import type { Banner } from './banner'
 import type { SceneSlime } from './desktop'
@@ -42,6 +42,15 @@ const DEFAULT_COLOR = 0x01000000
 const SNORE_COLOR = 0xc8d2ff
 const ALERT_COLOR = 0xffd23c
 const SWEAT_COLOR = 0x7ad0ff
+const NOTE_COLOR = 0xffb4dc
+const FLASH = 0xffffff
+const SPARKS = [0xfff07a, 0xffffff, 0xffd23c]
+// While the person types, the slime stops to listen, and keeps listening this long after the last key.
+export const LISTEN_MS = 3000
+// A sent prompt: the slime crouches, leaps with a flash, and a ring of sparks flies off it. Ticks in all.
+export const CAST_TICKS = 9
+// The ring's directions from the slime's middle, a step of radius each tick.
+const SPARK_RAYS: ReadonlyArray<readonly [number, number]> = [[1, 0], [-1, 0], [0, -1], [1, -1], [-1, -1], [2, -1], [-2, -1]]
 // Ticks the '!' stays lit, then dark, while the slime waits on the person.
 const ALERT_TICKS = 5
 
@@ -88,12 +97,36 @@ const isCrack = (col: number) => (col * 7 + 3) % 13 === 0
 // ground below them (the mana tube set in soil) when there is one; the rest see-through.
 export const composeTrack = (
   trackWidth: number,
-  slime: { x: number; dir: 1 | -1; pose: SlimePose; snore: number; alert?: boolean; sweat?: boolean; embers?: boolean },
+  slime: {
+    x: number
+    dir: 1 | -1
+    pose: SlimePose
+    snore: number
+    alert?: boolean
+    sweat?: boolean
+    embers?: boolean
+    // Listening to the person type: a note above its head, 0 on its right, 1 on its left.
+    note?: number
+    // Ticks into a cast: the slime flashes white, then sparks fly from it.
+    cast?: number
+  },
   hud: readonly HudPixel[] = [],
   ground?: readonly (readonly number[])[],
 ): string => {
   const lit = new Map(hud.map(pixel => [pixel.y * trackWidth + pixel.x, pixel.rgb]))
   const groundTop = GRASS_Y + 2
+  // The cast: a white flash as it leaps, then the ring of sparks widening, a colour per step, gone at the end.
+  const isFlash = slime.cast !== undefined && slime.cast >= 2 && slime.cast <= 3
+  const sparks = new Map<number, number>()
+  if (slime.cast !== undefined && slime.cast >= 3) {
+    const reach = slime.cast - 2
+    const centerX = slime.x + SLIME_WIDTH / 2
+    for (const [dx, dy] of SPARK_RAYS) {
+      const x = Math.round(centerX + dx * (reach + 3))
+      const y = 3 + dy * Math.min(reach, 3)
+      if (x >= 0 && x < trackWidth && y >= 0 && y < GRASS_Y) sparks.set(y * trackWidth + x, SPARKS[reach % SPARKS.length]!)
+    }
+  }
   const rows = TRACK_ROWS + Math.ceil((ground?.length ?? 0) / 2)
   const colorAt = (col: number, y: number): number | undefined => {
     if (y >= groundTop) return ground?.[y - groundTop]?.[col]
@@ -103,8 +136,10 @@ export const composeTrack = (
     const spriteCol = col - slime.x
     if (spriteCol >= 0 && spriteCol < SLIME_WIDTH) {
       const sprite = pixelAt(slime.pose, y, spriteCol, slime.dir)
-      if (sprite !== undefined) return sprite
+      if (sprite !== undefined) return isFlash ? FLASH : sprite
     }
+    const spark = sparks.get(y * trackWidth + col)
+    if (spark !== undefined) return spark
     return lit.get(y * trackWidth + col)
   }
   const words = new Uint32Array(trackWidth * rows * 3)
@@ -128,6 +163,11 @@ export const composeTrack = (
     const col = Math.min(trackWidth - 1, slime.x + (slime.dir === 1 ? SLIME_WIDTH - 2 : 1))
     const glyph = slime.snore === 1 ? 0x7a : 0x5a
     words.set([glyph, SNORE_COLOR, DEFAULT_COLOR], (0 * trackWidth + col) * 3)
+  }
+  // Listening, a note bobs above its head, now on one side, now the other.
+  if (slime.note !== undefined) {
+    const col = Math.max(0, Math.min(trackWidth - 1, slime.x + (slime.note === 0 ? SLIME_WIDTH - 3 : 2)))
+    words.set([0x266a, NOTE_COLOR, DEFAULT_COLOR], (0 * trackWidth + col) * 3)
   }
   // Low on mana, a drop of sweat beads behind its head.
   if (slime.sweat === true) {
@@ -179,6 +219,13 @@ const slime = {
   mana: undefined as ContextInfo | undefined,
   // The mana near the rune: the slime sweats.
   isManaCritical: false,
+  // Until when the slime listens to the person typing.
+  listenUntil: 0,
+  // The tick a sent prompt's cast began, while it plays.
+  castFrom: undefined as number | undefined,
+  // On an SVG surface: when the cast began, so a redraw within it keeps the sparks.
+  castAt: 0,
+  listenTimer: undefined as Timer | undefined,
   // The surface that last drew the band.
   surface: undefined as string | undefined,
   // On an SVG surface: the lap the scene animates, from where and when it set off.
@@ -199,10 +246,16 @@ async function paint($: EngineInterface) {
   const now = await $.clock.now()
   slime.tick += 1
   const isWaiting = slime.waitingFor !== undefined
-  const pose = slimePose(slime.isWorking, now - slime.idleSince, slime.tick, isWaiting)
+  const isListening = !isWaiting && now < slime.listenUntil
+  const cast = slime.castFrom === undefined ? undefined : slime.tick - slime.castFrom
+  if (cast !== undefined && cast >= CAST_TICKS) slime.castFrom = undefined
+  const casting = cast !== undefined && cast < CAST_TICKS ? cast : undefined
+  // Casting it crouches then leaps; listening it sits still; otherwise as the turn has it.
+  const pose: SlimePose =
+    casting !== undefined ? (casting < 2 ? 'run1' : casting < 5 ? 'run2' : 'sit') : isListening ? 'sit' : slimePose(slime.isWorking, now - slime.idleSince, slime.tick, isWaiting)
   const alert = isWaiting && Math.floor(slime.tick / ALERT_TICKS) % 2 === 0
   // The slime only travels while it is in the air.
-  if (pose === 'run2') {
+  if (pose === 'run2' && casting === undefined) {
     const moved = stepSlime(slime.x, slime.dir, slime.areaWidth)
     slime.x = moved.x
     slime.dir = moved.dir
@@ -212,7 +265,22 @@ async function paint($: EngineInterface) {
   // Near the rune the slime sweats and the cracks glow, by turns.
   const danger = slime.isManaCritical && Math.floor(slime.tick / ALERT_TICKS) % 2 === 1
   const ground = slime.mana === undefined ? undefined : groundPixels(slime.mana, slime.trackWidth, slime.tick, slime.isWorking)
-  const cells = composeTrack(slime.trackWidth, { x: slime.x, dir: slime.dir, pose, snore, alert, sweat: danger, embers: danger }, hud, ground)
+  const cells = composeTrack(
+    slime.trackWidth,
+    {
+      x: slime.x,
+      dir: slime.dir,
+      pose,
+      snore,
+      alert,
+      sweat: danger,
+      embers: danger,
+      ...(isListening ? { note: Math.floor(slime.tick / ALERT_TICKS) % 2 } : {}),
+      ...(casting === undefined ? {} : { cast: casting }),
+    },
+    hud,
+    ground,
+  )
   if (cells === slime.shown) return
 
   // A refusal and a failed blit both mean the track is not on screen.
@@ -278,6 +346,7 @@ const MODE_ALT: Record<SceneSlime['mode'], string> = {
   sit: 'sitting',
   sleep: 'napping',
   wait: 'waiting on you',
+  listen: 'listening to you type',
 }
 
 const fact = (
@@ -421,9 +490,29 @@ export const register: Register = on => {
     }
   })
 
+  // The person typing: the slime stops to listen, until the box empties or the keys stop for a while.
+  on('prompt.edit', async ($, e, next) => {
+    const box = await next(e)
+    const now = await $.clock.now()
+    const wasListening = now < slime.listenUntil
+    slime.listenUntil = box.text.trim() === '' ? 0 : now + LISTEN_MS
+    // Typing wakes it from a nap.
+    slime.idleSince = Math.max(slime.idleSince, now)
+    if (slime.surface !== undefined && slime.surface !== 'terminal') {
+      slime.listenTimer?.cancel()
+      slime.listenTimer = slime.listenUntil === 0 ? undefined : $.clock.after(LISTEN_MS, () => $.ui.invalidate('ui.render'))
+      if (wasListening !== slime.listenUntil > now) redraw($)
+    }
+    return box
+  })
+
   on('prompt.submit', async ($, e, next) => {
     slime.isWorking = true
     slime.waitingFor = undefined
+    // Sent: the slime casts it.
+    slime.listenUntil = 0
+    slime.castFrom = slime.tick
+    slime.castAt = await $.clock.now()
     redraw($)
 
     return next(e)
@@ -467,25 +556,33 @@ export const register: Register = on => {
       const hud = layoutHud(segments, width)
       const last = Math.max(0, hud.areaWidth - SLIME_WIDTH)
       const isWaiting = slime.waitingFor !== undefined
-      // A lap that ends (rest, a wait, a resize) leaves the slime where it had hopped to.
-      if (slime.walk !== undefined && (!slime.isWorking || isWaiting || slime.walk.last !== last)) {
+      const isListening = !isWaiting && now < slime.listenUntil
+      // A lap that ends (rest, a wait, the person typing, a resize) leaves the slime where it had hopped to.
+      if (slime.walk !== undefined && (!slime.isWorking || isWaiting || isListening || slime.walk.last !== last)) {
         const at = walkAt(slime.walk.x, slime.walk.dir, slime.walk.last, now - slime.walk.since)
         slime.x = at.x
         slime.dir = at.dir
         slime.walk = undefined
       }
       slime.x = Math.min(slime.x, last)
-      if (slime.isWorking && !isWaiting && slime.walk === undefined) {
+      if (slime.isWorking && !isWaiting && !isListening && slime.walk === undefined) {
         slime.walk = { x: slime.x, dir: slime.dir, last, since: now }
       }
       const idleMs = now - slime.idleSince
-      const mode: SceneSlime['mode'] = isWaiting ? 'wait' : slime.walk ? 'walk' : idleMs >= NAP_AFTER_MS ? 'sleep' : 'sit'
+      const mode: SceneSlime['mode'] = isWaiting ? 'wait' : isListening ? 'listen' : slime.walk ? 'walk' : idleMs >= NAP_AFTER_MS ? 'sleep' : 'sit'
+      const castMs = now - slime.castAt < CAST_MS ? now - slime.castAt : undefined
       slime.napTimer?.cancel()
       slime.napTimer = mode === 'sit' ? $.clock.after(NAP_AFTER_MS - idleMs, () => $.ui.invalidate('ui.render')) : undefined
       const gauge = layoutGauge(context, e.props.bodyColumns)
       // The ground under the soil shows the mana, a step of its ripple each hop.
       const ground = gauge === undefined ? undefined : { info: context, isWorking: slime.isWorking, frameMs: TUBE_FRAME_MS }
-      const scene = sceneSvg(width, hud, { mode, x: slime.walk?.x ?? slime.x, dir: slime.walk?.dir ?? slime.dir, last }, LABEL_HEX, ground)
+      const scene = sceneSvg(
+        width,
+        hud,
+        { mode, x: slime.walk?.x ?? slime.x, dir: slime.walk?.dir ?? slime.dir, last, ...(castMs === undefined ? {} : { castMs }) },
+        LABEL_HEX,
+        ground,
+      )
       const size = sceneSize(width, ground !== undefined)
       const facts = segments.map(s => `${s.icon} ${s.value} ${s.label}`).join(', ')
 
