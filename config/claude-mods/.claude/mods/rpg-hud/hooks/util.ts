@@ -90,3 +90,27 @@ export const composeColors = (pixels: readonly (readonly (number | undefined)[])
   }
   return btoa(binary)
 }
+
+// Raster cells drained of colour and dimmed, the glyphs kept: a hero knocked out. Read once per frame.
+const drained = new Map<string, string>()
+export const drainCells = (cells: string): string => {
+  const hit = drained.get(cells)
+  if (hit !== undefined) return hit
+  const bytes = Uint8Array.from(atob(cells), ch => ch.charCodeAt(0))
+  const words = new Uint32Array(bytes.buffer, bytes.byteOffset, Math.floor(bytes.byteLength / 4))
+  const gray = (word: number): number => {
+    if (word === DEFAULT_COLOR) return word
+    const level = Math.round((((word >> 16) & 0xff) * 0.3 + ((word >> 8) & 0xff) * 0.59 + (word & 0xff) * 0.11) * 0.55)
+    // A cold grey, a touch of blue in it.
+    return (level << 16) | (level << 8) | Math.min(255, level + 18)
+  }
+  for (let at = 0; at + 2 < words.length; at += 3) {
+    words[at + 1] = gray(words[at + 1]!)
+    words[at + 2] = gray(words[at + 2]!)
+  }
+  let binary = ''
+  for (let at = 0; at < bytes.length; at += 0x8000) binary += String.fromCharCode(...bytes.subarray(at, at + 0x8000))
+  const out = btoa(binary)
+  drained.set(cells, out)
+  return out
+}

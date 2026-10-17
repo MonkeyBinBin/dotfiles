@@ -104,6 +104,8 @@ export type StatusData = {
   // The foe standing (or crumbling) and the moment of the fight: drawn on the panel's right when it fits, in
   // place of the boss row.
   foe?: Omit<FoeSideProps, 'onFight'>
+  // Knocked out (every heart lost), or just revived by a clean cast.
+  knockout?: 'down' | 'revived'
 }
 
 const FIGHT_LABEL = '⚔ fix'
@@ -155,7 +157,8 @@ export function renderStatus(ui: ElementTable, data: StatusData, Raster?: Elemen
   const { hero } = data
   // Every surface but the terminal (the one with a Raster) draws SVG.
   const Svg = Raster === undefined && 'Svg' in ui ? (ui.Svg as SvgElement) : undefined
-  const frame = data.isFlashing ? 'yellow' : hasFoeSide ? battleFrame(data.foe?.fx) : hero.color
+  const frame =
+    data.knockout === 'down' ? 'gray' : data.knockout === 'revived' ? 'green' : data.isFlashing ? 'yellow' : hasFoeSide ? battleFrame(data.foe?.fx) : hero.color
   const fullName = `CLAUDE THE ${hero.title}`
   // Room for `Lv.NN` beside the name, and for the ? after it.
   const name = statsWidth >= fullName.length + 6 + (data.onHelp === undefined ? 0 : 2) ? fullName : 'CLAUDE'
@@ -246,7 +249,15 @@ export function renderStatus(ui: ElementTable, data: StatusData, Raster?: Elemen
           <Text color="green">  ♣ {data.petsOut}</Text>
           <Text dimColor> in party</Text>
         </Text>
-        {data.waitingFor !== undefined ? (
+        {data.knockout === 'down' ? (
+          <Text bold color="red" wrap="truncate">
+            💀 K.O. <Text dimColor>· a clean cast revives</Text>
+          </Text>
+        ) : data.knockout === 'revived' ? (
+          <Text bold color="green" wrap="truncate">
+            ✨ REVIVED! <Text dimColor>hearts restored</Text>
+          </Text>
+        ) : data.waitingFor !== undefined ? (
           <Text bold color="yellow" wrap="truncate">
             ❗ {data.waitingFor === 'AskUserQuestion' ? 'awaiting your answer' : `awaiting your word on ${data.waitingFor}`}
           </Text>

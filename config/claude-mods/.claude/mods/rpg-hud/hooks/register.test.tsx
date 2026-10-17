@@ -3,12 +3,12 @@ import type { Engine } from 'claude-code/testing'
 
 import { HERO_FRAMES } from './hero-cells'
 import { HURT_MS, pickFrame, pickMood } from './anim'
-import { bossFor, bossesFor, countFailures, failedGuard, fightBoss, fightText, runsGit } from './boss'
+import { bossFor, bossesFor, countFailures, failedGuard, fightBoss, fightText, gitEventOf, runsGit } from './boss'
 import { GIT_STATUS, diffArgv, isLinear, parseBag, parseLog, parseLogLine, parseStatus, parseWorktrees, shortAge } from './git'
 import { layoutLanes, laneText } from './lanes'
 import { campsOn, exploredRegions } from './map'
 import { BOSS_COLUMNS, BOSS_ROWS, FX_MS, VS_COLUMNS, VS_ROWS, bossFrames } from './encounter'
-import { OVERWORLD_ROWS, RAINBOW_MS, drawOverworld, mainRoad, phaseOf, regionName, weatherOf } from './overworld'
+import { EVENT_FRAMES, OVERWORLD_ROWS, RAINBOW_MS, drawOverworld, mainRoad, phaseOf, regionName, weatherOf } from './overworld'
 import { EMPTY_LOOT, claimLoot, forge, lootText } from './loot'
 import { parseDiff, rarityOf, splitBar } from './diff'
 import { countPatch, patchSource } from './edit-card'
@@ -16,7 +16,7 @@ import { trailStops } from './map'
 import { gaugeColor, heroStats, manaLeft, normalizeCall, panelDuel, rankFor, statusLayout } from './hero'
 import { rosterOrder } from './pets'
 import { petCells, speciesFor } from './pet-sprites'
-import { MANA_ALARMS, campFor, localHour, parseUtcOffset, isRefusal, manaAlarm, returnToast, skillOfPrompt, touchFile } from './register'
+import { MANA_ALARMS, MAP_FX_MS, REVIVE_MS, campFor, localHour, parseUtcOffset, isRefusal, manaAlarm, returnToast, skillOfPrompt, touchFile } from './register'
 import { formatDuration, recapText, topTools } from './recap'
 import { HELP_COMMANDS, helpText } from './help'
 import { filterSpells, timeColor } from './spellbook'
@@ -549,6 +549,72 @@ test('the sky follows the boss: a storm while one stands, a rainbow once it fall
   const rainbow = draw('rainbow')
   expect(JSON.stringify(rainbow[0]?.slice(0, 3))).not.toBe(JSON.stringify(clear[0]?.slice(0, 3)))
   expect(JSON.stringify(rainbow[0]?.slice(-4))).toBe(JSON.stringify(clear[0]?.slice(-4)))
+})
+
+test('a commit saves on the map and a push delivers, whatever git options come first', () => {
+  expect(gitEventOf('git commit -m "x"')).toBe('save')
+  expect(gitEventOf('git add -A && git -C repo commit -m x')).toBe('save')
+  expect(gitEventOf('git commit -m x && git push')).toBe('deliver')
+  expect(gitEventOf('git -c core.quotePath=false push origin main')).toBe('deliver')
+  expect(gitEventOf('git status')).toBeUndefined()
+  expect(gitEventOf('echo git push')).toBeUndefined()
+})
+
+test('a save plays a crystal by the hero and a delivery fireworks, then the land idles again', () => {
+  const rows = parseLog([
+    logLine('a000001', 'a000002', 'HEAD -> main', '1 hour ago', 'a'),
+    logLine('a000002', '', 'origin/main', '1 day ago', 'b'),
+  ])
+  const draw = (event?: 'save' | 'deliver') => drawOverworld({ rows, dirty: 0, width: 48, seed: 'repo', ...(event === undefined ? {} : { event }) }).frames
+  expect(draw()).toHaveLength(2)
+  const save = draw('save')
+  expect(save).toHaveLength(EVENT_FRAMES)
+  expect(save.flat(2)).toContain(0xbff6ff)
+  const deliver = draw('deliver')
+  expect(deliver).toHaveLength(EVENT_FRAMES)
+  expect(deliver.flat(2)).toContain(0xff5af0)
+  // The fireworks burst and fade: the frames differ.
+  expect(new Set(deliver.map(frame => JSON.stringify(frame))).size).toBeGreaterThan(4)
+})
+
+test('a commit and a push play on the map, their banner taking the region name\'s place', async ($, on) => {
+  const { clock, toasts } = mapWorld(on, [logLine('abc1234', '', 'HEAD -> main, origin/main', '2 hours ago', 'feat: map')])
+  await $.tool.call({ tool: 'Bash', command: 'git commit -m x' })
+  const ui = await mountPane($, 'terminal', 50)
+  await showTab($, ui, 'map')
+  expect((await texts(ui)).join('|')).toContain('PROGRESS SAVED')
+  expect(toasts).toContain('💾 Progress saved')
+  await $.tool.call({ tool: 'Bash', command: 'git push' })
+  expect((await texts(ui)).join('|')).toContain('LOOT DELIVERED')
+  await clock.advance(MAP_FX_MS + 10)
+  const after = (await texts(ui)).join('|')
+  expect(after).not.toContain('LOOT DELIVERED')
+  expect(after).toContain(' of main')
+})
+
+test('losing every heart knocks the hero out; the next clean cast revives them with every heart', async ($, on) => {
+  const { clock, toasts } = world(on, { tool: e => (e.command === 'boom' ? fail('boom') : undefined) })
+  for (let n = 0; n < 4; n += 1) await $.tool.call({ tool: 'Bash', command: 'boom' })
+  const ui = await mountPane($, 'terminal')
+  expect((await texts(ui)).join('|')).not.toContain('K.O.')
+  await $.tool.call({ tool: 'Bash', command: 'boom' })
+  let shown = (await texts(ui)).join('|')
+  expect(shown).toContain('💀 K.O.')
+  expect(toasts.some(toast => toast.includes('knocked out'))).toBe(true)
+  // The portrait lies still in grey.
+  expect((await ui.findAll({ type: 'Raster' })).some(raster => raster.key === 'hero-ko')).toBe(true)
+  // Another failure while down changes nothing.
+  await $.tool.call({ tool: 'Bash', command: 'boom' })
+  expect(toasts.filter(toast => toast.includes('knocked out'))).toHaveLength(1)
+
+  await $.tool.call({ tool: 'Read', file_path: '/x/a.md' })
+  shown = (await texts(ui)).join('|')
+  expect(shown).toContain('✨ REVIVED!')
+  expect(shown).toContain('5/5')
+  await clock.advance(REVIVE_MS + 10)
+  shown = (await texts(ui)).join('|')
+  expect(shown).not.toContain('REVIVED')
+  expect(shown).toContain('5/5')
 })
 
 test('loot reads what a turn won, and a closing line takes the turn its length matches', () => {

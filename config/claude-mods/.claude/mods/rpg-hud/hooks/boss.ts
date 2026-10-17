@@ -71,6 +71,22 @@ export const programOf = (segment: string): { program: string; rest: string[] } 
 // A shell command's simple commands: its `&&`, `||`, `;`, `|` and newline-separated parts.
 const segmentsOf = (command: string): string[] => command.split(/&&|\|\||;|\||\n/)
 
+// Git's own options that take the next word: `git -C dir push`, `git -c key=value commit`.
+const GIT_VALUE_FLAGS = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace'])
+
+// What a shell command's git calls do to the map: a push delivers (whatever else it runs), a commit saves.
+export const gitEventOf = (command: string): 'save' | 'deliver' | undefined => {
+  const subcommands = segmentsOf(command).flatMap(segment => {
+    const { program, rest } = programOf(segment)
+    if (program !== 'git') return []
+    let at = 0
+    while (rest[at]?.startsWith('-')) at += GIT_VALUE_FLAGS.has(rest[at]!) ? 2 : 1
+    return rest[at] === undefined ? [] : [rest[at]!]
+  })
+  if (subcommands.includes('push')) return 'deliver'
+  return subcommands.includes('commit') ? 'save' : undefined
+}
+
 // Whether any part of a shell command starts `git` itself: `grep git` or `cat .gitignore` do not.
 export const runsGit = (command: string): boolean => segmentsOf(command).some(segment => programOf(segment).program === 'git')
 

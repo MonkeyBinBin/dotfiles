@@ -19,6 +19,8 @@ const FOG_COLUMNS = 10
 const CAMP_COLUMNS = 7
 // Frames of the land's idle animation (water glints, the flag, the fire, the hero's step).
 export const OVERWORLD_FRAMES = 2
+// Frames of a save or a delivery, looping while it plays.
+export const EVENT_FRAMES = 8
 
 const PALETTE = {
   grass: 0x4f9a3c,
@@ -201,6 +203,9 @@ export const RAINBOW_MS = 60_000
 export const weatherOf = (boss: object | null, fx: { event: string; at: number } | null, now: number): Weather =>
   boss !== null ? 'storm' : fx?.event === 'defeat' && now - fx.at < RAINBOW_MS ? 'rainbow' : 'clear'
 
+const CRYSTAL = { light: 0xbff6ff, mid: 0x5fd8f0, dark: 0x2a98c8 }
+const FIREWORKS = [0xffd23c, 0xff5af0, 0x6af0ff, 0x7aff7a]
+
 // Under a storm the land darkens further, whatever the hour.
 const STORM_TINT: readonly [number, number, number] = [0.55, 0.58, 0.7]
 const CLOUD = { light: 0x9a9eb2, dark: 0x6c7084 }
@@ -223,6 +228,8 @@ export type OverworldInput = {
   isCasting?: boolean
   // Clear when absent.
   weather?: Weather
+  // A commit just saved (a crystal by the hero), or a push just delivered (fireworks over the castle).
+  event?: 'save' | 'deliver'
 }
 
 export type Overworld = {
@@ -353,7 +360,7 @@ export function drawOverworld(input: OverworldInput): Overworld {
   const weather = input.weather ?? 'clear'
   // The castle where the boss's storm gathers and its rainbow ends, when the map shows it.
   const townX = townAt !== -1 && townAt < steps ? stepX(townAt) - (townAt === 0 ? 4 : 0) : undefined
-  const frames = Array.from({ length: OVERWORLD_FRAMES }, (_, frame) => {
+  const frames = Array.from({ length: input.event === undefined ? OVERWORLD_FRAMES : EVENT_FRAMES }, (_, frame) => {
     const colors: number[][] = kinds.map(row => row.map((kind): number => PALETTE[kind]))
     // Pixels that shine on their own, untouched by the hour's light.
     const lights = new Set<number>()
@@ -426,6 +433,43 @@ export function drawOverworld(input: OverworldInput): Overworld {
     }
     const heroY = road[heroX] ?? 0
     stamp(hero(frame, hat), heroX, heroY)
+    // A save: a ring of light turns around the hero, brightest where it has come round to, and sparks rise off it.
+    if (input.event === 'save') {
+      const cx = heroX
+      const cy = (road[heroX] ?? 0) - 2.5
+      const points = 16
+      for (let k = 0; k < points; k += 1) {
+        const angle = (k / points) * Math.PI * 2
+        const lead = (k - frame * 2 + points) % points
+        const color = lead < 2 ? CRYSTAL.light : lead < 5 ? CRYSTAL.mid : CRYSTAL.dark
+        light(Math.round(cx + Math.cos(angle) * 5), Math.round(cy + Math.sin(angle) * 3.5), color)
+      }
+      for (let k = 0; k < 4; k += 1) {
+        light(cx + [-3, -1, 1, 3][k]!, Math.round(cy) - 3 - ((frame + k * 2) % 5), (frame + k) % 2 === 0 ? CRYSTAL.light : CRYSTAL.mid)
+      }
+    }
+    // A delivery: gold rolls up the road from the hero to the castle as fireworks burst over it.
+    if (input.event === 'deliver') {
+      const goal = townX ?? Math.max(4, heroX - 12)
+      for (let k = 0; k < 3; k += 1) {
+        const share = ((frame + k * 3) % EVENT_FRAMES) / EVENT_FRAMES
+        const x = Math.round(heroX - (heroX - goal) * share)
+        light(x, (road[x] ?? 0) - 1, PALETTE.gold)
+      }
+      for (let k = 0; k < 3; k += 1) {
+        const step = (frame + k * 3) % 6
+        const cx = goal + [-5, 0, 5][k]!
+        const cy = 2 + k % 2
+        const color = FIREWORKS[(k + Math.floor((frame + k * 3) / 6)) % FIREWORKS.length]!
+        if (step < 2) light(cx, cy + 3 - step * 2, color)
+        else {
+          const r = step - 1
+          for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]] as const) {
+            light(cx + dx * r, cy + dy * Math.ceil(r / 2), step === 5 ? scale(color, 0.6) : color)
+          }
+        }
+      }
+    }
     // Casting, a spark dances over the hat: up and right, then up and left.
     if (input.isCasting === true) {
       light(heroX + (frame === 0 ? 2 : -2), heroY - 6, frame === 0 ? LIGHT.spark : LIGHT.sparkCool)

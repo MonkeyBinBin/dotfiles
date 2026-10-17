@@ -70,6 +70,12 @@ export type Boss = { name: string; kind: string; hp: number; maxHp: number; comm
 // (the one slain, for a defeat) and the HP a hit took.
 export type BossFx = { event: 'appear' | 'hit' | 'defeat'; at: number; damage: number; boss: Boss }
 
+// The hero's last fall or rise: knocked out when the hearts run out, revived by the next clean cast.
+export type Knockout = { state: 'down' | 'up'; at: number }
+
+// The map's last moment: a commit saves, a push delivers to the castle.
+export type MapFx = { event: 'save' | 'deliver'; at: number }
+
 export type GitMap = {
   isRepo: boolean
   branch: string
@@ -180,6 +186,10 @@ declare module 'claude-code' {
       turnLoot: import('../hooks/loot').Loot
       // Finished turns waiting for the transcript line that closes them.
       unclaimedLoot: import('../hooks/loot').TurnLoot[]
+      knockout: Knockout | null
+      // The call that last revived the hero: failures before it no longer cost hearts. '' until then.
+      revivedBy: string
+      mapFx: MapFx | null
       // Each closing line's loot, by the line's id.
       claimedLoot: Record<string, import('../hooks/loot').Loot>
     }

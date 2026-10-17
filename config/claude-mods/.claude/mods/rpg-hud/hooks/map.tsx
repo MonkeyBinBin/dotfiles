@@ -229,6 +229,8 @@ export type MapActions = {
   isCasting?: boolean
   // The sky over the boss fight; clear when absent.
   weather?: Weather
+  // A save or a delivery playing on the map.
+  event?: 'save' | 'deliver'
 }
 
 // The banner's left ornament: the sun by day, the moon by night, the half-lit sky between.
@@ -251,6 +253,7 @@ function overworldItems(ui: ElementTable, map: GitMap, rows: readonly GraphRow[]
     ...(actions.phase === undefined ? {} : { phase: actions.phase }),
     isCasting: actions.isCasting === true,
     ...(actions.weather === undefined ? {} : { weather: actions.weather }),
+    ...(actions.event === undefined ? {} : { event: actions.event }),
   })
   let drawn: Item['node']
   if (Raster !== undefined) {
@@ -261,7 +264,8 @@ function overworldItems(ui: ElementTable, map: GitMap, rows: readonly GraphRow[]
     const sprite = spriteSvg(world.frames.map(colorsToPixels), COLUMN_PX, FRAME_MS * OVERWORLD_TICKS)
     drawn = <Svg key="overworld" source={sprite.source} alt="overworld map" width={sprite.width} height={sprite.height} isInteractive />
   }
-  const name = regionName(seed, world.terrain, map.branch)
+  // While a save or a delivery plays, the banner cries it in place of the region's name.
+  const name = actions.event === 'save' ? 'PROGRESS SAVED' : actions.event === 'deliver' ? 'LOOT DELIVERED' : regionName(seed, world.terrain, map.branch)
   // The name between two runs of ornament, as wide as the window allows.
   const flourish = Math.max(0, Math.floor((width - name.length - 6) / 2))
   return [

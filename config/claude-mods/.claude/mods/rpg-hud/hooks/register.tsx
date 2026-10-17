@@ -5,6 +5,8 @@ import type {
   BagItem,
   Boss,
   BossFx,
+  Knockout,
+  MapFx,
   Combo,
   Gear,
   GitMap,
@@ -28,7 +30,7 @@ import type { Mood } from './anim'
 import { HERO_CLASS_FRAMES } from './hero-cells'
 import type { HeroClassId } from './hero-cells'
 import { cellsToPixels, gridToPixels, spriteSvg } from './svg'
-import { fightBoss, fightText, runsGit } from './boss'
+import { fightBoss, fightText, gitEventOf, runsGit } from './boss'
 import { BOSS_ROWS, FX_MS, bossCells, liveFx, shownBoss } from './encounter'
 import type { BagProps, BagRow } from './bag-client'
 import { GIT_LOG, GIT_NUMSTAT, GIT_REMOTES, GIT_STATUS, GIT_WORKTREES, diffArgv, outpostArgv, parseBag, parseStatus, parseWorktrees, shortAge } from './git'
@@ -53,7 +55,7 @@ import { HELP_COMMANDS, helpItems, helpText } from './help'
 import { EMPTY_PROGRESS, progressOf } from './progress'
 import { MARCH_COLUMNS, addJob, endJob, jobItems, jobsSubtitle, marchCells, parseJobEnds, reconcileJobs, trimJobs } from './jobs'
 import type { JobEnd } from './jobs'
-import { summarize } from './util'
+import { drainCells, summarize } from './util'
 import { EMPTY_LOOT, KEPT_CLAIMED, KEPT_UNCLAIMED, claimLoot, forge, lootText } from './loot'
 import type { Loot, TurnLoot } from './loot'
 import { WINDOW_CHROME_COLUMNS, WINDOW_CHROME_ROWS, clampOffset, pageItems, renderWindow, totalRows } from './window'
@@ -101,6 +103,19 @@ const waitingFor = atom({ plugin: 'rpg-hud', key: 'waitingFor' } as const, null 
 const turnLoot = atom({ plugin: 'rpg-hud', key: 'turnLoot' } as const, EMPTY_LOOT)
 const unclaimedLoot = atom({ plugin: 'rpg-hud', key: 'unclaimedLoot' } as const, [] as TurnLoot[])
 const claimedLoot = atom({ plugin: 'rpg-hud', key: 'claimedLoot' } as const, {} as Record<string, Loot>)
+const knockout = atom({ plugin: 'rpg-hud', key: 'knockout' } as const, null as Knockout | null)
+const revivedBy = atom({ plugin: 'rpg-hud', key: 'revivedBy' } as const, '')
+const mapFx = atom({ plugin: 'rpg-hud', key: 'mapFx' } as const, null as MapFx | null)
+
+// The calls since the hero last revived, the one that revived them first; all of them when it has scrolled out.
+export const sinceRevive = <T extends { id: string }>(list: readonly T[], revivedBy: string): T[] => {
+  const at = revivedBy === '' ? -1 : list.findIndex(one => one.id === revivedBy)
+  return at === -1 ? [...list] : list.slice(at)
+}
+
+// How long the panel glows after a revive, and the map plays a save or a delivery.
+export const REVIVE_MS = 2500
+export const MAP_FX_MS = 4800
 
 // Starts the HUD's watch of the session, once; a reload keeps it.
 const markStart = async ($: EngineInterface) => {
@@ -141,6 +156,9 @@ async function resetSession($: EngineInterface) {
     update($, tally, () => EMPTY_TALLY),
     update($, waitingFor, () => null),
     update($, turnLoot, () => EMPTY_LOOT),
+    update($, knockout, () => null),
+    update($, revivedBy, () => ''),
+    update($, mapFx, () => null),
     update($, unclaimedLoot, () => []),
     update($, startedAt, () => now),
     update($, pets, list => list.filter(pet => pet.status === 'run')),
@@ -897,6 +915,7 @@ const mapPage = async ($: EngineInterface, { ui, inner, now, Raster }: PageConte
   const world = await read($, map)
   const list = await read($, outposts)
   const hero = classOf(await read($, heroClass))
+  const fx = await read($, mapFx)
   return {
     items: mapItems(ui, world, await read($, touched), inner, {
       openBag: () => {
@@ -914,6 +933,7 @@ const mapPage = async ($: EngineInterface, { ui, inner, now, Raster }: PageConte
       phase: phaseOf(localHour(now, utcOffsetMs)),
       isCasting: anim.running > 0,
       weather: weatherOf(await read($, boss), await read($, bossFx), now),
+      ...(fx !== null && now - fx.at < MAP_FX_MS ? { event: fx.event } : {}),
     }),
     subtitle: mapSubtitle(world),
   }
@@ -1370,6 +1390,14 @@ export const register: Register = on => {
         await update($, tally, t => ({ ...t, bossesDefeated: t.bossesDefeated + 1 }))
         await update($, turnLoot, loot => ({ ...loot, bosses: loot.bosses + 1 }))
       }
+      // A commit saves on the map, a push delivers to the castle; a failed one does neither.
+      const gitEvent = isError ? undefined : gitEventOf(command)
+      if (gitEvent !== undefined) {
+        const at = await $.clock.now()
+        await update($, mapFx, (): MapFx => ({ event: gitEvent, at }))
+        $.ui.toast(gitEvent === 'deliver' ? '🏰 Loot delivered to the castle!' : '💾 Progress saved')
+        $.clock.after(MAP_FX_MS, () => $.ui.invalidate('ui.render'))
+      }
       if (runsGit(command)) {
         void refreshMap($).catch(() => undefined)
         if (isMain) await followTo($, 'map')
@@ -1406,6 +1434,20 @@ export const register: Register = on => {
       await update($, tally, t => (isError ? { ...t, failures: t.failures + 1 } : { ...t, refusals: t.refusals + 1 }))
     }
     await update($, calls, list => list.map(one => (one.id === call.id ? { ...normalizeCall(one), ms, status } : one)))
+    // The last heart lost knocks the hero out; the next clean cast revives them with every heart back.
+    const fallen = await read($, knockout)
+    if (isError && fallen?.state !== 'down') {
+      const stood = sinceRevive((await read($, calls)).map(normalizeCall), await read($, revivedBy))
+      if (heroStats(stood, stood.length).hp === 0) {
+        await update($, knockout, (): Knockout => ({ state: 'down', at: endedAt }))
+        $.ui.toast('💀 Claude is knocked out! A clean cast revives them')
+      }
+    } else if (status === 'ok' && fallen?.state === 'down') {
+      await update($, revivedBy, () => call.id)
+      await update($, knockout, (): Knockout => ({ state: 'up', at: endedAt }))
+      $.ui.toast('✨ Revived! Every heart restored')
+      $.clock.after(REVIVE_MS, () => $.ui.invalidate('ui.render'))
+    }
     if (!isRefused) await update($, combo, current => {
       const streak = isError ? 0 : current.current + 1
       return { current: streak, best: Math.max(current.best, streak) }
@@ -1572,8 +1614,14 @@ export const register: Register = on => {
       anim.moodTick = 0
       anim.shownCells = heroCells('idle', 0, hero.id)
     }
+    // Knocked out, the hero lies still in grey; hearts lost before the last revive no longer count.
+    const fall = await read($, knockout)
+    const isDown = fall?.state === 'down'
+    const isRevived = fall?.state === 'up' && now - fall.at < REVIVE_MS
+    const lastRevive = await read($, revivedBy)
+    const downCells = isDown ? drainCells((PORTRAIT_BUSTS[hero.id]?.idle ?? HERO_CLASS_FRAMES[hero.id].idle)[0] ?? '') : undefined
     // A class with a portrait draws it as a picture until the terminal is found not to draw one.
-    const portraitSet = Raster !== undefined && PORTRAIT_BUSTS[hero.id] !== undefined && canDrawImage !== false ? await portraitFrames($, hero.id) : undefined
+    const portraitSet = !isDown && Raster !== undefined && PORTRAIT_BUSTS[hero.id] !== undefined && canDrawImage !== false ? await portraitFrames($, hero.id) : undefined
     const portrait = portraitSet === undefined ? undefined : frameOf(portraitSet[anim.mood], anim.mood, anim.moodTick)
     anim.heroImage = portrait !== undefined
     if (portrait !== undefined) anim.shownPng = portrait
@@ -1607,8 +1655,9 @@ export const register: Register = on => {
               },
             }),
         hero,
-        list: callList,
+        list: sinceRevive(callList, lastRevive),
         casts: await read($, castCount),
+        ...(isDown ? { knockout: 'down' as const } : isRevived ? { knockout: 'revived' as const } : {}),
         vitals: await read($, vitals),
         combo: await read($, combo),
         boss: bossNow,
@@ -1628,8 +1677,17 @@ export const register: Register = on => {
               onFight: () => fillPrompt($, fightText(bossNow), `Ask Claude: ${fightText(bossNow)}`),
             }),
       },
-      portrait === undefined ? Raster : undefined,
-      portrait !== undefined
+      portrait === undefined && downCells === undefined ? Raster : undefined,
+      downCells !== undefined
+        ? Raster !== undefined
+          ? <Raster key="hero-ko" {...HERO_CELLS} cells={downCells} />
+          : Svg === undefined
+          ? undefined
+          : (() => {
+              const sprite = spriteSvg([cellsToPixels(downCells, HERO_CELLS.columns, HERO_CELLS.rows)], SPRITE_PX, FRAME_MS)
+              return <Svg key="hero" source={sprite.source} alt={`${hero.title}, knocked out`} width={sprite.width} height={sprite.height} />
+            })()
+        : portrait !== undefined
         ? (() => {
             const { Image } = $.ui.resolve(e) as ElementTable<'terminal'>
             return <Image key="hero" source={{ png: portrait }} columns={HERO_CELLS.columns} rows={HERO_CELLS.rows} alt={hero.title} />
