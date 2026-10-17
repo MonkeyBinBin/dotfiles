@@ -1,3 +1,4 @@
+import { RAGE_STALLS } from './boss'
 import { GRAPH_LIMIT } from './git'
 import type { GraphRow } from './git'
 import type { Pixels } from './svg'
@@ -192,16 +193,17 @@ const tint = (color: number, [r, g, b]: readonly [number, number, number]): numb
 }
 
 // Lights keep their colour whatever the hour: fire, a lit gate, fireflies, a spell's spark, rain.
-const LIGHT = { gate: 0xffc864, firefly: 0xe8ff7a, spark: 0xfff07a, sparkCool: 0x9ae6ff, rain: 0x9cc4f0 }
+const LIGHT = { gate: 0xffc864, firefly: 0xe8ff7a, spark: 0xfff07a, sparkCool: 0x9ae6ff, rain: 0x9cc4f0, bolt: 0xfff7c0 }
 
 // The sky follows the boss fight: a storm while one stands, a rainbow once it falls.
-export type Weather = 'clear' | 'storm' | 'rainbow'
+// A boss enraged turns the storm to thunder.
+export type Weather = 'clear' | 'storm' | 'thunder' | 'rainbow'
 
 // How long the rainbow stays once the boss falls.
 export const RAINBOW_MS = 60_000
 
-export const weatherOf = (boss: object | null, fx: { event: string; at: number } | null, now: number): Weather =>
-  boss !== null ? 'storm' : fx?.event === 'defeat' && now - fx.at < RAINBOW_MS ? 'rainbow' : 'clear'
+export const weatherOf = (boss: { stalls?: number } | null, fx: { event: string; at: number } | null, now: number): Weather =>
+  boss !== null ? ((boss.stalls ?? 0) >= RAGE_STALLS ? 'thunder' : 'storm') : fx?.event === 'defeat' && now - fx.at < RAINBOW_MS ? 'rainbow' : 'clear'
 
 const CRYSTAL = { light: 0xbff6ff, mid: 0x5fd8f0, dark: 0x2a98c8 }
 const FIREWORKS = [0xffd23c, 0xff5af0, 0x6af0ff, 0x7aff7a]
@@ -358,6 +360,7 @@ export function drawOverworld(input: OverworldInput): Overworld {
   const phase = input.phase ?? 'day'
   const isNight = phase === 'night'
   const weather = input.weather ?? 'clear'
+  const isStormy = weather === 'storm' || weather === 'thunder'
   // The castle where the boss's storm gathers and its rainbow ends, when the map shows it.
   const townX = townAt !== -1 && townAt < steps ? stepX(townAt) - (townAt === 0 ? 4 : 0) : undefined
   const frames = Array.from({ length: input.event === undefined ? OVERWORLD_FRAMES : EVENT_FRAMES }, (_, frame) => {
@@ -475,7 +478,7 @@ export function drawOverworld(input: OverworldInput): Overworld {
       light(heroX + (frame === 0 ? 2 : -2), heroY - 6, frame === 0 ? LIGHT.spark : LIGHT.sparkCool)
       light(heroX + (frame === 0 ? 1 : -1), heroY - 7 + frame, LIGHT.spark)
     }
-    if (weather === 'storm') {
+    if (isStormy) {
       // Clouds drift along the top, one always over the castle; rain falls a step down and left each frame.
       const at = new Set<number>([...(townX === undefined ? [] : [townX]), ...Array.from({ length: Math.ceil(width / 16) }, (_, k) => k * 16 + Math.floor(noise(seed + 20, k, 0) * 8))])
       for (const x of at) {
@@ -495,10 +498,18 @@ export function drawOverworld(input: OverworldInput): Overworld {
           light(x - 1, y + 1, LIGHT.rain)
         }
       }
+      // Thunder: every other frame a bolt forks down from the clouds over the castle (or the middle) to the ground.
+      if (weather === 'thunder' && frame % 2 === 1) {
+        let x = (townX ?? Math.floor(width / 2)) + Math.floor(noise(seed + 22, frame, 0) * 6) - 3
+        for (let y = 3; y < (road[x] ?? HEIGHT - 2); y += 1) {
+          light(x, y, LIGHT.bolt)
+          if (y % 2 === 0) x += noise(seed + 23, frame, y) < 0.5 ? -1 : 1
+        }
+      }
     }
-    if (phase !== 'day' || weather === 'storm') {
+    if (phase !== 'day' || isStormy) {
       const day = TINTS[phase]
-      const k: [number, number, number] = weather === 'storm' ? [day[0] * STORM_TINT[0], day[1] * STORM_TINT[1], day[2] * STORM_TINT[2]] : [...day]
+      const k: [number, number, number] = isStormy ? [day[0] * STORM_TINT[0], day[1] * STORM_TINT[1], day[2] * STORM_TINT[2]] : [...day]
       colors.forEach((row, y) => {
         for (let x = 0; x < width; x += 1) if (!lights.has(y * width + x)) row[x] = tint(row[x] ?? 0, k)
       })

@@ -276,7 +276,7 @@ function overworldItems(ui: ElementTable, map: GitMap, rows: readonly GraphRow[]
       <Box height={1} justifyContent="center">
         <Text wrap="truncate">
           <Text color="yellow" dimColor>{'═'.repeat(flourish)}</Text>
-          <Text color="yellow"> {actions.weather === 'storm' ? '☂' : PHASE_MARKS[actions.phase ?? 'day']} </Text>
+          <Text color="yellow"> {actions.weather === 'storm' ? '☂' : actions.weather === 'thunder' ? 'ϟ' : PHASE_MARKS[actions.phase ?? 'day']} </Text>
           <Text bold color="yellow">{name}</Text>
           <Text color="yellow"> ✦ </Text>
           <Text color="yellow" dimColor>{'═'.repeat(flourish)}</Text>

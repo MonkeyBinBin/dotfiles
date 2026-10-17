@@ -3,6 +3,7 @@ import type { ElementTable, RenderChildren } from 'claude-code'
 import type { Boss, BossFx } from '../types'
 import { FRAME_MS } from './anim'
 import { barSvg, BAR_HEIGHT, COLUMN_PX, gridToPixels, spriteSvg } from './svg'
+import { isEnraged } from './boss'
 import { barParts, composeSprite } from './util'
 
 // The encounter: while a boss stands, the status panel turns to a duel. The stats step aside, the hero on the left
@@ -16,7 +17,7 @@ const ART_ROWS = 9
 export const BOSS_COLUMNS = BOSS_ART_COLUMNS
 export const BOSS_ROWS = 5
 // How long each moment of the fight stays on the panel.
-export const FX_MS: Record<BossFx['event'], number> = { appear: 2400, hit: 1600, defeat: 1800 }
+export const FX_MS: Record<BossFx['event'], number> = { appear: 2400, hit: 1600, defeat: 1800, enrage: 1600 }
 
 type Monster = { art: readonly string[]; palette: Readonly<Record<string, number>> }
 
@@ -109,29 +110,28 @@ type Canvas = string[][]
 const blankCanvas = (scale: number, columns: number): Canvas =>
   Array.from({ length: (ART_ROWS + 1) * scale }, () => Array.from({ length: columns }, () => '.'))
 
-// The arena the monster stands in, `columns` wide: a stone floor along the bottom, its shadow under it, and where
-// there is room a torch at either side, the flames flickering with `frame`.
-const arena = (scale: number, columns: number, frame: number): Canvas => {
+// The arena the monster stands in, `columns` wide with the monster from `left`: a stone floor along the bottom,
+// its shadow under it, and a torch at either side where the monster (or allies, on the left) leave room, the
+// flames flickering with `frame`.
+const arena = (scale: number, columns: number, frame: number, left: number, hasAllies: boolean): Canvas => {
   const canvas = blankCanvas(scale, columns)
   const height = canvas.length
   const art = BOSS_ART_COLUMNS * scale
-  const left = Math.floor((columns - art) / 2)
   for (let x = 0; x < columns; x += 1) {
     plot(canvas, x, height - 1, x >= left + scale && x < left + art - scale ? '_' : x % 3 === 0 ? '~' : '=')
   }
-  if (columns - art >= 10) {
-    for (const x of [2, columns - 3]) {
-      for (let y = height - 2; y >= height - 1 - 3 * scale; y -= 1) plot(canvas, x, y, '|')
-      // A bowl on the post, the flame leaning one way then the other.
-      const top = height - 2 - 3 * scale
-      const lean = frame % 2 === 0 ? -1 : 1
-      for (const dx of [-1, 0, 1]) plot(canvas, x + dx, top, '|')
-      for (const dx of [-1, 0, 1]) plot(canvas, x + dx, top - 1, dx === 0 ? '*' : '+')
-      plot(canvas, x, top - 2, '*')
-      plot(canvas, x + lean, top - 2, '+')
-      plot(canvas, x + lean, top - 3, '*')
-      if (frame % 3 === 0) plot(canvas, x - lean, top - 4, '+')
-    }
+  const torches = [...(hasAllies || left < 5 ? [] : [2]), ...(columns - (left + art) < 5 ? [] : [columns - 3])]
+  for (const x of torches) {
+    for (let y = height - 2; y >= height - 1 - 3 * scale; y -= 1) plot(canvas, x, y, '|')
+    // A bowl on the post, the flame leaning one way then the other.
+    const top = height - 2 - 3 * scale
+    const lean = frame % 2 === 0 ? -1 : 1
+    for (const dx of [-1, 0, 1]) plot(canvas, x + dx, top, '|')
+    for (const dx of [-1, 0, 1]) plot(canvas, x + dx, top - 1, dx === 0 ? '*' : '+')
+    plot(canvas, x, top - 2, '*')
+    plot(canvas, x + lean, top - 2, '+')
+    plot(canvas, x + lean, top - 3, '*')
+    if (frame % 3 === 0) plot(canvas, x - lean, top - 4, '+')
   }
   return canvas
 }
@@ -210,10 +210,27 @@ const crumbledArt = (art: readonly string[], share: number): string[] =>
 
 export type BossGrid = { art: string[]; palette: Readonly<Record<string, number>> }
 
-const grid = (canvas: Canvas, palette: Readonly<Record<string, number>>): BossGrid => ({
+const gridOf = (canvas: Canvas, palette: Readonly<Record<string, number>>, fx: Readonly<Record<string, number>> = FX_PALETTE): BossGrid => ({
   art: canvas.map(row => row.join('')),
-  palette: { ...palette, ...FX_PALETTE },
+  palette: { ...palette, ...fx },
 })
+
+// Enraged, the torches burn red.
+const RAGE_FX_PALETTE: Readonly<Record<string, number>> = { ...FX_PALETTE, '+': 0xd8201a, '*': 0xff5a2a }
+
+// A colour on the rage's red ramp, as light as it was: dark red in the shadows to hot orange in the light.
+const rageColor = (color: number): number => {
+  const light = (((color >> 16) & 0xff) * 0.3 + ((color >> 8) & 0xff) * 0.59 + (color & 0xff) * 0.11) / 255
+  return (Math.round(110 + 145 * light) << 16) | (Math.round(20 + 120 * light ** 2) << 8) | Math.round(20 + 30 * light)
+}
+
+// A companion fighting beside the hero: a pet's two frames and palette.
+export type Ally = { frames: readonly [readonly string[], readonly string[]]; palette: Readonly<Record<string, number>> }
+// The most allies the arena draws, and how long a returning one's shot takes to land.
+export const MAX_ALLIES = 3
+export const ASSIST_MS = 1600
+const ALLY_COLUMNS = 8
+const ALLY_GAP = 2
 
 // The frames a moment of the fight shows, as pixel grids `scale` times the art, and how long each holds (in
 // animation ticks). It walks in out of the dark, takes a slash and the damage pops off it, or bursts apart.
@@ -224,21 +241,69 @@ export const bossFrames = (
   scale = 1,
   damage = 0,
   columns = BOSS_ART_COLUMNS * scale,
+  isEnraged = false,
+  // Pets out in the background stand on the arena's left; `assist`, the one just back, throws a shot at the boss.
+  party: { allies?: readonly Ally[]; assist?: number } = {},
 ): { grids: BossGrid[]; ticks: number; loop: boolean } => {
   const monster = monsterOf(kind)
-  const { art, palette } = monster
+  const { art } = monster
+  // Enraged, it flushes red, its shading kept, and its torches with it.
+  const palette = isEnraged ? Object.fromEntries(Object.entries(monster.palette).map(([ch, color]) => [ch, rageColor(color)])) : monster.palette
+  const fxPalette = isEnraged ? RAGE_FX_PALETTE : FX_PALETTE
+  const grid = (canvas: Canvas, colors: Readonly<Record<string, number>>) => gridOf(canvas, { ...colors, ...allyPalette }, fxPalette)
   const width = columns
   const height = (ART_ROWS + 1) * scale
-  const left = Math.floor((columns - BOSS_ART_COLUMNS * scale) / 2)
-  // Each frame numbered as it is made, so the torches flicker through every moment.
+  const span = BOSS_ART_COLUMNS * scale
+  // The allies that fit left of the monster, which steps right to make room for them.
+  const allies = (party.allies ?? []).slice(0, MAX_ALLIES).filter((_, at) => ALLY_GAP + (at + 1) * (ALLY_COLUMNS + ALLY_GAP) + span <= columns)
+  const left = allies.length === 0 ? Math.floor((columns - span) / 2) : columns - span - Math.max(0, Math.min(2, columns - span - allies.length * (ALLY_COLUMNS + ALLY_GAP) - ALLY_GAP))
+  const allyX = (at: number) => ALLY_GAP + at * (ALLY_COLUMNS + ALLY_GAP)
+  // Each ally's characters, out of the monster's way: one block of code points apiece.
+  const allyChars = allies.map((ally, at) => new Map(Object.keys(ally.palette).map((ch, k) => [ch, String.fromCharCode(0x100 + at * 32 + k)])))
+  const allyPalette = Object.fromEntries(
+    allies.flatMap((ally, at) => Object.entries(ally.palette).map(([ch, color]) => [allyChars[at]!.get(ch)!, color])),
+  )
+  // Each frame numbered as it is made, so the torches flicker and the allies hop through every moment.
   let made = 0
-  const stage = () => arena(scale, columns, made++)
+  const stage = () => {
+    const frame = made++
+    const canvas = arena(scale, columns, frame, left, allies.length > 0)
+    allies.forEach((ally, at) => {
+      const art = ally.frames[frame % 2]!
+      const top = canvas.length - 1 - art.length
+      art.forEach((line, y) =>
+        [...line].forEach((ch, x) => {
+          const mapped = allyChars[at]!.get(ch)
+          if (mapped !== undefined) plot(canvas, allyX(at) + x, top + y, mapped)
+        }),
+      )
+    })
+    return canvas
+  }
   const pose = (dx: number, dy: number, as?: string) => {
     const canvas = stage()
     stampArt(canvas, art, scale, left + dx, dy, as)
     return canvas
   }
-  const idle = [grid(pose(0, 0), palette), grid(pose(0, scale), palette)]
+  // Enraged, flames lick up off its top edge, flickering frame to frame.
+  const burning = (canvas: Canvas, frame: number) => {
+    if (!isEnraged) return canvas
+    for (let x = 0; x < width; x += 1) {
+      const top = canvas.findIndex(row => row[x] !== '.' && row[x] !== '=' && row[x] !== '~' && row[x] !== '_' && row[x] !== '|' && row[x] !== '+' && row[x] !== '*')
+      if (top <= 0 || x < left || x >= left + BOSS_ART_COLUMNS * scale) continue
+      const lick = crumbleOrder(x, frame) < 0.5 ? 1 : 2
+      for (let up = 1; up <= lick; up += 1) plot(canvas, x, top - up, up === lick ? '*' : '+')
+    }
+    return canvas
+  }
+  const idle = [grid(burning(pose(0, 0), 0), palette), grid(burning(pose(0, scale), 1), palette)]
+
+  if (event === 'enrage') {
+    // It flashes red, shakes with fury, flashes white, and stands burning.
+    const red = { X: 0xff2a1a }
+    const shakes = [scale, -scale, scale, -scale].map(dx => grid(pose(dx, 0, 'X'), red))
+    return { grids: [grid(pose(0, 0, 'X'), red), ...shakes, grid(pose(0, 0, 'X'), { X: WHITE }), ...idle, ...idle, ...idle], ticks: 1, loop: false }
+  }
 
   if (event === 'appear') {
     // A shadow slides in from the right, flashes white, then flickers into the light.
@@ -253,7 +318,6 @@ export const bossFrames = (
   if (event === 'hit') {
     // A slash crosses it from the top right, it flashes and shakes red, and the damage rises off it.
     const slashed = (upTo: number, canvas: Canvas) => {
-      const span = BOSS_ART_COLUMNS * scale
       for (let step = 0; step <= upTo; step += 1) {
         const x = left + span - 1 - step * (span / height)
         plot(canvas, x, step, '#')
@@ -296,12 +360,35 @@ export const bossFrames = (
       loop: false,
     }
   }
+  if (party.assist !== undefined && allies[party.assist] !== undefined) {
+    // The ally just back throws a star: it arcs over to the monster, which flashes as it lands.
+    const fromX = allyX(party.assist) + ALLY_COLUMNS / 2
+    const toX = left + span / 2
+    const shots = [0, 1, 2, 3, 4, 5].map(step => {
+      const canvas = burning(pose(0, 0), step)
+      const t = step / 5
+      const x = fromX + (toX - fromX) * t
+      const y = height * 0.6 - Math.sin(t * Math.PI) * height * 0.45
+      plot(canvas, x, y, '#')
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) plot(canvas, x + dx, y + dy, '*')
+      return grid(canvas, palette)
+    })
+    return { grids: [...shots, grid(pose(0, 0, 'X'), { X: WHITE }), idle[0]!, grid(pose(0, 0, 'X'), { X: WHITE }), ...idle], ticks: 1, loop: false }
+  }
   // Standing, it bobs in place.
   return { grids: idle, ticks: 5, loop: true }
 }
 
-export const bossCells = (kind: string, event: BossFx['event'] | undefined, scale = 1, damage = 0, columns?: number): { frames: string[]; ticks: number; loop: boolean } => {
-  const { grids, ticks, loop } = bossFrames(kind, event, scale, damage, columns)
+export const bossCells = (
+  kind: string,
+  event: BossFx['event'] | undefined,
+  scale = 1,
+  damage = 0,
+  columns?: number,
+  isEnraged = false,
+  party: { allies?: readonly Ally[]; assist?: number } = {},
+): { frames: string[]; ticks: number; loop: boolean } => {
+  const { grids, ticks, loop } = bossFrames(kind, event, scale, damage, columns, isEnraged, party)
   return { frames: grids.map(one => composeSprite(one.art, one.palette)), ticks, loop }
 }
 
@@ -321,6 +408,8 @@ export type FoeSideProps = {
   // The cells the Raster first draws, before the animation's next blit.
   cells?: string
   onFight?: () => void
+  // Background pets fighting beside the hero, and the one just back with a shot.
+  party?: { allies?: readonly Ally[]; assist?: number }
 }
 
 // The duel's middle column: the foe's name and HP over a big VS, the moment of the fight cried under it. It
@@ -384,23 +473,26 @@ export function renderFoeSide(ui: ElementTable, props: FoeSideProps, rows: numbe
   const columns = duel.arenaColumns
   const spriteRows = BOSS_ROWS * scale
   const damage = fx?.event === 'hit' ? fx.damage : 0
+  const enraged = !isDefeat && isEnraged(boss)
 
   let sprite: RenderChildren = null
   if (Raster !== undefined) {
     sprite = <Raster key="boss" columns={columns} rows={spriteRows} cells={props.cells ?? ''} />
   } else if (Svg !== undefined) {
-    const { grids, ticks } = bossFrames(boss.kind, fx?.event, scale, damage, columns)
+    const { grids, ticks } = bossFrames(boss.kind, fx?.event, scale, damage, columns, enraged, props.party)
     const drawn = spriteSvg(grids.map(one => gridToPixels(one.art, one.palette)), COLUMN_PX, FRAME_MS * ticks)
     sprite = <Svg key="boss" source={drawn.source} alt={boss.name} width={drawn.width} height={drawn.height} {...(drawn.isAnimated ? { isInteractive: true } : {})} />
   }
 
-  // The moment, cried under the VS; quiet while it only stands.
+  // The moment, cried under the VS; a rage it stays in; quiet while it only stands.
   const cry = isDefeat ? (
     <Text bold color="yellow">✦ VICTORY</Text>
   ) : fx?.event === 'appear' ? (
     <Text bold color="red">! APPEARS</Text>
   ) : damage > 0 ? (
     <Text bold color="yellow">{damage * 2 >= fx!.boss.maxHp ? '💥 CRIT!' : '⚔ HIT!'}</Text>
+  ) : enraged ? (
+    <Text bold color="red">🔥 ENRAGED</Text>
   ) : (
     <Text> </Text>
   )

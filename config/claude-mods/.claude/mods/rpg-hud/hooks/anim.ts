@@ -53,6 +53,8 @@ export const anim = {
   // Running pets on screen, by Raster key, with the seed that picks their sprite.
   pets: new Map<string, { seed: string; shown: string }>(),
   // The encounter card's monster while on screen: the frames of the moment it plays, from the tick it began.
+  // The combo's aura beside the portrait, while one burns.
+  aura: undefined as { frames: string[]; shown: string } | undefined,
   boss: undefined as { key: string; frames: string[]; ticks: number; loop: boolean; columns: number; rows: number; start: number; shown: string } | undefined,
   // Running jobs on screen, by Raster key: the march strip shown last.
   jobs: new Map<string, { shown: string }>(),

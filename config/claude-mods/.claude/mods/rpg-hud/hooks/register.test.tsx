@@ -1,9 +1,10 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
+import type { ToolCall } from '../types'
 
 import { HERO_FRAMES } from './hero-cells'
 import { HURT_MS, pickFrame, pickMood } from './anim'
-import { bossFor, bossesFor, countFailures, failedGuard, fightBoss, fightText, gitEventOf, runsGit } from './boss'
+import { bossFor, bossesFor, countFailures, failedGuard, fightBoss, fightText, gitEventOf, isEnraged, runsGit } from './boss'
 import { GIT_STATUS, diffArgv, isLinear, parseBag, parseLog, parseLogLine, parseStatus, parseWorktrees, shortAge } from './git'
 import { layoutLanes, laneText } from './lanes'
 import { campsOn, exploredRegions } from './map'
@@ -15,11 +16,13 @@ import { countPatch, patchSource } from './edit-card'
 import { trailStops } from './map'
 import { gaugeColor, heroStats, manaLeft, normalizeCall, panelDuel, rankFor, statusLayout } from './hero'
 import { rosterOrder } from './pets'
-import { petCells, speciesFor } from './pet-sprites'
+import { petArt, petCells, speciesFor } from './pet-sprites'
+import { REST_MS, restingMana } from './rest'
+import { AURA_FRAMES, auraFrames, auraTier } from './aura'
 import { MANA_ALARMS, MAP_FX_MS, REVIVE_MS, campFor, localHour, parseUtcOffset, isRefusal, manaAlarm, returnToast, skillOfPrompt, touchFile } from './register'
 import { formatDuration, recapText, topTools } from './recap'
 import { HELP_COMMANDS, helpText } from './help'
-import { filterSpells, timeColor } from './spellbook'
+import { filterSpells, spellRarity, timeColor } from './spellbook'
 import { SKILL_KEYS, groupSkills, masteryStars, skillKeys } from './skills'
 import { KEPT_JOBS, MARCH_COLUMNS, MARCH_TICKS, endJob, jobState, marchCells, jobOrder, parseJobEnds, reconcileJobs, trimJobs } from './jobs'
 import { barFill, oneLine } from './util'
@@ -549,6 +552,126 @@ test('the sky follows the boss: a storm while one stands, a rainbow once it fall
   const rainbow = draw('rainbow')
   expect(JSON.stringify(rainbow[0]?.slice(0, 3))).not.toBe(JSON.stringify(clear[0]?.slice(0, 3)))
   expect(JSON.stringify(rainbow[0]?.slice(-4))).toBe(JSON.stringify(clear[0]?.slice(-4)))
+})
+
+test('a boss nothing lands on flies into a rage, burning in the arena under thunder, and a blow calms it', () => {
+  const first = fightBoss(null, 'pnpm test', true, '3 failed')
+  const once = fightBoss(first.boss, 'pnpm test', true, '3 failed')
+  expect(once.event).toBeUndefined()
+  expect(isEnraged(once.boss)).toBe(false)
+  const twice = fightBoss(once.boss, 'pnpm test', true, '4 failed')
+  expect(twice.event).toBe('enrage')
+  expect(isEnraged(twice.boss)).toBe(true)
+  // A third miss stays enraged without crying it again.
+  expect(fightBoss(twice.boss, 'pnpm test', true, '4 failed').event).toBeUndefined()
+  const calmed = fightBoss(twice.boss, 'pnpm test', true, '1 failed')
+  expect(calmed.event).toBe('hit')
+  expect(isEnraged(calmed.boss)).toBe(false)
+
+  expect(weatherOf(twice.boss, null, 0)).toBe('thunder')
+  expect(weatherOf(once.boss, null, 0)).toBe('storm')
+  const rows = parseLog([logLine('a000001', '', 'HEAD -> main, origin/main', '1 hour ago', 'a')])
+  const thunder = drawOverworld({ rows, dirty: 0, width: 48, seed: 'repo', weather: 'thunder' }).frames
+  expect(thunder[1]?.flat()).toContain(0xfff7c0)
+  expect(drawOverworld({ rows, dirty: 0, width: 48, seed: 'repo', weather: 'storm' }).frames.flat(2)).not.toContain(0xfff7c0)
+
+  const calm = bossFrames('test', undefined, 2, 0, 48)
+  const raging = bossFrames('test', undefined, 2, 0, 48, true)
+  expect(JSON.stringify(raging.grids)).not.toBe(JSON.stringify(calm.grids))
+  const enrage = bossFrames('test', 'enrage', 2, 0, 48, true)
+  expect(enrage.loop).toBe(false)
+  expect(enrage.grids[0]?.palette.X).toBe(0xff2a1a)
+})
+
+test('background pets stand on the arena\'s left, and one just back throws a shot that lands on the boss', () => {
+  const allies = [petArt('agent-1'), petArt('agent-2')]
+  const alone = bossFrames('test', undefined, 2, 0, 48).grids[0]!
+  const together = bossFrames('test', undefined, 2, 0, 48, false, { allies }).grids[0]!
+  // The pets' own pixels show on the left; the monster steps right.
+  const petPixels = (grid: typeof alone) => grid.art.join('').split('').filter(ch => ch.charCodeAt(0) >= 0x100).length
+  expect(petPixels(alone)).toBe(0)
+  expect(petPixels(together)).toBeGreaterThan(20)
+  for (const line of together.art) expect(line).toHaveLength(48)
+  // Too narrow an arena leaves them out.
+  expect(petPixels(bossFrames('test', undefined, 2, 0, 24, false, { allies }).grids[0]!)).toBe(0)
+  const shot = bossFrames('test', undefined, 2, 0, 48, false, { allies, assist: 1 })
+  expect(shot.loop).toBe(false)
+  expect(shot.grids.slice(0, 6).every(grid => grid.art.join('').includes('#'))).toBe(true)
+  expect(shot.grids[6]?.palette.X).toBe(0xffffff)
+})
+
+test('a combo of ten burns a gold aura beside the portrait, of twenty every colour, and a fizzle puts it out', async ($, on) => {
+  expect(auraTier(9)).toBe(0)
+  expect(auraTier(10)).toBe(1)
+  expect(auraTier(20)).toBe(2)
+  for (const tier of [1, 2] as const) {
+    const frames = auraFrames(tier, 10)
+    expect(frames).toHaveLength(AURA_FRAMES)
+    expect(new Set(frames.map(frame => JSON.stringify(frame))).size).toBeGreaterThan(1)
+    for (const frame of frames) expect(frame).toHaveLength(20)
+  }
+  expect(auraFrames(2, 10).flat(2)).toContain(0xb466ff)
+  expect(auraFrames(1, 10).flat(2)).not.toContain(0xb466ff)
+
+  let failing = false
+  world(on, { tool: e => (failing && e.tool === 'Bash' ? fail('boom') : undefined) })
+  for (let n = 0; n < 10; n += 1) await $.tool.call({ tool: 'Read', file_path: `/x/${n}.md` })
+  const ui = await mountPane($, 'terminal')
+  expect((await ui.findAll({ type: 'Raster' })).some(raster => raster.key === 'aura')).toBe(true)
+  failing = true
+  await $.tool.call({ tool: 'Bash', command: 'boom' })
+  expect((await ui.findAll({ type: 'Raster' })).some(raster => raster.key === 'aura')).toBe(false)
+})
+
+test('a spell is as rare as what it achieved, and only one that landed has a rarity', async ($, on) => {
+  const call = (tool: string, extra: Partial<ToolCall> = {}): ToolCall => ({ id: 'c', tool, summary: '', startedAt: 0, status: 'ok', ...extra })
+  expect(spellRarity(call('Read'))).toBe('common')
+  expect(spellRarity(call('Edit'))).toBe('rare')
+  expect(spellRarity(call('Bash', { feat: 'save' }))).toBe('rare')
+  expect(spellRarity(call('Agent'))).toBe('epic')
+  expect(spellRarity(call('Bash', { feat: 'deliver' }))).toBe('epic')
+  expect(spellRarity(call('Bash', { feat: 'slay' }))).toBe('legendary')
+  expect(spellRarity(call('Edit', { status: 'err' }))).toBeUndefined()
+
+  let output = 'Tests: 3 failed, 9 passed'
+  world(on, { tool: e => (e.tool === 'Bash' ? (output === '' ? { result: { text: 'all green' } } : fail(output)) : undefined) })
+  await $.tool.call({ tool: 'Bash', command: 'pnpm test' })
+  output = ''
+  await $.tool.call({ tool: 'Bash', command: 'pnpm test' })
+  await $.tool.call({ tool: 'Edit', file_path: '/x/a.ts', old_string: 'a', new_string: 'b' } as never)
+  const ui = await mountPane($, 'terminal', 40)
+  const shown = (await texts(ui)).join('|')
+  expect(shown).toContain('★')
+  expect(shown).toContain('◆')
+})
+
+test('an enraged boss says so in the duel', async ($, on) => {
+  const { toasts } = world(on, { tool: failBash('Tests: 3 failed, 9 passed') })
+  for (let n = 0; n < 3; n += 1) await $.tool.call({ tool: 'Bash', command: 'pnpm test' })
+  expect(toasts.some(toast => toast.includes('is enraged'))).toBe(true)
+  const ui = await mountPane($, 'terminal')
+  expect((await texts(ui)).join('|')).toContain('🔥 ENRAGED')
+})
+
+test('a night at the inn pours the MP back, easing in', () => {
+  expect(restingMana(10, 90, 0)).toBe(10)
+  expect(restingMana(10, 90, REST_MS)).toBe(90)
+  expect(restingMana(10, 90, REST_MS * 10)).toBe(90)
+  // Most of it pours in the first half.
+  expect(restingMana(10, 90, REST_MS / 2)).toBeGreaterThan(70)
+})
+
+test('a compaction of the main conversation rests the hero at the inn while the MP pours back', async ($, on) => {
+  const summary = [{ role: 'user', text: 'summary', toolUses: [] }]
+  on('session.compact', async () => ({ messages: summary }) as never)
+  const { clock, toasts } = world(on, { usage: { startedAt: 0, rateLimits: [], context: { window: 200000, percent: 30 } } })
+  await $.tool.call({ tool: 'Read', file_path: '/x/a.md' })
+  await $.session.compact({ trigger: 'manual', messages: summary } as never)
+  expect(toasts).toContain('🌙 Rested at the inn: MP restored')
+  const ui = await mountPane($, 'terminal')
+  expect((await texts(ui)).join('|')).toContain('🌙 Resting at the inn')
+  await clock.advance(REST_MS + 200)
+  expect((await texts(ui)).join('|')).not.toContain('Resting at the inn')
 })
 
 test('a commit saves on the map and a push delivers, whatever git options come first', () => {

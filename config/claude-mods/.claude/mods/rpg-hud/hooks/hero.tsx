@@ -6,6 +6,7 @@ import { barParts, oneLine } from './util'
 import { BAR_HEIGHT, COLUMN_PX, barSvg } from './svg'
 import { CLASSES, rankOf } from './classes'
 import { battleFrame, duelLayout, renderFoeSide } from './encounter'
+import { restingMana } from './rest'
 import type { FoeSideProps } from './encounter'
 import type { HeroClass } from './classes'
 
@@ -106,6 +107,10 @@ export type StatusData = {
   foe?: Omit<FoeSideProps, 'onFight'>
   // Knocked out (every heart lost), or just revived by a clean cast.
   knockout?: 'down' | 'revived'
+  // A night at the inn under way: how far into it, and the MP left before it.
+  rest?: { elapsed: number; from?: number }
+  // The combo's aura, drawn in the gap beside the portrait, and its tier for the frame's colour.
+  aura?: { node: RenderChildren; tier: 1 | 2 }
 }
 
 const FIGHT_LABEL = '⚔ fix'
@@ -158,7 +163,13 @@ export function renderStatus(ui: ElementTable, data: StatusData, Raster?: Elemen
   // Every surface but the terminal (the one with a Raster) draws SVG.
   const Svg = Raster === undefined && 'Svg' in ui ? (ui.Svg as SvgElement) : undefined
   const frame =
-    data.knockout === 'down' ? 'gray' : data.knockout === 'revived' ? 'green' : data.isFlashing ? 'yellow' : hasFoeSide ? battleFrame(data.foe?.fx) : hero.color
+    data.knockout === 'down' ? 'gray'
+    : data.knockout === 'revived' ? 'green'
+    : data.rest !== undefined ? 'cyan'
+    : data.isFlashing ? 'yellow'
+    : hasFoeSide ? battleFrame(data.foe?.fx)
+    : data.aura !== undefined ? (data.aura.tier === 2 ? 'magenta' : 'yellow')
+    : hero.color
   const fullName = `CLAUDE THE ${hero.title}`
   // Room for `Lv.NN` beside the name, and for the ? after it.
   const name = statsWidth >= fullName.length + 6 + (data.onHelp === undefined ? 0 : 2) ? fullName : 'CLAUDE'
@@ -199,6 +210,7 @@ export function renderStatus(ui: ElementTable, data: StatusData, Raster?: Elemen
         // A drawing sits at the top of its box: off the terminal the portrait is centred down the stats column.
         <Box width={HERO_CELLS.columns + (hasFoeSide ? 1 : PORTRAIT_GAP)} {...(Svg === undefined ? {} : { height: STATS_ROWS, alignItems: 'center' as const })}>
           {Raster ? <Raster key="hero" {...HERO_CELLS} cells={anim.shownCells} /> : portrait}
+          {!hasFoeSide && data.aura?.node}
         </Box>
       )}
       {hasFoeSide && data.foe !== undefined
@@ -229,6 +241,11 @@ export function renderStatus(ui: ElementTable, data: StatusData, Raster?: Elemen
         {Bar(ui, 'HP', gaugeColor(hp, HEARTS, 'green'), hp, HEARTS, `${hp}/${HEARTS}`, barWidth, Svg)}
         {mp === undefined
           ? Bar(ui, 'MP', 'blue', 0, MP_MAX, '?', barWidth, Svg)
+          : data.rest !== undefined
+          ? (() => {
+              const poured = restingMana(data.rest.from ?? 0, mp, data.rest.elapsed)
+              return Bar(ui, 'MP', 'cyan', poured, MP_MAX, `${poured}%`, barWidth, Svg)
+            })()
           : Bar(ui, 'MP', gaugeColor(mp, MP_MAX, 'blue'), mp, MP_MAX, `${mp}%`, barWidth, Svg)}
         {Bar(ui, 'XP', 'magenta', xp, CALLS_PER_LEVEL, `${xp}/${CALLS_PER_LEVEL}`, barWidth, Svg)}
         <Text color={frame} dimColor wrap="truncate">
@@ -249,7 +266,11 @@ export function renderStatus(ui: ElementTable, data: StatusData, Raster?: Elemen
           <Text color="green">  ♣ {data.petsOut}</Text>
           <Text dimColor> in party</Text>
         </Text>
-        {data.knockout === 'down' ? (
+        {data.rest !== undefined ? (
+          <Text bold color="cyan" wrap="truncate">
+            🌙 Resting at the inn <Text dimColor>· MP restored</Text>
+          </Text>
+        ) : data.knockout === 'down' ? (
           <Text bold color="red" wrap="truncate">
             💀 K.O. <Text dimColor>· a clean cast revives</Text>
           </Text>

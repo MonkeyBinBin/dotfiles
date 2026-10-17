@@ -183,10 +183,15 @@ export const countFailures = (output: string): number => {
   return most > 0 ? most : 1
 }
 
-export type BossTurn = { boss: Boss | null; event?: 'appear' | 'hit' | 'defeat' }
+export type BossTurn = { boss: Boss | null; event?: 'appear' | 'hit' | 'defeat' | 'enrage' }
+
+// Failed runs in a row that land no blow before the boss flies into a rage.
+export const RAGE_STALLS = 2
+export const isEnraged = (boss: Boss | null | undefined): boolean => (boss?.stalls ?? 0) >= RAGE_STALLS
 
 // One guarded run against the current boss: a failure spawns or heals it, its HP counted from the failed check's
-// own output on. A passing command slays the boss when it vouches for that boss's kind of check.
+// own output on, and one that lands no blow stokes its rage. A passing command slays the boss when it vouches for
+// that boss's kind of check.
 export const fightBoss = (current: Boss | null, command: string, isError: boolean, output: string): BossTurn => {
   if (!isError) {
     if (current !== null && passedKinds(command).includes(current.kind)) return { boss: null, event: 'defeat' }
@@ -199,8 +204,10 @@ export const fightBoss = (current: Boss | null, command: string, isError: boolea
   if (current === null || current.kind !== found.kind) {
     return { boss: { ...found, hp, maxHp: hp, command }, event: 'appear' }
   }
+  if (hp < current.hp) return { boss: { ...current, hp, maxHp: Math.max(current.maxHp, hp), command, stalls: 0 }, event: 'hit' }
+  const stalls = (current.stalls ?? 0) + 1
   return {
-    boss: { ...current, hp, maxHp: Math.max(current.maxHp, hp), command },
-    event: hp < current.hp ? 'hit' : undefined,
+    boss: { ...current, hp, maxHp: Math.max(current.maxHp, hp), command, stalls },
+    ...(stalls === RAGE_STALLS ? { event: 'enrage' as const } : {}),
   }
 }

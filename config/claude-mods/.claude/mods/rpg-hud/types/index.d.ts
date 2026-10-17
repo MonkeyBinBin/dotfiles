@@ -8,6 +8,8 @@ export type ToolCall = {
   startedAt: number
   ms?: number
   status: ToolCallStatus
+  // What the call achieved beyond its own work: slew a boss, saved (a commit) or delivered (a push).
+  feat?: 'slay' | 'save' | 'deliver'
 }
 
 // Which calls the spell book lists: every one, the fizzles, or the slow ones.
@@ -64,11 +66,12 @@ export type Vitals = { contextPercent?: number; usd?: number }
 export type Combo = { current: number; best: number }
 
 // A failing test or lint run; cleared once the same kind of command passes.
-export type Boss = { name: string; kind: string; hp: number; maxHp: number; command: string }
+// `stalls`: failed runs in a row that cost it nothing; enough of them enrage it, a blow calms it.
+export type Boss = { name: string; kind: string; hp: number; maxHp: number; command: string; stalls?: number }
 
 // The latest moment of a boss fight, which the encounter card plays for a while: the boss as it then stood
 // (the one slain, for a defeat) and the HP a hit took.
-export type BossFx = { event: 'appear' | 'hit' | 'defeat'; at: number; damage: number; boss: Boss }
+export type BossFx = { event: 'appear' | 'hit' | 'defeat' | 'enrage'; at: number; damage: number; boss: Boss }
 
 // The hero's last fall or rise: knocked out when the hearts run out, revived by the next clean cast.
 export type Knockout = { state: 'down' | 'up'; at: number }
@@ -190,6 +193,8 @@ declare module 'claude-code' {
       // The call that last revived the hero: failures before it no longer cost hearts. '' until then.
       revivedBy: string
       mapFx: MapFx | null
+      // The last compaction, a night at the inn: when, and the MP left before it.
+      restFx: { at: number; from?: number } | null
       // Each closing line's loot, by the line's id.
       claimedLoot: Record<string, import('../hooks/loot').Loot>
     }

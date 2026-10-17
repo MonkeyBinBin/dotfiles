@@ -33,6 +33,28 @@ const SCHOOLS: Record<string, { rune: string; color: string }> = {
 export const schoolOf = (tool: string) =>
   SCHOOLS[tool] ?? (tool.startsWith('mcp__') ? { rune: '⚙', color: 'white' } : { rune: '•', color: 'white' })
 
+// How rare a spell was, by what it achieved: slaying a boss is legendary; a delivery, a summons or a skill epic; a
+// save or a forged file rare; the rest common. Only a spell that landed has one.
+export type Rarity = 'common' | 'rare' | 'epic' | 'legendary'
+
+const EPIC_TOOLS = new Set(['Agent', 'Skill'])
+const RARE_TOOLS = new Set(['Edit', 'Write', 'NotebookEdit', 'MultiEdit'])
+
+export const spellRarity = (call: ToolCall): Rarity | undefined => {
+  if (call.status !== 'ok') return undefined
+  if (call.feat === 'slay') return 'legendary'
+  if (call.feat === 'deliver' || EPIC_TOOLS.has(call.tool)) return 'epic'
+  if (call.feat === 'save' || RARE_TOOLS.has(call.tool)) return 'rare'
+  return 'common'
+}
+
+// A landed spell's mark by its rarity; the common keep the plain tick.
+const RARITY_MARKS: Record<Exclude<Rarity, 'common'>, { glyph: string; color: string }> = {
+  rare: { glyph: '◆', color: 'blue' },
+  epic: { glyph: '◆', color: 'magenta' },
+  legendary: { glyph: '★', color: 'yellow' },
+}
+
 // A call this long is slow, and one this long is a slog: its time turns yellow, then red.
 export const SLOW_MS = 5_000
 const SLOG_MS = 30_000
@@ -86,7 +108,8 @@ export function spellItems(ui: ElementTable, list: readonly ToolCall[], width: n
   return kept
     .reverse()
     .map(call => {
-      const mark = STATUS_MARKS[call.status]
+      const rarity = spellRarity(call)
+      const mark = rarity === undefined || rarity === 'common' ? STATUS_MARKS[call.status] : RARITY_MARKS[rarity]
       const school = schoolOf(call.tool)
       return {
         key: call.id,
@@ -94,13 +117,14 @@ export function spellItems(ui: ElementTable, list: readonly ToolCall[], width: n
         node: (
           <Box height={1}>
             <Box width={COLUMNS.mark}>
-              <Text color={mark.color}>{mark.glyph}</Text>
+              <Text color={mark.color} bold={rarity === 'legendary'}>{mark.glyph}</Text>
             </Box>
             <Box width={COLUMNS.rune}>
               <Text color={school.color}>{school.rune}</Text>
             </Box>
             <Box width={COLUMNS.tool}>
-              <Text bold color={school.color} wrap="truncate">
+              {/* A legendary spell's name burns gold whatever its school. */}
+              <Text bold color={rarity === 'legendary' ? 'yellow' : school.color} wrap="truncate">
                 {oneLine(call.tool, COLUMNS.tool - 1)}
               </Text>
             </Box>

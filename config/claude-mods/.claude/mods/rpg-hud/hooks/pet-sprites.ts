@@ -156,3 +156,9 @@ export const petCells = (seed: string, status: ToolCallStatus, frame: number): s
   cache.set(key, cells)
   return cells
 }
+
+// A pet's two frames and palette as pixel art, for drawing it into another scene (the boss's arena).
+export const petArt = (seed: string): { frames: readonly [readonly string[], readonly string[]]; palette: Readonly<Record<string, number>> } => {
+  const species = speciesFor(seed)
+  return { frames: species.frames, palette: species.palette }
+}

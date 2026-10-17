@@ -30,15 +30,15 @@ import type { Mood } from './anim'
 import { HERO_CLASS_FRAMES } from './hero-cells'
 import type { HeroClassId } from './hero-cells'
 import { cellsToPixels, gridToPixels, spriteSvg } from './svg'
-import { fightBoss, fightText, gitEventOf, runsGit } from './boss'
-import { BOSS_ROWS, FX_MS, bossCells, liveFx, shownBoss } from './encounter'
+import { fightBoss, fightText, gitEventOf, isEnraged, runsGit } from './boss'
+import { ASSIST_MS, BOSS_ROWS, FX_MS, MAX_ALLIES, bossCells, liveFx, shownBoss } from './encounter'
 import type { BagProps, BagRow } from './bag-client'
 import { GIT_LOG, GIT_NUMSTAT, GIT_REMOTES, GIT_STATUS, GIT_WORKTREES, diffArgv, outpostArgv, parseBag, parseStatus, parseWorktrees, shortAge } from './git'
 import type { OutpostRow, OutpostsProps } from './outposts-client'
 import { bagSubtitle, inspectItems } from './inspect'
 import { renderEditCard } from './edit-card'
 import type { EditOutput } from './edit-card'
-import { CALLS_PER_LEVEL, STATUS_ROWS, heroStats, normalizeCall, panelDuel, renderStatus, statusLayout } from './hero'
+import { CALLS_PER_LEVEL, STATUS_ROWS, heroStats, manaLeft, normalizeCall, panelDuel, renderStatus, statusLayout } from './hero'
 import { PORTRAIT_BUSTS, PORTRAIT_FRAMES } from './portrait-cells'
 import { CLASS_IDS, classOf, isClassId, rankOf, rollClass } from './classes'
 import { mapItems, mapSubtitle } from './map'
@@ -46,7 +46,7 @@ import { RAINBOW_MS, phaseOf, weatherOf } from './overworld'
 import { ICON_COLUMNS, ICON_ROWS, MENU, drawnIcon, entryOf, iconText, isTab } from './menu'
 import { cardWidth, slotKey } from './menu-client'
 import type { MenuIconProps } from './menu-client'
-import { PET_COLUMNS, PET_ROWS, petCells, petSeed, speciesFor } from './pet-sprites'
+import { PET_COLUMNS, PET_ROWS, petArt, petCells, petSeed, speciesFor } from './pet-sprites'
 import { partySubtitle, petItems } from './pets'
 import { recapText } from './recap'
 import { castText, skillItems, skillKeys, skillRows, skillsSubtitle } from './skills'
@@ -55,7 +55,9 @@ import { HELP_COMMANDS, helpItems, helpText } from './help'
 import { EMPTY_PROGRESS, progressOf } from './progress'
 import { MARCH_COLUMNS, addJob, endJob, jobItems, jobsSubtitle, marchCells, parseJobEnds, reconcileJobs, trimJobs } from './jobs'
 import type { JobEnd } from './jobs'
-import { drainCells, summarize } from './util'
+import { composeColors, drainCells, summarize } from './util'
+import { AURA_COLUMNS, auraFrames, auraTier } from './aura'
+import { REST_MS } from './rest'
 import { EMPTY_LOOT, KEPT_CLAIMED, KEPT_UNCLAIMED, claimLoot, forge, lootText } from './loot'
 import type { Loot, TurnLoot } from './loot'
 import { WINDOW_CHROME_COLUMNS, WINDOW_CHROME_ROWS, clampOffset, pageItems, renderWindow, totalRows } from './window'
@@ -106,6 +108,7 @@ const claimedLoot = atom({ plugin: 'rpg-hud', key: 'claimedLoot' } as const, {} 
 const knockout = atom({ plugin: 'rpg-hud', key: 'knockout' } as const, null as Knockout | null)
 const revivedBy = atom({ plugin: 'rpg-hud', key: 'revivedBy' } as const, '')
 const mapFx = atom({ plugin: 'rpg-hud', key: 'mapFx' } as const, null as MapFx | null)
+const restFx = atom({ plugin: 'rpg-hud', key: 'restFx' } as const, null as { at: number; from?: number } | null)
 
 // The calls since the hero last revived, the one that revived them first; all of them when it has scrolled out.
 export const sinceRevive = <T extends { id: string }>(list: readonly T[], revivedBy: string): T[] => {
@@ -116,6 +119,8 @@ export const sinceRevive = <T extends { id: string }>(list: readonly T[], revive
 // How long the panel glows after a revive, and the map plays a save or a delivery.
 export const REVIVE_MS = 2500
 export const MAP_FX_MS = 4800
+// How often the panel is drawn while the MP pours back after a compaction.
+const REST_FRAME_MS = 120
 
 // Starts the HUD's watch of the session, once; a reload keeps it.
 const markStart = async ($: EngineInterface) => {
@@ -159,6 +164,7 @@ async function resetSession($: EngineInterface) {
     update($, knockout, () => null),
     update($, revivedBy, () => ''),
     update($, mapFx, () => null),
+    update($, restFx, () => null),
     update($, unclaimedLoot, () => []),
     update($, startedAt, () => now),
     update($, pets, list => list.filter(pet => pet.status === 'run')),
@@ -759,6 +765,16 @@ async function paintBoss($: EngineInterface) {
   else anim.boss = undefined
 }
 
+// The combo's aura: its sparks climb a step each tick.
+async function paintAura($: EngineInterface) {
+  const aura = anim.aura
+  if (aura === undefined) return
+  const cells = aura.frames[anim.tick % aura.frames.length] ?? aura.shown
+  if (cells === aura.shown) return
+  if (await blit($, 'aura', cells, AURA_COLUMNS, HERO_CELLS.rows)) aura.shown = cells
+  else anim.aura = undefined
+}
+
 async function paint($: EngineInterface) {
   anim.tick += 1
   const hasPets = anim.tab === 'pets' && anim.pets.size > 0
@@ -769,8 +785,9 @@ async function paint($: EngineInterface) {
   if (hasPets) await paintPets($)
   if (hasMap) await paintOverworld($)
   if (anim.boss !== undefined) await paintBoss($)
+  if (anim.aura !== undefined) await paintAura($)
   if (hasJobs) await paintJobs($)
-  if (!anim.hasHero && !hasPets && !hasMap && !hasJobs && anim.boss === undefined) stop()
+  if (!anim.hasHero && !hasPets && !hasMap && !hasJobs && anim.boss === undefined && anim.aura === undefined) stop()
 }
 
 // Each draw of an animated tab starts the clock again if a refusal stopped it.
@@ -798,6 +815,8 @@ const heroSprite = (hero: HeroClassId, mood: Mood) =>
 
 // Off the terminal nothing blits: when the smoke puff runs out the pane is drawn again, back to the mood under it.
 let hurtRedraw: Timer | undefined
+// A pet's shot at the boss plays out, then the arena is drawn again without it.
+let assistRedraw: Timer | undefined
 
 // --- The menu windows ---
 
@@ -1268,6 +1287,24 @@ export const register: Register = on => {
     return next(e)
   })
 
+  // A compaction of the main conversation is a night at the inn: the MP left before it pours back to what the
+  // window holds now, the panel drawn over and over while it fills.
+  on('session.compact', async ($, e, next) => {
+    const before = manaLeft(await read($, vitals))
+    const result = await next(e)
+    if (e.trigger === 'precompute' || e.agentId !== undefined || result.skip !== undefined) return result
+    const at = await $.clock.now()
+    await update($, restFx, () => (before === undefined ? { at } : { at, from: before }))
+    await refreshVitals($).catch(() => undefined)
+    $.ui.toast('🌙 Rested at the inn: MP restored')
+    const pour = $.clock.every(REST_FRAME_MS, () => $.ui.invalidate('ui.render'))
+    $.clock.after(REST_MS, () => {
+      pour.cancel()
+      $.ui.invalidate('ui.render')
+    })
+    return result
+  })
+
   on('agent.spawn', async ($, e, next) => {
     const ran = await next(e)
     const isIsolated = isolated.delete(e.tool_use_id)
@@ -1367,6 +1404,7 @@ export const register: Register = on => {
       if (EDIT_TOOLS.has(e.tool)) void refreshMap($, 'files').catch(() => undefined)
       if (isMain && !isError && EDIT_TOOLS.has(e.tool)) await update($, turnLoot, loot => forge(loot, path))
     }
+    let feat: ToolCall['feat']
     if (e.tool === 'Bash' && !isRefused) {
       const command = e.command
       const before = await read($, boss)
@@ -1383,7 +1421,11 @@ export const register: Register = on => {
       if (fight.event === 'appear' && fight.boss !== null) {
         $.ui.toast(`☠ ${fight.boss.name} appears! HP ${fight.boss.hp}`)
       }
+      if (fight.event === 'enrage' && fight.boss !== null) {
+        $.ui.toast(`🔥 ${fight.boss.name} is enraged! Nothing has landed on it`)
+      }
       if (fight.event === 'defeat') {
+        feat = 'slay'
         $.ui.toast('⚔ Boss defeated!')
         // The rainbow over the map fades once its while is up.
         $.clock.after(RAINBOW_MS, () => $.ui.invalidate('ui.render'))
@@ -1393,6 +1435,7 @@ export const register: Register = on => {
       // A commit saves on the map, a push delivers to the castle; a failed one does neither.
       const gitEvent = isError ? undefined : gitEventOf(command)
       if (gitEvent !== undefined) {
+        feat ??= gitEvent
         const at = await $.clock.now()
         await update($, mapFx, (): MapFx => ({ event: gitEvent, at }))
         $.ui.toast(gitEvent === 'deliver' ? '🏰 Loot delivered to the castle!' : '💾 Progress saved')
@@ -1433,7 +1476,9 @@ export const register: Register = on => {
     if (isError || isRefused) {
       await update($, tally, t => (isError ? { ...t, failures: t.failures + 1 } : { ...t, refusals: t.refusals + 1 }))
     }
-    await update($, calls, list => list.map(one => (one.id === call.id ? { ...normalizeCall(one), ms, status } : one)))
+    await update($, calls, list =>
+      list.map(one => (one.id === call.id ? { ...normalizeCall(one), ms, status, ...(feat === undefined ? {} : { feat }) } : one)),
+    )
     // The last heart lost knocks the hero out; the next clean cast revives them with every heart back.
     const fallen = await read($, knockout)
     if (isError && fallen?.state !== 'down') {
@@ -1619,6 +1664,7 @@ export const register: Register = on => {
     const isDown = fall?.state === 'down'
     const isRevived = fall?.state === 'up' && now - fall.at < REVIVE_MS
     const lastRevive = await read($, revivedBy)
+    const rest = await read($, restFx)
     const downCells = isDown ? drainCells((PORTRAIT_BUSTS[hero.id]?.idle ?? HERO_CLASS_FRAMES[hero.id].idle)[0] ?? '') : undefined
     // A class with a portrait draws it as a picture until the terminal is found not to draw one.
     const portraitSet = !isDown && Raster !== undefined && PORTRAIT_BUSTS[hero.id] !== undefined && canDrawImage !== false ? await portraitFrames($, hero.id) : undefined
@@ -1632,24 +1678,63 @@ export const register: Register = on => {
     const fightFx = liveFx(await read($, bossFx), now)
     const foe = shownBoss(bossNow, fightFx)
     const duel = foe === undefined ? undefined : panelDuel(width, true)
+    // Pets out in the background join the fight; one just back throws a shot, its moment ending in a redraw.
+    const fighters = petList
+      .filter(pet => pet.isBackground === true && (pet.status === 'run' || (pet.status === 'ok' && pet.endedAt !== undefined && now - pet.endedAt < ASSIST_MS)))
+      .slice(0, MAX_ALLIES)
+    const returning = fighters.reduce<number | undefined>(
+      (best, pet, at) => (pet.status === 'ok' && (best === undefined || (pet.endedAt ?? 0) > (fighters[best]?.endedAt ?? 0)) ? at : best),
+      undefined,
+    )
+    const party = {
+      allies: fighters.map(pet => petArt(petSeed(pet))),
+      ...(returning === undefined || fightFx !== undefined ? {} : { assist: returning }),
+      key: `${fighters.map(pet => pet.id).join(',')}@${returning === undefined ? '' : fighters[returning]?.endedAt}`,
+    }
+    if (party.assist !== undefined) {
+      const left = ASSIST_MS - (now - (fighters[party.assist]?.endedAt ?? now))
+      assistRedraw?.cancel()
+      assistRedraw = $.clock.after(Math.max(0, left), () => $.ui.invalidate('ui.render'))
+    }
     if (foe !== undefined && duel !== undefined && duel.scale > 0 && Raster !== undefined) {
       const { scale, arenaColumns } = duel
-      const key = `${foe.kind}:${fightFx?.event ?? 'idle'}:${fightFx?.at ?? 0}:${scale}:${arenaColumns}`
+      const rage = fightFx?.event !== 'defeat' && isEnraged(foe)
+      const key = `${foe.kind}:${fightFx?.event ?? 'idle'}:${fightFx?.at ?? 0}:${scale}:${arenaColumns}:${rage}:${party.key}`
       if (anim.boss?.key !== key) {
-        const played = bossCells(foe.kind, fightFx?.event, scale, fightFx?.event === 'hit' ? fightFx.damage : 0, arenaColumns)
+        const played = bossCells(foe.kind, fightFx?.event, scale, fightFx?.event === 'hit' ? fightFx.damage : 0, arenaColumns, rage, party)
         anim.boss = { key, ...played, columns: arenaColumns, rows: BOSS_ROWS * scale, start: anim.tick, shown: played.frames[0] ?? '' }
       }
     } else {
       anim.boss = undefined
     }
+    // A combo of ten or more burns as an aura beside the portrait.
+    const comboNow = await read($, combo)
+    const tier = auraTier(comboNow.current)
+    let aura: { node: RenderChildren; tier: 1 | 2 } | undefined
+    if (tier > 0 && !isDown && foe === undefined) {
+      const frames = auraFrames(tier as 1 | 2, HERO_CELLS.rows)
+      if (Raster !== undefined) {
+        const cells = frames.map(composeColors)
+        if (anim.aura?.frames[0] !== cells[0]) anim.aura = { frames: cells, shown: cells[0] ?? '' }
+        aura = { tier: tier as 1 | 2, node: <Raster key="aura" columns={AURA_COLUMNS} rows={HERO_CELLS.rows} cells={anim.aura?.shown ?? ''} /> }
+      } else if (Svg !== undefined) {
+        const toHex = (color: number | undefined) => (color === undefined ? undefined : `#${color.toString(16).padStart(6, '0')}`)
+        const sprite = spriteSvg(frames.map(frame => frame.map(row => row.map(toHex))), SPRITE_PX, FRAME_MS)
+        aura = { tier: tier as 1 | 2, node: <Svg key="aura" source={sprite.source} alt="combo aura" width={sprite.width} height={sprite.height} isInteractive /> }
+      }
+    } else {
+      anim.aura = undefined
+    }
     const status = renderStatus(
       ui,
       {
+        ...(aura === undefined ? {} : { aura }),
         ...(foe === undefined
           ? {}
           : {
               foe: {
                 boss: foe,
+                party,
                 ...(fightFx === undefined ? {} : { fx: fightFx }),
                 ...(Raster === undefined ? {} : { Raster, cells: anim.boss?.shown ?? '' }),
               },
@@ -1658,8 +1743,9 @@ export const register: Register = on => {
         list: sinceRevive(callList, lastRevive),
         casts: await read($, castCount),
         ...(isDown ? { knockout: 'down' as const } : isRevived ? { knockout: 'revived' as const } : {}),
+        ...(rest !== null && now - rest.at < REST_MS ? { rest: { elapsed: now - rest.at, ...(rest.from === undefined ? {} : { from: rest.from }) } } : {}),
         vitals: await read($, vitals),
-        combo: await read($, combo),
+        combo: comboNow,
         boss: bossNow,
         jobsOut: (await read($, jobs)).filter(job => job.status === 'run').length,
         petsOut: petList.filter(pet => pet.status === 'run').length,
@@ -1846,7 +1932,16 @@ export const register: Register = on => {
       const shown = new Set(pageItems(items, offset, rows).shown.map(item => `job-${item.key}`))
       for (const key of anim.jobs.keys()) if (!shown.has(key)) anim.jobs.delete(key)
     }
-    if (anim.hasHero || (active === 'pets' && anim.pets.size > 0) || anim.overworld !== undefined || anim.boss !== undefined || (active === 'jobs' && anim.jobs.size > 0)) startAnim($)
+    if (
+      anim.hasHero ||
+      (active === 'pets' && anim.pets.size > 0) ||
+      anim.overworld !== undefined ||
+      anim.boss !== undefined ||
+      anim.aura !== undefined ||
+      (active === 'jobs' && anim.jobs.size > 0)
+    ) {
+      startAnim($)
+    }
 
     return (
       <Box flexDirection="column" width={width} rowGap={sectionGap}>
