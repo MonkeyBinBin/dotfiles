@@ -49,7 +49,7 @@ import type { MenuIconProps } from './menu-client'
 import { PET_COLUMNS, PET_ROWS, petArt, petCells, petSeed, speciesFor } from './pet-sprites'
 import { partySubtitle, petItems } from './pets'
 import { recapText } from './recap'
-import { castText, skillItems, skillKeys, skillRows, skillsSubtitle } from './skills'
+import { castText, skillItems, skillRows, skillsSubtitle } from './skills'
 import { filterSpells, spellFilters, spellItems } from './spellbook'
 import { HELP_COMMANDS, helpItems, helpText } from './help'
 import { EMPTY_PROGRESS, progressOf } from './progress'
@@ -99,6 +99,8 @@ const EMPTY_TALLY: Tally = { failures: 0, refusals: 0, bossesDefeated: 0, petsSu
 const tally = atom({ plugin: 'rpg-hud', key: 'tally' } as const, EMPTY_TALLY)
 const startedAt = atom({ plugin: 'rpg-hud', key: 'startedAt' } as const, 0)
 const isHelpOpen = atom({ plugin: 'rpg-hud', key: 'isHelpOpen' } as const, false)
+// Whether the skills page lists the sealed skills, the ones never cast.
+const isSealedOpen = atom({ plugin: 'rpg-hud', key: 'isSealedOpen' } as const, false)
 const waitingFor = atom({ plugin: 'rpg-hud', key: 'waitingFor' } as const, null as string | null)
 // The main loop's winnings since its last turn ended, the finished turns waiting for their closing line, and the
 // lines that have taken theirs, by the line's id.
@@ -831,6 +833,8 @@ type PageContext = {
   inner: number
   now: number
   Raster: ElementTable<'terminal'>['Raster'] | undefined
+  // The terminal's Client, for what a page draws as one clickable region; absent elsewhere.
+  Client: ElementTable<'terminal'>['Client'] | undefined
   callList: ToolCall[]
   petList: Pet[]
   progress: Progress
@@ -1028,23 +1032,20 @@ const fillPrompt = ($: EngineInterface, text: string, fallback: string) =>
 // Fills the prompt with a skill's command, or says how to cast it when the prompt cannot take it.
 const castFromPage = ($: EngineInterface, name: string) => fillPrompt($, castText(name), `Type /${name} to cast it`)
 
-// The skills page's letters as last drawn, letter to skill. A click on a menu icon gives that Client the keys,
-// and the skills' buttons then hear no letters; the icon hands them on and they are looked up here.
-let shownSkillKeys = new Map<string, string>()
-
-const skillsPage = async ($: EngineInterface, { ui, inner, now, progress: progressNow, offset, rows: room }: PageContext): Promise<Page> => {
+const skillsPage = async ($: EngineInterface, { ui, inner, now, progress: progressNow, Client }: PageContext): Promise<Page> => {
   const gear = await read($, loadout)
-  const rows = skillRows({ loadout: gear, progress: progressNow, casts: await read($, skillCasts), now })
-  const keys = skillKeys(rows, clampOffset(offset, rows.length, room), room)
-  shownSkillKeys = new Map(
-    [...keys].flatMap(([index, key]) => {
-      const row = rows[index]
-      return row?.kind === 'skill' ? [[key, row.name] as const] : []
-    }),
-  )
+  const rows = skillRows({
+    loadout: gear,
+    progress: progressNow,
+    casts: await read($, skillCasts),
+    now,
+    width: inner,
+    isSealedOpen: await read($, isSealedOpen),
+    isPicture: Client !== undefined,
+  })
   return {
     subtitle: skillsSubtitle(gear, progressNow),
-    items: skillItems(ui, rows, inner, keys, name => castFromPage($, name)),
+    items: skillItems(ui, rows, inner, Client, name => castFromPage($, name), () => void update($, isSealedOpen, open => !open)),
   }
 }
 
@@ -1549,19 +1550,16 @@ export const register: Register = on => {
   on('ui.message', async ($, e, next) => {
     if (e.requestId !== PANE) return next(e)
     follow.isHeld = true
-    const data = (e.data ?? {}) as { select?: unknown; help?: unknown; letter?: unknown; scroll?: unknown }
+    const data = (e.data ?? {}) as { select?: unknown; help?: unknown; scroll?: unknown; cast?: unknown }
+    // A click on a skill card, a Client keyed `skill-card:<name>`, casts it.
+    if (e.element?.startsWith('skill-card:') === true && typeof data.cast === 'string') {
+      castFromPage($, data.cast)
+      return {}
+    }
     // Each card's icon Client is keyed `icon-<tab>`.
     const isMenu = e.element?.startsWith('icon-') === true
     if (isMenu && typeof data.scroll === 'number') {
       await scrollWindow($, layout, data.scroll)
-      return {}
-    }
-    // A letter a menu icon heard while it had the keys: on the skills page, the skill shown under that letter.
-    if (isMenu && typeof data.letter === 'string') {
-      const name = shownSkillKeys.get(data.letter)
-      if (name === undefined) return {}
-      const [tabNow, helpOpen] = await Promise.all([read($, tab), read($, isHelpOpen)])
-      if (tabNow === 'skills' && !helpOpen) castFromPage($, name)
       return {}
     }
     if (isMenu && data.help === true) {
@@ -1915,7 +1913,7 @@ export const register: Register = on => {
     const tabKey = (active === 'map' && view.view !== 'map' ? `map:${view.view}` : active) as PageKey
     const windowKey: PageKey = helpOpen ? 'help' : tabKey
     const offset = (await read($, offsets))[windowKey] ?? 0
-    const page = await pageFor($, windowKey, { ui, view, inner, now, Raster, callList, petList, progress: progressNow, offset, rows })
+    const page = await pageFor($, windowKey, { ui, view, inner, now, Raster, Client: e.surface === 'terminal' ? $.ui.resolve(e).Client : undefined, callList, petList, progress: progressNow, offset, rows })
     const items = page.items ?? []
     layout = { rows, total: page.list?.rows.length ?? totalRows(items), key: windowKey }
     const body = page.list === undefined ? undefined : pickBody($, e, page.list, offset, rows, inner)

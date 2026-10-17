@@ -180,6 +180,8 @@ declare module 'claude-code' {
       tally: Tally
       // Whether the window shows the help page in place of the tab's own.
       isHelpOpen: boolean
+      // Whether the skills page lists the skills never cast.
+      isSealedOpen: boolean
       // The tool a permission prompt asks about, or AskUserQuestion, while the session waits on the person.
       waitingFor: string | null
       // When the HUD began watching this session: its start, or the first call it saw. 0 until then.

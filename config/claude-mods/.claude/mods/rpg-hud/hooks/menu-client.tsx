@@ -60,8 +60,8 @@ const MenuIcon: ClientModule<MenuIconProps, IconState> = (props, surface) => {
     if (e.type === 'up' && e.button === 'left') pick(props.id)
   })
 
-  // The number keys pick their slot, ? toggles the help page, j and k scroll the window, any other letter goes
-  // on to the skills page, and the left and right arrows step along. Tab is left alone: it walks the pane's buttons, as the help page says.
+  // The number keys pick their slot, ? toggles the help page, j and k scroll the window, and the left and right
+  // arrows step along. Tab is left alone: it walks the pane's buttons, as the help page says.
   surface.onKey(e => {
     const count = props.ids.length
     const numbered = props.ids.findIndex((_, index) => slotKey(index) === e.key)
@@ -70,8 +70,6 @@ const MenuIcon: ClientModule<MenuIconProps, IconState> = (props, surface) => {
     // j and k, or the up and down arrows, scroll the window under the menu.
     if (e.key === SCROLL_DOWN_KEY || e.key === 'down') return surface.post({ scroll: 1 })
     if (e.key === SCROLL_UP_KEY || e.key === 'up') return surface.post({ scroll: -1 })
-    // Another letter is a skill's key on the skills page, whose buttons hear no keys while this Client holds them.
-    if (/^[a-z]$/.test(e.key)) return surface.post({ letter: e.key })
     if (e.key === 'right') pick(props.ids[(activeIndex + 1) % count])
     if (e.key === 'left') pick(props.ids[(activeIndex + count - 1) % count])
   })

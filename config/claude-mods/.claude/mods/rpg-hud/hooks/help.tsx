@@ -19,7 +19,7 @@ export const HELP_TIPS: readonly string[] = [
   'ctrl+x tab, then 1–5 pick a tab; Tab and Enter reach every button',
   '⚔ fix on a boss fills the prompt with its fix',
   '✗ and ◷ in the spell book keep the fizzled or slow casts',
-  'A skill, or its letter on the skill tab, fills the prompt with its /name',
+  'A skill card on the skill tab fills the prompt with its /name',
   'j and k, or the wheel, scroll the window under the menu',
 ]
 
