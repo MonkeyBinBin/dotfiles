@@ -29,20 +29,21 @@ async function readPending($: EngineInterface): Promise<Pending> {
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`
 
 // Nothing pending, nothing shown: the footer stays as the engine has it.
+// The words are rpg-hud's: loot to deliver on the map, jobs, the party out questing, the boss's skull.
 export const pendingModes = (pending: Pending): string[] => {
   const modes: string[] = []
-  if (pending.unpushed > 0) modes.push(`↑${pending.unpushed} unpushed`)
-  if (pending.jobs > 0) modes.push(`⚙ ${plural(pending.jobs, 'job')}`)
-  if (pending.agents > 0) modes.push(`◈ ${plural(pending.agents, 'agent')}`)
-  if (pending.boss !== undefined) modes.push(`✗ ${pending.boss}`)
+  if (pending.unpushed > 0) modes.push(`🎒 ${pending.unpushed} to deliver`)
+  if (pending.jobs > 0) modes.push(`⚙ ${plural(pending.jobs, 'job')} toiling`)
+  if (pending.agents > 0) modes.push(`♣ ${pending.agents} questing`)
+  if (pending.boss !== undefined) modes.push(`☠ ${pending.boss}`)
   return modes
 }
 
 export const tallyLine = (tally: TurnTally): string => {
-  const parts = [plural(tally.calls, 'call')]
-  if (tally.editedFiles.length > 0) parts.push(`${plural(tally.editedFiles.length, 'file')} edited`)
-  if (tally.failed > 0) parts.push(`${tally.failed} failed`)
-  return `${tally.isLive ? 'this turn' : 'last turn'}: ${parts.join(' · ')}`
+  const parts = [plural(tally.calls, 'cast')]
+  if (tally.editedFiles.length > 0) parts.push(`${plural(tally.editedFiles.length, 'file')} forged`)
+  if (tally.failed > 0) parts.push(`${tally.failed} missed`)
+  return `${tally.isLive ? '⚔ this battle' : '⚑ last battle'}: ${parts.join(' · ')}`
 }
 
 // Typing leaves the line alone; a turn with no calls has nothing to sum up.
