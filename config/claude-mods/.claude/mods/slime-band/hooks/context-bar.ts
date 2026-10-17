@@ -1,22 +1,21 @@
-// The context window as an RPG status window under the slime's floor: a framed
-// CTX bar with one run of blocks per category in /context's own colours, free
-// space as dim shade, and the categories listed inside the frame.
+// The context window under the slime's floor: a crystal tube of mana (mana-tube.ts)
+// across the band, then one line with what the mana is made of on the left and how
+// full it is on the right. The plain one-line gauge (one run of blocks per category)
+// is the text form, for tests and alt text.
 
 import type { ContextCategoryKind } from 'claude-code'
 
 import type { ContextInfo } from '../types'
 import { formatTokens } from './hud'
+import { hexOf, iconOf, liquidOf } from './liquids'
 
 // A mana crystal: single-width, so column math stays exact.
 const PREFIX = '◈ '
-export const TITLE = '◈ MANA'
-export const CTX_LABEL = 'CTX '
 export const OPEN = '▕'
 export const CLOSE = '▏'
-export const FRAME = { tl: '╭', tr: '╮', bl: '╰', br: '╯', h: '─', v: '│' } as const
-// '│ ' on the left, ' │' on the right.
-const SIDE = 2
 const MIN_GAUGE = 10
+// The narrowest tube worth drawing.
+const MIN_TUBE = 16
 
 const GLYPH: Record<ContextCategoryKind, string> = {
   used: '█',
@@ -26,24 +25,30 @@ const GLYPH: Record<ContextCategoryKind, string> = {
 }
 
 export type GaugeRun = { glyph: string; length: number; color: string; dim: boolean }
-export type LegendItem = { name: string; tokens: string; color: string }
+// `color` is the liquid's, as hex, so a name reads in the colour of its layer in the tube.
+export type LegendItem = { icon: string; name: string; tokens: string; color: string }
 export type ManaLevel = 'ok' | 'low' | 'critical'
 export type ContextGauge = {
   prefix: string
-  // The frame's full width, borders included.
+  // The band's full width: the tube's too.
   width: number
-  status: string
   runs: GaugeRun[]
   suffix: string
   percentColor: string
+  // How full, at the end of the legend's first line: `45% · 90k / 200k`.
+  fill: string
   legend: LegendItem[]
-  // The legend broken into rows that fit the band, each item whole.
+  // The legend broken into rows that fit, each item whole; the first leaves room for the fill.
   legendRows: LegendItem[][]
 }
 
 const LEGEND_GAP = 2
 
-const itemWidth = (item: LegendItem): number => [...`■ ${item.name} ${item.tokens}`].length
+// The icon is an emoji two cells wide.
+export const itemWidth = (item: LegendItem): number => [...`${item.icon} ${item.name} ${item.tokens}`].length + 1
+
+export const rowWidth = (row: readonly LegendItem[]): number =>
+  row.reduce((sum, item, at) => sum + itemWidth(item) + (at > 0 ? LEGEND_GAP : 0), 0)
 
 // Greedy rows from the left edge; an item wider than a row gets one to itself.
 export const wrapLegend = (items: readonly LegendItem[], available: number): LegendItem[][] => {
@@ -77,7 +82,6 @@ export const manaLevel = (info: Pick<ContextInfo, 'percent' | 'max' | 'compactAt
 }
 
 const LEVEL_COLOR: Record<ManaLevel, string> = { ok: '#5ad27a', low: '#ffd23c', critical: '#ff5f5f' }
-const LEVEL_STATUS: Record<ManaLevel, string> = { ok: 'STABLE', low: 'LOW MP', critical: 'DANGER' }
 
 export const percentColor = (info: Pick<ContextInfo, 'percent' | 'max' | 'compactAt'>): string =>
   LEVEL_COLOR[manaLevel(info)]
@@ -108,17 +112,15 @@ export const allocateCells = (slices: readonly ContextInfo['slices'][number][], 
   return cells
 }
 
-// `framed` lays out the terminal status window; without it, the plain one-line
-// gauge (prefix, bar, suffix) and its legend span the whole band.
-export const layoutGauge = (info: ContextInfo, columns: number, framed = true): ContextGauge | undefined => {
+// The tube and its line across `columns`; undefined when there is nothing to show or no room for it.
+export const layoutGauge = (info: ContextInfo, columns: number): ContextGauge | undefined => {
   const slices = info.slices.filter(s => s.kind !== 'deferred')
   if (slices.length === 0 || info.max <= 0) return undefined
   const suffix = ` ${info.percent}% ${formatTokens(info.total)}/${formatTokens(info.max)}`
   // bodyColumns already leaves out the engine's '[-]' column: the gauge takes it all.
-  const frameWidth = columns
-  const inner = framed ? frameWidth - SIDE * 2 : frameWidth
-  const lead = framed ? CTX_LABEL : PREFIX
-  const width = inner - [...lead].length - OPEN.length - CLOSE.length - [...suffix].length
+  if (columns < MIN_TUBE) return undefined
+  const fill = `${info.percent}% · ${formatTokens(info.total)} / ${formatTokens(info.max)}`
+  const width = columns - [...PREFIX].length - OPEN.length - CLOSE.length - [...suffix].length
   if (width < MIN_GAUGE) return undefined
   const cells = allocateCells(slices, width)
   const runs: GaugeRun[] = []
@@ -128,44 +130,23 @@ export const layoutGauge = (info: ContextInfo, columns: number, framed = true): 
   })
   const legend = slices
     .filter(s => s.kind === 'used' && s.tokens > 0)
-    .map(s => ({ name: s.name, tokens: formatTokens(s.tokens), color: s.color }))
+    .map(s => ({ icon: iconOf(s.name), name: s.name, tokens: formatTokens(s.tokens), color: hexOf(liquidOf(s.name)) }))
   const level = manaLevel(info)
   return {
     prefix: PREFIX,
-    width: frameWidth,
-    status: LEVEL_STATUS[level],
+    width: columns,
     runs,
     suffix,
     percentColor: LEVEL_COLOR[level],
+    fill,
     legend,
-    legendRows: wrapLegend(legend, inner),
+    legendRows: wrapLegend(legend, columns - fill.length - LEGEND_GAP),
   }
 }
-
-// The frame's inner width, between '│ ' and ' │'.
-export const innerWidth = (gauge: ContextGauge): number => gauge.width - SIDE * 2
-
-// Dashes between the title and the status tag: '╭─ ' title ' ' fill ' ' status ' ─╮'.
-export const topFill = (gauge: ContextGauge): number =>
-  Math.max(1, gauge.width - 8 - [...TITLE].length - [...gauge.status].length)
 
 // The plain-text gauge, for surfaces without colour runs and for tests.
 export const gaugeLine = (gauge: ContextGauge): string =>
   `${gauge.prefix}${OPEN}${gauge.runs.map(r => r.glyph.repeat(r.length)).join('')}${CLOSE}${gauge.suffix}`
 
 export const legendLines = (gauge: ContextGauge): string[] =>
-  gauge.legendRows.map(row => row.map(item => `■ ${item.name} ${item.tokens}`).join(' '.repeat(LEGEND_GAP)))
-
-// The whole status window as plain text, every row exactly the frame's width.
-export const frameLines = (gauge: ContextGauge): string[] => {
-  const { tl, tr, bl, br, h, v } = FRAME
-  const inner = innerWidth(gauge)
-  const bar = gauge.runs.map(r => r.glyph.repeat(r.length)).join('')
-  const pad = (text: string) => text + ' '.repeat(Math.max(0, inner - [...text].length))
-  return [
-    `${tl}${h} ${TITLE} ${h.repeat(topFill(gauge))} ${gauge.status} ${h}${tr}`,
-    `${v} ${CTX_LABEL}${OPEN}${bar}${CLOSE}${gauge.suffix} ${v}`,
-    ...legendLines(gauge).map(line => `${v} ${pad(line)} ${v}`),
-    `${bl}${h.repeat(gauge.width - 2)}${br}`,
-  ]
-}
+  gauge.legendRows.map(row => row.map(item => `${item.icon} ${item.name} ${item.tokens}`).join(' '.repeat(LEGEND_GAP)))

@@ -1,14 +1,15 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register, Timer } from 'claude-code'
+import type { ElementTable, EngineInterface, Register, Timer } from 'claude-code'
 
 import type { BandInfo, ContextInfo } from '../types'
-import { CLOSE, FRAME, CTX_LABEL, OPEN, TITLE, innerWidth, layoutGauge, legendLines, topFill } from './context-bar'
+import { layoutGauge, manaLevel } from './context-bar'
+import { TUBE_ROWS, TUBE_TICKS, tubeCells, tubeSvg } from './mana-tube'
 import type { ContextGauge } from './context-bar'
 import { SLIME_FRAMES, SLIME_PALETTE, SLIME_ROWS, SLIME_WIDTH } from './slime-sprite'
 import type { SlimePose } from './slime-sprite'
 import { formatTokens, layoutHud } from './hud'
 import type { HudFact, HudPixel } from './hud'
-import { gaugeRuns, sceneSize, sceneSvg, sceneWidth, walkAt } from './desktop'
+import { sceneSize, sceneSvg, sceneWidth, walkAt } from './desktop'
 import { SHIMMER_TICKS, bannerFor, readMoments } from './banner'
 import type { Banner } from './banner'
 import type { SceneSlime } from './desktop'
@@ -25,6 +26,10 @@ const EMPTY_CONTEXT: ContextInfo = { slices: [], total: 0, max: 0, percent: 0 }
 const contextInfo = atom({ plugin: 'slime-band', key: 'context' } as const, EMPTY_CONTEXT)
 
 const FRAME_MS = 80
+// The desktop tube: CSS pixels per tube pixel, a band column's CSS width, and how long each ripple step holds.
+const TUBE_PX = 4
+const DESKTOP_COLUMN_PX = 8
+const TUBE_FRAME_MS = FRAME_MS * TUBE_TICKS
 // Ticks each hop frame (squash, stretch) stays up.
 const RUN_TICKS = 3
 // How long the slime sits after a turn before it naps.
@@ -38,6 +43,7 @@ const SPACE = 0x20
 const DEFAULT_COLOR = 0x01000000
 const SNORE_COLOR = 0xc8d2ff
 const ALERT_COLOR = 0xffd23c
+const SWEAT_COLOR = 0x7ad0ff
 // Ticks the '!' stays lit, then dark, while the slime waits on the person.
 const ALERT_TICKS = 5
 
@@ -80,7 +86,7 @@ const pixelAt = (pose: SlimePose, row: number, col: number, dir: 1 | -1): number
 // the rest see-through.
 export const composeTrack = (
   trackWidth: number,
-  slime: { x: number; dir: 1 | -1; pose: SlimePose; snore: number; alert?: boolean },
+  slime: { x: number; dir: 1 | -1; pose: SlimePose; snore: number; alert?: boolean; sweat?: boolean },
   hud: readonly HudPixel[] = [],
 ): string => {
   const lit = new Map(hud.map(pixel => [pixel.y * trackWidth + pixel.x, pixel.rgb]))
@@ -115,6 +121,11 @@ export const composeTrack = (
     const col = Math.min(trackWidth - 1, slime.x + (slime.dir === 1 ? SLIME_WIDTH - 2 : 1))
     const glyph = slime.snore === 1 ? 0x7a : 0x5a
     words.set([glyph, SNORE_COLOR, DEFAULT_COLOR], (0 * trackWidth + col) * 3)
+  }
+  // Low on mana, a drop of sweat beads behind its head.
+  if (slime.sweat === true) {
+    const col = Math.max(0, Math.min(trackWidth - 1, slime.dir === 1 ? slime.x - 1 : slime.x + SLIME_WIDTH))
+    words.set([0x2c, SWEAT_COLOR, DEFAULT_COLOR], (1 * trackWidth + col) * 3)
   }
   // Waiting on the person, a '!' blinks just ahead of its face.
   if (slime.alert === true) {
@@ -157,6 +168,10 @@ const slime = {
   requestId: '',
   ticker: undefined as Timer | undefined,
   shown: '',
+  // The mana tube on the terminal: what it shows, how wide, and the frame last blitted.
+  mana: undefined as { info: ContextInfo; width: number; shown: string } | undefined,
+  // The mana near the rune: the slime sweats.
+  isManaCritical: false,
   // The surface that last drew the band.
   surface: undefined as string | undefined,
   // On an SVG surface: the lap the scene animates, from where and when it set off.
@@ -167,6 +182,19 @@ const slime = {
 // An SVG surface animates the scene itself and is drawn again only when the slime's state changes.
 const redraw = ($: EngineInterface) => {
   if (slime.surface !== undefined && slime.surface !== 'terminal') $.ui.invalidate('ui.render')
+}
+
+// The tube's ripple and bubbles; a refusal means the frame is gone, and the tube waits for the next draw.
+async function paintMana($: EngineInterface) {
+  const mana = slime.mana
+  if (mana === undefined) return
+  const cells = tubeCells(mana.info, mana.width, slime.tick, slime.isWorking)
+  if (cells === mana.shown) return
+  const done = await $.ui
+    .blit({ requestId: slime.requestId, key: 'mana', cells, columns: mana.width, rows: TUBE_ROWS })
+    .catch(() => ({ deny: 'blit failed' }))
+  if (done.deny === undefined) mana.shown = cells
+  else slime.mana = undefined
 }
 
 async function paint($: EngineInterface) {
@@ -184,7 +212,9 @@ async function paint($: EngineInterface) {
   }
   const snore = pose === 'sleep' ? Math.floor(slime.tick / SNORE_TICKS) % 3 : 0
   const hud = slime.shimmer.length > 0 ? (slime.shimmer[Math.floor(slime.tick / SHIMMER_TICKS) % slime.shimmer.length] ?? slime.hud) : slime.hud
-  const cells = composeTrack(slime.trackWidth, { x: slime.x, dir: slime.dir, pose, snore, alert }, hud)
+  const sweat = slime.isManaCritical && Math.floor(slime.tick / ALERT_TICKS) % 2 === 1
+  await paintMana($)
+  const cells = composeTrack(slime.trackWidth, { x: slime.x, dir: slime.dir, pose, snore, alert, sweat }, hud)
   if (cells === slime.shown) return
 
   // A refusal and a failed blit both mean the track is not on screen.
@@ -300,61 +330,47 @@ export const infoLine = (value: BandInfo, turns: number): string =>
     .map(s => `${s.icon} ${s.value} ${s.label}`)
     .join(SEPARATOR)
 
-type TextElement = ReturnType<EngineInterface['ui']['resolve']>['Text']
 
-const FRAME_COLOR = '#8a93c8'
-const TITLE_COLOR = '#c8d2ff'
-const CTX_COLOR = '#56c8dc'
+type BandElements = Pick<ElementTable<'terminal'>, 'Box' | 'Text' | 'Raster'>
 
-// An RPG status window under the floor: the title and mana status on the top
-// border, the CTX bar, then a legend of what fills it, all inside one frame.
-const renderGauge = (Text: TextElement, gauge: ContextGauge) => {
-  // Not `h`: that name is the JSX factory.
-  const { tl, tr, bl, br, h: dash, v } = FRAME
-  const inner = innerWidth(gauge)
-  const legend = legendLines(gauge)
+// The tube across the band, then what the mana is made of with how full it is at the line's end; a long legend
+// goes on below.
+const renderGauge = ({ Box, Text, Raster }: BandElements, gauge: ContextGauge, tube: string) => {
+  const legendRow = (row: readonly ContextGauge['legend'][number][]) =>
+    row.map((item, i) => (
+      <Text key={item.name}>
+        {i > 0 ? '  ' : ''}
+        {`${item.icon} `}
+        <Text color={item.color}>{item.name}</Text>
+        <Text dimColor> {item.tokens}</Text>
+      </Text>
+    ))
+  const [first = [], ...rest] = gauge.legendRows
   return [
-    <Text key="ctx-top" wrap="truncate">
-      <Text color={FRAME_COLOR}>{`${tl}${dash} `}</Text>
-      <Text color={TITLE_COLOR} bold>{TITLE}</Text>
-      <Text color={FRAME_COLOR}>{` ${dash.repeat(topFill(gauge))} `}</Text>
-      <Text color={gauge.percentColor} bold inverse>{gauge.status}</Text>
-      <Text color={FRAME_COLOR}>{` ${dash}${tr}`}</Text>
-    </Text>,
-    <Text key="ctx-gauge" wrap="truncate">
-      <Text color={FRAME_COLOR}>{`${v} `}</Text>
-      <Text color={CTX_COLOR} bold>{CTX_LABEL}</Text>
-      <Text dimColor>{OPEN}</Text>
-      {gauge.runs.map((run, at) => (
-        <Text key={`run-${at}`} color={run.color} dimColor={run.dim}>
-          {run.glyph.repeat(run.length)}
-        </Text>
-      ))}
-      <Text dimColor>{CLOSE}</Text>
-      <Text color={gauge.percentColor} bold>{gauge.suffix}</Text>
-      <Text color={FRAME_COLOR}>{` ${v}`}</Text>
-    </Text>,
-    ...gauge.legendRows.map((row, at) => {
-      const used = [...(legend[at] ?? '')].length
-      return (
-        <Text key={`ctx-legend-${at}`} wrap="truncate">
-          <Text color={FRAME_COLOR}>{`${v} `}</Text>
-          {row.map((item, i) => (
-            <Text key={item.name}>
-              {i > 0 ? '  ' : ''}
-              <Text color={item.color}>■</Text>
-              <Text dimColor> {item.name} </Text>
-              <Text>{item.tokens}</Text>
-            </Text>
-          ))}
-          {' '.repeat(Math.max(0, inner - used))}
-          <Text color={FRAME_COLOR}>{` ${v}`}</Text>
-        </Text>
-      )
-    }),
-    <Text key="ctx-bottom" wrap="truncate" color={FRAME_COLOR}>
-      {`${bl}${dash.repeat(gauge.width - 2)}${br}`}
-    </Text>,
+    <Raster key="mana" columns={gauge.width} rows={TUBE_ROWS} cells={tube} />,
+    <Box key="ctx-info" flexDirection="row" height={1}>
+      <Box flexGrow={1}>
+        <Text wrap="truncate">{legendRow(first)}</Text>
+      </Box>
+      {/* The fill keeps its width: the legend gives way, never the numbers. */}
+      <Box flexShrink={0} marginLeft={2}>
+        <Text wrap="truncate">{fillText(Text, gauge)}</Text>
+      </Box>
+    </Box>,
+    ...rest.map((row, at) => (
+      <Text key={`ctx-legend-${at + 1}`} wrap="truncate">
+        {legendRow(row)}
+      </Text>
+    )),
+  ]
+}
+
+// `45%` in the mana's colour, then what is used out of what.
+const fillText = (Text: ElementTable['Text'], gauge: ContextGauge) => {
+  const [percent = '', tokens = ''] = gauge.fill.split(' · ')
+  return [
+    <Text key="fill-percent" color={gauge.percentColor} bold>{percent}</Text>,
+    <Text key="fill-tokens" dimColor>{` · ${tokens}`}</Text>,
   ]
 }
 
@@ -471,41 +487,38 @@ export const register: Register = on => {
       slime.napTimer?.cancel()
       slime.napTimer = mode === 'sit' ? $.clock.after(NAP_AFTER_MS - idleMs, () => $.ui.invalidate('ui.render')) : undefined
       const scene = sceneSvg(width, hud, { mode, x: slime.walk?.x ?? slime.x, dir: slime.walk?.dir ?? slime.dir, last }, LABEL_HEX)
-      const gauge = layoutGauge(context, e.props.bodyColumns, false)
-      // Inside the frame's border and padding on each side.
-      const bar = gaugeRuns(context, e.props.bodyColumns - 4)
+      const gauge = layoutGauge(context, e.props.bodyColumns)
+      // The band's width in tube pixels.
+      const tubeWidth = Math.floor((e.props.bodyColumns * DESKTOP_COLUMN_PX) / TUBE_PX)
       const size = sceneSize(width)
       const facts = segments.map(s => `${s.icon} ${s.value} ${s.label}`).join(', ')
 
       return (
         <Box flexDirection="column">
           <Svg key="track" source={scene} alt={`Slime ${MODE_ALT[mode]}. ${facts}`} width={size.width} height={size.height} isInteractive />
-          {gauge && bar && (
-            <Box flexDirection="column" borderStyle="round" borderColor={FRAME_COLOR} paddingX={1}>
-              <Box flexDirection="row" justifyContent="space-between">
-                <Text color={TITLE_COLOR} bold>
-                  {TITLE}
-                </Text>
-                <Text>
-                  <Text color={gauge.percentColor} bold>
-                    {gauge.status}
-                  </Text>
-                  <Text dimColor>{gauge.suffix}</Text>
-                </Text>
-              </Box>
-              <Box key="ctx-bar" flexDirection="row" height={1}>
-                {bar.map((run, at) => (
-                  <Box key={`run-${at}`} width={run.length} height={1} backgroundColor={run.color} />
-                ))}
-              </Box>
-              <Box flexDirection="row" flexWrap="wrap" columnGap={2}>
-                {gauge.legend.map(item => (
-                  <Text key={item.name}>
-                    <Text color={item.color}>■</Text>
-                    <Text dimColor> {item.name} </Text>
-                    {item.tokens}
-                  </Text>
-                ))}
+          {gauge && (
+            <Box flexDirection="column" rowGap={1}>
+              <Svg
+                key="ctx-tube"
+                source={tubeSvg(context, tubeWidth, slime.isWorking, TUBE_PX, TUBE_FRAME_MS)}
+                alt={`Mana tube, ${gauge.fill}`}
+                width={tubeWidth * TUBE_PX}
+                height={TUBE_ROWS * 2 * TUBE_PX}
+                isInteractive
+              />
+              <Box flexDirection="row" justifyContent="space-between" columnGap={2}>
+                <Box flexDirection="row" flexWrap="wrap" columnGap={2} flexShrink={1}>
+                  {gauge.legend.map(item => (
+                    <Text key={item.name}>
+                      {`${item.icon} `}
+                      <Text color={item.color}>{item.name}</Text>
+                      <Text dimColor> {item.tokens}</Text>
+                    </Text>
+                  ))}
+                </Box>
+                <Box flexShrink={0}>
+                  <Text>{fillText(Text, gauge)}</Text>
+                </Box>
               </Box>
             </Box>
           )}
@@ -520,6 +533,9 @@ export const register: Register = on => {
     }
     const trackWidth = e.props.bodyColumns
     const gauge = layoutGauge(context, trackWidth)
+    // The tube animates with the slime's ticker; its first frame is drawn here.
+    slime.mana = gauge === undefined ? undefined : { info: context, width: gauge.width, shown: tubeCells(context, gauge.width, slime.tick, slime.isWorking) }
+    slime.isManaCritical = gauge !== undefined && manaLevel(context) === 'critical'
     let band = await bandFacts($, value)
     let hud = layoutHud(band.facts, trackWidth)
     // A band too narrow for the banner keeps its facts.
@@ -556,7 +572,7 @@ export const register: Register = on => {
       <Box flexDirection="column">
         <Text wrap="truncate">{labelPieces}</Text>
         <Raster key="track" columns={trackWidth} rows={TRACK_ROWS} cells={slime.shown} />
-        {gauge && renderGauge(Text, gauge)}
+        {gauge && renderGauge({ Box, Text, Raster }, gauge, slime.mana?.shown ?? '')}
         {engine}
       </Box>
     )

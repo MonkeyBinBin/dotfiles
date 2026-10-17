@@ -2,11 +2,9 @@
 // track as one vector scene, animated by SMIL inside the surface's sandboxed
 // frame, so the hook redraws only when the slime's state changes, never per frame.
 
-import type { ContextInfo } from '../types'
 import { SLIME_FRAMES, SLIME_PALETTE, SLIME_WIDTH } from './slime-sprite'
 import type { SlimePose } from './slime-sprite'
 import type { HudLayout } from './hud'
-import { allocateCells } from './context-bar'
 
 // CSS pixels per sprite pixel.
 export const PX = 6
@@ -149,30 +147,4 @@ export const sceneSvg = (width: number, hud: HudLayout, slime: SceneSlime, label
     runsToRects(floor, LABEL_ROWS + SPRITE_ROWS) +
     `</svg>`
   )
-}
-
-export type GaugeCell = { color: string; key: string }
-
-// The context window as runs of cells across `columns`, each a /context theme key the surface colours itself
-// (as it does the legend's squares): used slices in their colour, free space a faint track, and the cell where
-// auto-compaction runs marked.
-export const gaugeRuns = (info: ContextInfo, columns: number): { color: string; length: number }[] | undefined => {
-  const slices = info.slices.filter(s => s.kind !== 'deferred' && s.tokens > 0)
-  if (slices.length === 0 || info.max <= 0 || columns < 10) return undefined
-  const cells = allocateCells(slices, columns)
-  const colors: string[] = []
-  slices.forEach((s, at) => {
-    for (let n = 0; n < (cells[at] ?? 0); n += 1) colors.push(s.kind === 'free' ? 'subtle' : s.color)
-  })
-  if (info.compactAt !== undefined) {
-    const mark = Math.min(colors.length - 1, Math.max(0, Math.round((info.compactAt / info.max) * columns) - 1))
-    colors[mark] = 'error'
-  }
-  const runs: { color: string; length: number }[] = []
-  for (const color of colors) {
-    const last = runs[runs.length - 1]
-    if (last !== undefined && last.color === color) last.length += 1
-    else runs.push({ color, length: 1 })
-  }
-  return runs
 }

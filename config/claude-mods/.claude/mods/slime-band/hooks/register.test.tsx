@@ -2,8 +2,11 @@ import { expect, mock, test } from 'claude-code/testing'
 
 import { SLIME_WIDTH } from './slime-sprite'
 import { SLIME_AREA_MIN, layoutHud } from './hud'
-import { allocateCells, frameLines, gaugeLine, layoutGauge, legendLines, percentColor, wrapLegend } from './context-bar'
-import { HOP_MS, gaugeRuns, sceneSize, sceneSvg, walkAt } from './desktop'
+import { allocateCells, gaugeLine, layoutGauge, legendLines, percentColor, rowWidth, wrapLegend } from './context-bar'
+import { TUBE_ROWS, TUBE_TICKS, tubeColumns, tubePixels } from './mana-tube'
+import { hexOf, iconOf, liquidOf } from './liquids'
+import type { ContextInfo } from '../types'
+import { HOP_MS, sceneSize, sceneSvg, walkAt } from './desktop'
 import { BANNER_MS, bannerFor } from './banner'
 import { NAP_AFTER_MS, TRACK_ROWS, composeTrack, floorAt, formatTokens, infoLine, infoSegments, slimePose, stepSlime } from './register'
 
@@ -268,7 +271,7 @@ const CONTEXT = {
 }
 
 test('the context gauge fills its width exactly, one run per category', () => {
-  const gauge = layoutGauge(CONTEXT, 80, false)
+  const gauge = layoutGauge(CONTEXT, 80)
   expect(gauge).toBeDefined()
   const line = gaugeLine(gauge!)
   expect(line.startsWith('◈ ▕')).toBe(true)
@@ -276,22 +279,16 @@ test('the context gauge fills its width exactly, one run per category', () => {
   // Deferred tool schemas sit outside the window and the gauge.
   expect(gauge!.runs.map(r => r.glyph)).toEqual(['█', '█', '░', '▒'])
   expect([...line].length).toBe(80)
-  expect(legendLines(gauge!)).toEqual(['■ System prompt 3.0k  ■ Messages 37.0k'])
+  expect(legendLines(gauge!)).toEqual(['📜 System prompt 3.0k  💬 Messages 37.0k'])
 })
 
-test('the gauge sits in a status window, every row the same width', () => {
-  const lines = frameLines(layoutGauge(CONTEXT, 80)!)
-  expect(lines).toHaveLength(4)
-  for (const line of lines) expect([...line].length).toBe(80)
-  expect(lines[0]).toMatch(/^╭─ ◈ MANA ─+ STABLE ─╮$/)
-  expect(lines[1]).toMatch(/^│ CTX ▕[█░▒]+▏ 20% 40\.0k\/200k │$/)
-  expect(lines[2]).toMatch(/^│ ■ System prompt 3\.0k  ■ Messages 37\.0k +│$/)
-  expect(lines[3]).toMatch(/^╰─+╯$/)
-})
-
-test('the status tag reads the mana left', () => {
-  expect(layoutGauge({ ...CONTEXT, percent: 65, compactAt: 167_000 }, 80)!.status).toBe('LOW MP')
-  expect(layoutGauge({ ...CONTEXT, percent: 80, compactAt: 167_000 }, 80)!.status).toBe('DANGER')
+test('the tube spans the band; how full it is ends the legend line, which leaves it room', () => {
+  const gauge = layoutGauge(CONTEXT, 80)!
+  expect(gauge.width).toBe(80)
+  expect(gauge.fill).toBe('20% · 40.0k / 200k')
+  // The legend names read in their liquid's colour.
+  expect(gauge.legend[0]).toEqual({ icon: '📜', name: 'System prompt', tokens: '3.0k', color: hexOf(liquidOf('System prompt')) })
+  for (const row of gauge.legendRows) expect(rowWidth(row) + 2 + gauge.fill.length).toBeLessThanOrEqual(80)
 })
 
 test('every non-empty category keeps a cell, even a tiny one', () => {
@@ -318,7 +315,7 @@ test('the gauge reddens as auto-compaction nears, or the window fills when it is
 
 test('the gauge hides when too narrow or empty, and survives NaN counts', () => {
   expect(allocateCells([{ name: 'a', tokens: Number.NaN, color: 'x', kind: 'used' }], 20)).toEqual([0])
-  expect(layoutGauge(CONTEXT, 30)).toBeUndefined()
+  expect(layoutGauge(CONTEXT, 24)).toBeUndefined()
   expect(layoutGauge({ ...CONTEXT, slices: [] }, 120)).toBeUndefined()
 })
 
@@ -361,20 +358,21 @@ test('a context measure fills the gauge under the floor, above the engine band',
   const textOf = (node: Node): string =>
     (node.text ?? '') + (node.children ?? []).map(child => (typeof child === 'string' ? child : textOf(child as Node))).join('')
   const kids = (band?.children ?? []) as Node[]
-  const raster = kids.findIndex(k => k.type === 'Raster')
-  const top = kids.findIndex(k => textOf(k).includes('◈ MANA'))
-  const gauge = kids.findIndex(k => textOf(k).includes('CTX ▕'))
+  // The slime's track, then the tube right under it, then its line: the legend and how full.
+  const rasters = kids.flatMap((k, at) => (k.type === 'Raster' ? [at] : []))
+  expect(rasters).toHaveLength(2)
+  const [track = -1, tube = -1] = rasters
   const engine = kids.findIndex(k => textOf(k).includes('engine band'))
-  expect(gauge).toBe(top + 1)
-  expect(textOf(kids[gauge + 1] ?? {})).toContain('Messages')
-  expect(textOf(kids[gauge + 2] ?? {})).toMatch(/^╰─+╯$/)
-  expect(raster).toBeGreaterThan(-1)
-  expect(gauge).toBeGreaterThan(raster)
-  expect(engine).toBeGreaterThan(gauge)
+  expect(tube).toBe(track + 1)
+  const line = textOf(kids[tube + 1] ?? {})
+  expect(line).toContain('💬 Messages')
+  expect(line).toContain('20% · 40.0k / 200k')
+  expect(kids.some(k => /MANA|POWER|[╭╰│]/.test(textOf(k)))).toBe(false)
+  expect(engine).toBeGreaterThan(tube)
 })
 
 test('a long legend wraps onto more rows, every item whole', () => {
-  const items = Array.from({ length: 8 }, (_, at) => ({ name: `Category ${at}`, tokens: '12.3k', color: 'x' }))
+  const items = Array.from({ length: 8 }, (_, at) => ({ icon: '🔮', name: `Category ${at}`, tokens: '12.3k', color: 'x' }))
   const rows = wrapLegend(items, 60)
   expect(rows.length).toBeGreaterThan(1)
   expect(rows.flat()).toEqual(items)
@@ -382,8 +380,8 @@ test('a long legend wraps onto more rows, every item whole', () => {
     { ...CONTEXT, slices: items.map(i => ({ name: i.name, tokens: 12_300, color: 'x', kind: 'used' as const })) },
     60,
   )
-  for (const line of legendLines(gauge!)) expect([...line].length).toBeLessThanOrEqual(60 - 4)
-  for (const line of frameLines(gauge!)) expect([...line].length).toBe(60)
+  // Each row fits inside the frame, the emoji counted two cells wide.
+  for (const row of gauge!.legendRows) expect(rowWidth(row) + 2 + gauge!.fill.length).toBeLessThanOrEqual(60)
 })
 
 test('shortens big windows without a decimal', () => {
@@ -418,7 +416,7 @@ test('ending the conversation (/clear, resume) drops the gauge', async ($, on) =
   })
   const shows = async () => {
     const ui = await $.ui.mount({ plugin: 'slime-band', surface: 'desktop', component: 'AbovePrompt', props: { ...BAND_PROPS, bodyColumns: 100 } })
-    return (await ui.findAll({ type: 'Text' })).some(t => (t.text ?? '').includes('◈'))
+    return (await ui.findAll({ type: 'Svg' })).some(svg => String(svg.props.alt).startsWith('Mana tube'))
   }
   await $.session.measure({ context: { window: 200_000 }, rateLimits: [], changed: ['context'] } as never)
   expect(await shows()).toBe(true)
@@ -443,14 +441,6 @@ test('the desktop scene animates the walk and holds still otherwise', () => {
   expect(sitting).not.toContain('animate')
   expect(sceneSvg(60, hud, { mode: 'wait', x: 4, dir: 1, last: 40 }, {})).toContain('>!<animate')
   expect(sceneSvg(60, hud, { mode: 'sleep', x: 4, dir: 1, last: 40 }, {})).toContain('>Z<animate')
-})
-
-test('the desktop gauge fills its width with theme keys and marks compaction', () => {
-  const runs = gaugeRuns({ ...CONTEXT, compactAt: 160_000 }, 60) ?? []
-  expect(runs.reduce((sum, run) => sum + run.length, 0)).toBe(60)
-  // The surface colours the keys itself, as it does the legend's.
-  expect(runs.map(run => run.color)).toEqual(['promptBorder', 'permission', 'subtle', 'error', 'subtle', 'inactive'])
-  expect(gaugeRuns({ ...CONTEXT, slices: [] }, 60)).toBeUndefined()
 })
 
 test('the desktop scene is sized for its frame, so no default height pads it', () => {
@@ -516,4 +506,67 @@ test('a banner takes the big numbers\' place on the track, then the facts come b
   await clock.advance(BANNER_MS + 10)
   shown = (await ui.findAll({ type: 'Text' })).map(row => row.text ?? '').join('|')
   expect(shown).toContain('turns')
+})
+
+test('the tube pours each category as a layer of its own mana, empty glass after, the rune before the buffer', () => {
+  const columns = tubeColumns(CONTEXT, 40)
+  expect(columns).toHaveLength(40)
+  expect(columns[0]).toEqual({ kind: 'used', color: liquidOf('System prompt') })
+  const kinds = columns.map(c => c.kind)
+  expect(kinds.indexOf('free')).toBeGreaterThan(kinds.lastIndexOf('used'))
+  expect(kinds.indexOf('buffer')).toBeGreaterThan(kinds.lastIndexOf('free'))
+  const pixels = tubePixels(CONTEXT, 42, 0, false)
+  expect(pixels).toHaveLength(TUBE_ROWS * 2)
+  // Rounded glass: the corners stay clear.
+  expect(pixels[0]?.[0]).toBeUndefined()
+  // The rune runs through both rims at the buffer's first column.
+  const rune = kinds.indexOf('buffer') + 1
+  expect(pixels.map(row => row[rune])).toEqual(Array(TUBE_ROWS * 2).fill(0xff3b3b))
+})
+
+test('the surface sloshes as it ticks, bubbles rise only while Claude works, and the mana flushes red near the rune', () => {
+  const still = (tick: number, working: boolean, info: ContextInfo = CONTEXT) => JSON.stringify(tubePixels(info, 60, tick, working))
+  expect(still(0, false)).not.toBe(still(TUBE_TICKS, false))
+  expect(still(0, true)).not.toBe(still(0, false))
+  const brink = { ...CONTEXT, percent: 80, compactAt: 167_000 }
+  expect(still(0, false, brink)).not.toBe(still(0, false, { ...brink, compactAt: undefined, percent: 20 }))
+  expect(iconOf('Messages')).toBe('💬')
+  expect(iconOf('Something new')).toBe('🔮')
+  expect(liquidOf('Something new')).toBe(liquidOf('Something new'))
+})
+
+test('on desktop the mana tube is a drawing that ripples by itself', async ($, on) => {
+  mock.clock(on)
+  on('session.turns', async () => ({ value: 1 }))
+  on('session.measure', async (_$, e) => ({ changed: e.changed }) as never)
+  on('session.usage', async () => ({
+    value: {
+      startedAt: 0,
+      rateLimits: [],
+      context: {
+        window: 200_000,
+        breakdown: {
+          categories: CONTEXT.slices.map(s => ({ ...s, isDeferred: s.kind === 'deferred' })),
+          totalTokens: 40_000,
+          maxTokens: 200_000,
+          rawMaxTokens: 200_000,
+          percentage: 20,
+          isAutoCompactEnabled: true,
+          autoCompactThreshold: 167_000,
+        },
+      },
+    },
+  }) as never)
+  on('ui.render', { component: 'AbovePrompt' }, async ($$, e) => {
+    const { Text } = $$.ui.resolve(e)
+    return <Text> </Text>
+  })
+  await $.session.measure({ context: { window: 200_000 }, rateLimits: [], changed: ['context'] } as never)
+  const ui = await $.ui.mount({ plugin: 'slime-band', surface: 'desktop', component: 'AbovePrompt', props: { ...BAND_PROPS, bodyColumns: 100 } })
+  const tube = (await ui.findAll({ type: 'Svg' })).find(svg => String(svg.props.alt).startsWith('Mana tube'))
+  expect(String(tube?.props.source)).toContain('<animate')
+  const shown = (await ui.findAll({ type: 'Text' })).map(row => row.text ?? '').join('|')
+  expect(shown).toContain('💬 ')
+  expect(shown).toContain('20%')
+  expect(shown).not.toContain('MANA')
 })
