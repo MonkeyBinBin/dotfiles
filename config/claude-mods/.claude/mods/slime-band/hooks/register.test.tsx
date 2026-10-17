@@ -487,6 +487,18 @@ test('the biggest moment wins the banner: a slain boss, a boss appearing, a leve
   expect(bannerFor({ pets: [{ status: 'ok', endedAt: now - 5, isBackground: false, description: 'x' }] }, now)).toBeUndefined()
 })
 
+test('the hero falling and rising, a save and a delivery get banners too, behind the bigger moments', () => {
+  const now = 1_000_000
+  expect(bannerFor({ knockout: { state: 'down', at: now - 10 } }, now)).toMatchObject({ word: 'GAME OVER', color: 'red' })
+  expect(bannerFor({ knockout: { state: 'up', at: now - 10 } }, now)).toMatchObject({ word: 'REVIVE!', color: 'green' })
+  expect(bannerFor({ mapFx: { event: 'save', at: now - 10 } }, now)).toMatchObject({ word: 'SAVED!', color: 'cyan' })
+  expect(bannerFor({ mapFx: { event: 'deliver', at: now - 10 } }, now)).toMatchObject({ word: 'DELIVERED!', color: 'yellow' })
+  expect(bannerFor({ mapFx: { event: 'deliver', at: now - BANNER_MS - 1 } }, now)).toBeUndefined()
+  // A level up outranks a revive or a save; a knockout outranks a level up.
+  expect(bannerFor({ flashUntil: now + 100, knockout: { state: 'up', at: now - 10 }, mapFx: { event: 'save', at: now - 10 } }, now)?.word).toBe('LEVEL UP!')
+  expect(bannerFor({ flashUntil: now + 100, knockout: { state: 'down', at: now - 10 } }, now)?.word).toBe('GAME OVER')
+})
+
 test('a banner takes the big numbers\' place on the track, then the facts come back', async ($, on) => {
   const start = Date.UTC(2026, 9, 2, 12)
   const clock = mock.clock(on, { now: start })
