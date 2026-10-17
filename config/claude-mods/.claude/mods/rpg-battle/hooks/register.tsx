@@ -277,7 +277,8 @@ export const register: Register = on => {
       <Box flexDirection="row">
         <Box marginTop={gutterTop(e.surface)}><Text>{`${groupIcon(e.props.calls)} `}</Text></Box>
         <Box flexGrow={1} flexDirection="column">{drawn}</Box>
-        {combo === undefined ? null : <Box marginTop={gutterTop(e.surface)}><Text color="warning" bold>{combo}</Text></Box>}
+        {/* The label keeps its width; only the drawn row shrinks, so the combo never wraps. */}
+        {combo === undefined ? null : <Box flexShrink={0} marginTop={gutterTop(e.surface)}><Text color="warning" bold wrap="truncate">{combo}</Text></Box>}
       </Box>
     )
   })
