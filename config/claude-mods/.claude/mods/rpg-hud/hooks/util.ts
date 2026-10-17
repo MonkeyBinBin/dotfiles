@@ -52,11 +52,15 @@ const SPACE = 0x20
 const DEFAULT_COLOR = 0x01000000
 
 // Pixel art as Raster cells: one character per pixel, '.' see-through, two pixel rows per terminal row.
-export const composeSprite = (pixels: readonly string[], palette: Readonly<Record<string, number>>): string => {
+export const composeSprite = (pixels: readonly string[], palette: Readonly<Record<string, number>>): string =>
+  composeColors(pixels.map(line => [...line].map(ch => palette[ch])))
+
+// A colour per pixel, undefined see-through, as Raster cells: two pixel rows per terminal row.
+export const composeColors = (pixels: readonly (readonly (number | undefined)[])[]): string => {
   const columns = pixels[0]?.length ?? 0
   const rows = Math.ceil(pixels.length / 2)
   const words = new Uint32Array(columns * rows * 3)
-  const colorAt = (x: number, y: number) => palette[pixels[y]?.[x] ?? '.']
+  const colorAt = (x: number, y: number) => pixels[y]?.[x]
   for (let row = 0; row < rows; row += 1) {
     for (let col = 0; col < columns; col += 1) {
       const at = (row * columns + col) * 3

@@ -6,7 +6,8 @@ import { HURT_MS, pickFrame, pickMood } from './anim'
 import { bossFor, bossesFor, countFailures, failedGuard, fightBoss, fightText, runsGit } from './boss'
 import { GIT_STATUS, diffArgv, isLinear, parseBag, parseLog, parseLogLine, parseStatus, parseWorktrees, shortAge } from './git'
 import { layoutLanes, laneText } from './lanes'
-import { campsOn } from './map'
+import { campsOn, exploredRegions } from './map'
+import { OVERWORLD_ROWS, drawOverworld, mainRoad, regionName } from './overworld'
 import { parseDiff, rarityOf, splitBar } from './diff'
 import { countPatch, patchSource } from './edit-card'
 import { trailStops } from './map'
@@ -341,7 +342,7 @@ test('a one-line history is drawn as a road: camp, you, the loot you carry, the 
   await $.tool.call({ tool: 'Edit', file_path: '/x/y/z.ts', old_string: 'a', new_string: 'b' } as never)
   await $.turn.complete({ answer: '', durationMs: 5, isAborted: false, turnId: 't' } as never)
 
-  const ui = await mountPane($, 'terminal', 40)
+  const ui = await mountPane($, 'terminal', 50)
   await showTab($, ui, 'map')
   const shown = (await texts(ui)).join('|')
   expect(shown).toContain('@ main · one road')
@@ -354,7 +355,81 @@ test('a one-line history is drawn as a road: camp, you, the loot you carry, the 
   expect(shown).toContain('2h')
   expect(shown).toContain('7w')
   expect(shown).toContain('⚐ where it all began')
-  expect(shown).toContain('y/z.ts')
+  expect(shown).toContain('y/')
+  expect(shown).toContain('z.ts')
+})
+
+for (const surface of ['terminal', 'desktop'] as const) {
+  test(`the map tab opens on an overworld of the road and names its region on ${surface}`, async ($, on) => {
+    mapWorld(on, [
+      logLine('abc1234', 'abc0000', 'HEAD -> main', '2 hours ago', 'feat: map'),
+      logLine('abc0000', '', 'origin/main', '5 hours ago', 'init'),
+    ])
+    await $.turn.complete({ answer: '', durationMs: 5, isAborted: false, turnId: 't' } as never)
+    const ui = await mountPane($, surface, 40)
+    await showTab($, ui, 'map', surface)
+    const shown = (await texts(ui)).join('|')
+    expect(shown).toContain(' of main')
+    expect(shown).toContain('📜 Journey')
+    if (surface === 'terminal') {
+      const rasters = await ui.findAll({ type: 'Raster' })
+      expect(rasters.some(raster => raster.props?.rows === OVERWORLD_ROWS)).toBe(true)
+    } else {
+      expect((await ui.findAll({ type: 'Svg' })).map(svg => String(svg.props?.alt))).toContain('overworld map')
+    }
+  })
+}
+
+test('a narrow map leaves the overworld out and keeps the road', async ($, on) => {
+  mapWorld(on, [logLine('abc1234', '', 'HEAD -> main', '2 hours ago', 'feat: map')])
+  await $.turn.complete({ answer: '', durationMs: 5, isAborted: false, turnId: 't' } as never)
+  const ui = await mountPane($, 'desktop', 40, 34)
+  await showTab($, ui, 'map', 'desktop')
+  const shown = (await texts(ui)).join('|')
+  expect(shown).not.toContain(' of main')
+  expect((await ui.findAll({ type: 'Svg' })).map(svg => String(svg.props?.alt))).not.toContain('overworld map')
+  expect(shown).toContain('feat: map')
+})
+
+test('the overworld walks the first-parent road, fogs what it cannot fit and keeps the same land', () => {
+  const road = (n: number, remoteAt: number) =>
+    parseLog(
+      Array.from({ length: n }, (_, i) =>
+        logLine(`a${String(i).padStart(6, '0')}`, i === n - 1 ? '' : `a${String(i + 1).padStart(6, '0')}`, i === 0 ? 'HEAD -> main' : i === remoteAt ? 'origin/main' : '', '1 hour ago', 's'),
+      ),
+    )
+  const short = drawOverworld({ rows: road(4, 2), dirty: 1, width: 40, seed: 'repo' })
+  expect(short.steps).toBe(4)
+  expect(short.isCut).toBe(false)
+  expect(short.frames).toHaveLength(2)
+  expect(short.frames[0]).toHaveLength(OVERWORLD_ROWS * 2)
+  expect(short.frames[0]?.[0]).toHaveLength(40)
+  // An idle world still moves: the frames differ.
+  expect(JSON.stringify(short.frames[0])).not.toBe(JSON.stringify(short.frames[1]))
+  expect(JSON.stringify(drawOverworld({ rows: road(4, 2), dirty: 1, width: 40, seed: 'repo' }).frames)).toBe(JSON.stringify(short.frames))
+
+  const long = drawOverworld({ rows: road(30, 3), dirty: 0, width: 40, seed: 'repo' })
+  expect(long.isCut).toBe(true)
+  expect(long.steps).toBeLessThan(30)
+
+  const forked = parseLog([
+    logLine('b000001', 'a000002', 'HEAD -> feat/x', '1 hour ago', 'wip'),
+    logLine('c000001', 'a000002', 'main', '1 hour ago', 'fix'),
+    logLine('a000002', '', '', '1 day ago', 'init'),
+  ])
+  expect(mainRoad(forked).map(row => row.hash)).toEqual(['b000001', 'a000002'])
+  expect(regionName('repo', 'wood', 'main')).toMatch(/ of main$/)
+})
+
+test('explored files gather into regions by their top folder, the root last', () => {
+  const regions = exploredRegions([
+    { path: 'README.md', reads: 3, edits: 0 },
+    { path: 'hooks/map.tsx', reads: 1, edits: 2 },
+    { path: 'hooks/git.ts', reads: 2, edits: 0 },
+    { path: 'types/index.d.ts', reads: 1, edits: 0 },
+  ])
+  expect(regions.map(region => region.name)).toEqual(['hooks', 'types', ''])
+  expect(regions[0]?.files.map(file => file.path)).toEqual(['hooks/map.tsx', 'hooks/git.ts'])
 })
 
 test('a branching history keeps the lane graph', async ($, on) => {
@@ -1122,7 +1197,9 @@ test('a NotebookEdit counts as exploring and editing its notebook', async ($, on
   await $.tool.call({ tool: 'NotebookEdit', notebook_path: '/x/nb/plot.ipynb', new_source: 'x' } as never)
   const ui = await mountPane($, 'terminal', 40)
   await showTab($, ui, 'map')
-  expect((await texts(ui)).join('|')).toContain('nb/plot.ipynb')
+  const shown = (await texts(ui)).join('|')
+  expect(shown).toContain('nb/')
+  expect(shown).toContain('plot.ipynb')
 })
 
 test('a new file ending in a newline counts its lines once', async ($, on) => {

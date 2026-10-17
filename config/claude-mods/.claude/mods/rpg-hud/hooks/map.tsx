@@ -1,11 +1,14 @@
 import type { ElementTable } from 'claude-code'
 
 import type { GitMap, TouchedFile } from '../types'
+import { FRAME_MS, OVERWORLD_TICKS, anim } from './anim'
 import { GRAPH_LIMIT, isLinear, parseLog } from './git'
 import type { GraphRow } from './git'
 import { layoutLanes } from './lanes'
 import type { LaneRow } from './lanes'
-import { oneLine } from './util'
+import { OVERWORLD_MIN_COLUMNS, OVERWORLD_ROWS, colorsToPixels, drawOverworld, regionName } from './overworld'
+import { COLUMN_PX, spriteSvg } from './svg'
+import { composeColors, oneLine } from './util'
 import type { Item } from './window'
 
 const LANE_COLORS = ['cyan', 'magenta', 'yellow', 'green', 'blue', 'red']
@@ -215,11 +218,128 @@ export type MapActions = {
   // How many outposts (worktrees) the repository has, the session's own included.
   outposts: number
   camps: Camps
+  // The class's colour, for the hero on the overworld.
+  heroColor?: string
+  // The terminal's Raster: the overworld is cells there, a drawing elsewhere.
+  Raster?: ElementTable<'terminal'>['Raster']
+}
+
+// The overworld and the banner naming its region; nothing on a window too narrow to draw it.
+function overworldItems(ui: ElementTable, map: GitMap, rows: readonly GraphRow[], width: number, actions: MapActions): Item[] {
+  const { Box, Text } = ui
+  const { Raster } = actions
+  const Svg = Raster === undefined && 'Svg' in ui ? ui.Svg : undefined
+  anim.overworld = undefined
+  if (width < OVERWORLD_MIN_COLUMNS || rows.length === 0 || (Raster === undefined && Svg === undefined)) return []
+  const seed = map.root?.split('/').pop() ?? map.branch
+  const world = drawOverworld({ rows, dirty: map.dirty, width, seed, ...(actions.heroColor === undefined ? {} : { heroColor: actions.heroColor }) })
+  let drawn: Item['node']
+  if (Raster !== undefined) {
+    const frames = world.frames.map(composeColors)
+    anim.overworld = { frames, columns: width, rows: OVERWORLD_ROWS, shown: frames[0] ?? '' }
+    drawn = <Raster key="overworld" columns={width} rows={OVERWORLD_ROWS} cells={frames[0] ?? ''} />
+  } else if (Svg !== undefined) {
+    const sprite = spriteSvg(world.frames.map(colorsToPixels), COLUMN_PX, FRAME_MS * OVERWORLD_TICKS)
+    drawn = <Svg key="overworld" source={sprite.source} alt="overworld map" width={sprite.width} height={sprite.height} isInteractive />
+  }
+  const name = regionName(seed, world.terrain, map.branch)
+  // The name between two runs of ornament, as wide as the window allows.
+  const flourish = Math.max(0, Math.floor((width - name.length - 6) / 2))
+  return [
+    row('overworld-gap', <Text> </Text>),
+    { key: 'overworld', rows: OVERWORLD_ROWS, node: <Box height={OVERWORLD_ROWS}>{drawn}</Box> },
+    row(
+      'region',
+      <Box height={1} justifyContent="center">
+        <Text wrap="truncate">
+          <Text color="yellow" dimColor>{'═'.repeat(flourish)}</Text>
+          <Text color="yellow"> ✦ </Text>
+          <Text bold color="yellow">{name}</Text>
+          <Text color="yellow"> ✦ </Text>
+          <Text color="yellow" dimColor>{'═'.repeat(flourish)}</Text>
+        </Text>
+      </Box>,
+    ),
+  ]
+}
+
+export type Region = { name: string; files: TouchedFile[]; edits: number; reads: number }
+
+// The files explored, by the folder at the top of their path: the busiest regions first, files at the root last.
+export const exploredRegions = (files: readonly TouchedFile[]): Region[] => {
+  const regions = new Map<string, Region>()
+  for (const file of exploredOrder(files)) {
+    const slash = file.path.indexOf('/')
+    const name = slash === -1 ? '' : file.path.slice(0, slash)
+    const region = regions.get(name) ?? { name, files: [], edits: 0, reads: 0 }
+    region.files.push(file)
+    region.edits += file.edits
+    region.reads += file.reads
+    regions.set(name, region)
+  }
+  return [...regions.values()].sort(
+    (a, b) => Number(a.name === '') - Number(b.name === '') || b.edits - a.edits || b.reads - a.reads || a.name.localeCompare(b.name),
+  )
+}
+
+function exploredItems(ui: ElementTable, touched: readonly TouchedFile[], width: number): Item[] {
+  const { Box, Text } = ui
+  const regions = exploredRegions(touched)
+  const items: Item[] = [
+    row(
+      'explored',
+      <Text bold color="cyan">
+        ✧ Explored <Text dimColor>{touched.length} places · {regions.length} regions</Text>
+      </Text>,
+    ),
+  ]
+  if (touched.length === 0) items.push(row('nothing', <Text dimColor>Nothing explored yet.</Text>))
+  for (const region of regions) {
+    // A region is cleared as far as its files were worked on, not just looked at.
+    const worked = region.files.filter(file => file.edits > 0).length
+    const gauge = 5
+    const filled = Math.round((worked / region.files.length) * gauge)
+    items.push(
+      row(
+        `r-${region.name}`,
+        <Box height={1}>
+          <Box flexGrow={1}>
+            <Text wrap="truncate">
+              <Text color={worked > 0 ? 'yellow' : 'cyan'}>{worked > 0 ? '⚔ ' : '⌂ '}</Text>
+              <Text bold>{oneLine(region.name === '' ? '~ the root' : `${region.name}/`, width - 16)}</Text>
+              <Text dimColor>  {region.files.length}</Text>
+            </Text>
+          </Box>
+          <Text color="yellow">{'▰'.repeat(filled)}</Text>
+          <Text dimColor>{'▱'.repeat(gauge - filled)}</Text>
+        </Box>,
+      ),
+    )
+    for (const file of region.files) {
+      const shown = region.name === '' ? file.path : file.path.slice(region.name.length + 1)
+      items.push(
+        row(
+          `f-${file.path}`,
+          <Text wrap="truncate">
+            <Text dimColor>  </Text>
+            {file.edits > 0 ? <Text color="yellow">◆ </Text> : <Text color="cyan">◇ </Text>}
+            <Text>{oneLine(shown, width - 16)}</Text>
+            <Text dimColor>
+              {file.edits > 0 ? `  ✎${file.edits}` : ''}
+              {file.reads > 0 ? `  ◈${file.reads}` : ''}
+            </Text>
+          </Text>,
+        ),
+      )
+    }
+  }
+  return items
 }
 
 export function mapItems(ui: ElementTable, map: GitMap, touched: readonly TouchedFile[], width: number, actions: MapActions): Item[] {
   const { Box, Text, Button } = ui
   const { openBag } = actions
+  anim.overworld = undefined
   if (!map.isRepo) return [row('none', <Text dimColor>Uncharted land: this folder is not a git repository.</Text>)]
 
   const rows = parseLog(map.graph, map.remotes)
@@ -246,33 +366,14 @@ export function mapItems(ui: ElementTable, map: GitMap, touched: readonly Touche
         )}
       </Box>,
     ),
+    ...overworldItems(ui, map, rows, width, actions),
     row('gap-top', <Text> </Text>),
+    row('journey', <Text bold color="yellow">📜 Journey <Text dimColor>{rows.length >= GRAPH_LIMIT ? `last ${GRAPH_LIMIT} steps` : `${rows.length} steps`}</Text></Text>),
     ...(isLinear(rows)
       ? trailItems(ui, rows, map.dirty, width, actions)
       : [...(map.dirty > 0 ? [campRow(ui, map.dirty, '', openBag)] : []), ...branchItems(ui, rows, width, actions.camps)]),
     row('gap', <Text> </Text>),
-    row(
-      'explored',
-      <Text bold color="cyan">
-        ✧ Explored <Text dimColor>{touched.length} places</Text>
-      </Text>,
-    ),
+    ...exploredItems(ui, touched, width),
   ]
-  if (touched.length === 0) items.push(row('nothing', <Text dimColor>Nothing explored yet.</Text>))
-  for (const file of exploredOrder(touched)) {
-    items.push(
-      row(
-        `f-${file.path}`,
-        <Text wrap="truncate">
-          {file.edits > 0 ? <Text color="yellow">◆ </Text> : <Text color="cyan">◇ </Text>}
-          <Text>{oneLine(file.path, width - 14)}</Text>
-          <Text dimColor>
-            {file.edits > 0 ? `  ✎${file.edits}` : ''}
-            {file.reads > 0 ? `  ◈${file.reads}` : ''}
-          </Text>
-        </Text>,
-      ),
-    )
-  }
   return items
 }

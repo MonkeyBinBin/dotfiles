@@ -75,6 +75,8 @@ export type GitMap = {
   graph: string[]
   // The remotes' names (`git remote`), which tell remote-tracking refs from local branches.
   remotes?: string[]
+  // The worktree's top folder: the overworld's land grows from its name.
+  root?: string
 }
 
 export type TouchedFile = { path: string; reads: number; edits: number }

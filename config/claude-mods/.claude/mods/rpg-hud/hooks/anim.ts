@@ -13,6 +13,8 @@ export const FRAME_MS = 100
 export const FRAME_TICKS: Record<Mood, number> = { idle: 5, cast: 2, hurt: 3 }
 // Ticks each frame of a running pet stays on screen.
 export const PET_TICKS = 4
+// Ticks each frame of the overworld's idle animation stays on screen.
+export const OVERWORLD_TICKS = 6
 // The smoke puff plays once through after a failed call.
 // Every class's puff has the wizard's length.
 export const HURT_MS = FRAME_MS * FRAME_TICKS.hurt * HERO_CLASS_FRAMES.wizard.hurt.length
@@ -50,4 +52,6 @@ export const anim = {
   shownPng: '',
   // Running pets on screen, by Raster key, with the seed that picks their sprite.
   pets: new Map<string, { seed: string; shown: string }>(),
+  // The map tab's overworld while on screen: its frames as Raster cells and the one shown.
+  overworld: undefined as { frames: string[]; columns: number; rows: number; shown: string } | undefined,
 }

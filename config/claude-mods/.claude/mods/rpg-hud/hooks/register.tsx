@@ -22,7 +22,7 @@ import type {
   TouchedFile,
   Vitals,
 } from '../types'
-import { FRAME_MS, FRAME_TICKS, HERO_CELLS, HURT_MS, PET_TICKS, anim, pickFrame, pickMood } from './anim'
+import { FRAME_MS, FRAME_TICKS, HERO_CELLS, HURT_MS, OVERWORLD_TICKS, PET_TICKS, anim, pickFrame, pickMood } from './anim'
 import type { Mood } from './anim'
 import { HERO_CLASS_FRAMES } from './hero-cells'
 import type { HeroClassId } from './hero-cells'
@@ -321,7 +321,7 @@ async function refreshMap($: EngineInterface, scope: 'files' | 'all' = 'all') {
   if (isAll) {
     const graph = log?.exitCode === 0 ? log.stdout.split('\n').filter(line => line.length > 0) : []
     const remotes = remoteList?.exitCode === 0 ? remoteList.stdout.split('\n').filter(name => name.length > 0) : []
-    await update($, map, () => ({ isRepo: true, graph, remotes, ...parseStatus(status.stdout) }))
+    await update($, map, () => ({ isRepo: true, graph, remotes, ...(root === undefined ? {} : { root }), ...parseStatus(status.stdout) }))
   } else {
     await update($, map, current => ({ ...current, isRepo: true, ...parseStatus(status.stdout) }))
   }
@@ -685,13 +685,25 @@ async function paintPets($: EngineInterface) {
   }
 }
 
+// The overworld's idle frames; a refusal means it scrolled away, and it leaves the animation.
+async function paintOverworld($: EngineInterface) {
+  const world = anim.overworld
+  if (world === undefined) return
+  const cells = world.frames[Math.floor(anim.tick / OVERWORLD_TICKS) % world.frames.length] ?? world.shown
+  if (cells === world.shown) return
+  if (await blit($, 'overworld', cells, world.columns, world.rows)) world.shown = cells
+  else anim.overworld = undefined
+}
+
 async function paint($: EngineInterface) {
   anim.tick += 1
   const hasPets = anim.tab === 'pets' && anim.pets.size > 0
+  const hasMap = anim.tab === 'map' && anim.overworld !== undefined
   // The portrait refusing means the pane is closed: nothing of ours is on screen.
   if (anim.hasHero && !(await paintHero($))) return stop()
   if (hasPets) await paintPets($)
-  if (!anim.hasHero && !hasPets) stop()
+  if (hasMap) await paintOverworld($)
+  if (!anim.hasHero && !hasPets && !hasMap) stop()
 }
 
 // Each draw of an animated tab starts the clock again if a refusal stopped it.
@@ -818,9 +830,10 @@ const petsPage = async (_$: EngineInterface, { ui, inner, now, Raster, petList }
   subtitle: partySubtitle(petList),
 })
 
-const mapPage = async ($: EngineInterface, { ui, inner }: PageContext): Promise<Page> => {
+const mapPage = async ($: EngineInterface, { ui, inner, Raster }: PageContext): Promise<Page> => {
   const world = await read($, map)
   const list = await read($, outposts)
+  const hero = classOf(await read($, heroClass))
   return {
     items: mapItems(ui, world, await read($, touched), inner, {
       openBag: () => {
@@ -833,6 +846,8 @@ const mapPage = async ($: EngineInterface, { ui, inner }: PageContext): Promise<
       },
       outposts: list.length,
       camps: Object.fromEntries(list.filter(one => !one.isHere && one.branch !== '').map(one => [one.branch, one.name])),
+      heroColor: hero.color,
+      ...(Raster === undefined ? {} : { Raster }),
     }),
     subtitle: mapSubtitle(world),
   }
@@ -1632,7 +1647,9 @@ export const register: Register = on => {
       const shown = new Set(pageItems(items, offset, rows).shown.map(item => `pet-${item.key}`))
       for (const key of anim.pets.keys()) if (!shown.has(key)) anim.pets.delete(key)
     }
-    if (anim.hasHero || (active === 'pets' && anim.pets.size > 0)) startAnim($)
+    // Only an overworld the window shows (the map itself, not its bag) can take a blit.
+    if (windowKey !== 'map' || !pageItems(items, offset, rows).shown.some(item => item.key === 'overworld')) anim.overworld = undefined
+    if (anim.hasHero || (active === 'pets' && anim.pets.size > 0) || anim.overworld !== undefined) startAnim($)
 
     return (
       <Box flexDirection="column" width={width} rowGap={sectionGap}>
