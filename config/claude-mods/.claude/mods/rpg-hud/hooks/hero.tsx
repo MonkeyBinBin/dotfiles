@@ -5,6 +5,8 @@ import { HERO_CELLS, anim } from './anim'
 import { barParts, oneLine } from './util'
 import { BAR_HEIGHT, COLUMN_PX, barSvg } from './svg'
 import { CLASSES, rankOf } from './classes'
+import { battleFrame, duelLayout, renderFoeSide } from './encounter'
+import type { FoeSideProps } from './encounter'
 import type { HeroClass } from './classes'
 
 // The stats column is as tall as the portrait: name, rank, HP, MP, XP, rule, combo, party, status, boss.
@@ -74,6 +76,10 @@ export const statusLayout = (width: number, hasRaster: boolean) => {
   return { hasPortrait, statsWidth, barWidth }
 }
 
+// The duel a foe turns the panel to, when it fits: the stats step aside for it. Scale 0 when it does not.
+export const panelDuel = (width: number, hasPicture: boolean) =>
+  duelLayout(Math.max(0, width - PANEL_CHROME_COLUMNS), hasPicture, HERO_CELLS.columns)
+
 export type StatusData = {
   hero: HeroClass
   // Every call this session; `list` holds only the latest.
@@ -95,6 +101,9 @@ export type StatusData = {
   onHelp?: () => void
   // Fills the prompt with the boss's fix; the boss row then carries a button for it.
   onFight?: () => void
+  // The foe standing (or crumbling) and the moment of the fight: drawn on the panel's right when it fits, in
+  // place of the boss row.
+  foe?: Omit<FoeSideProps, 'onFight'>
 }
 
 const FIGHT_LABEL = '⚔ fix'
@@ -138,11 +147,15 @@ export function renderStatus(ui: ElementTable, data: StatusData, Raster?: Elemen
   const mp = manaLeft(vitals)
   const current = list.findLast(call => call.status === 'run')
   const failed = list.filter(call => call.status === 'err').length
-  const { hasPortrait, statsWidth, barWidth } = statusLayout(width, Raster !== undefined || portrait !== undefined)
+  const hasPicture = Raster !== undefined || portrait !== undefined
+  const duel = data.foe === undefined ? undefined : panelDuel(width, hasPicture)
+  const hasFoeSide = duel !== undefined && duel.scale > 0
+  const { statsWidth, barWidth, ...layout } = statusLayout(width, hasPicture)
+  const hasPortrait = hasFoeSide ? duel.hasPortrait : layout.hasPortrait
   const { hero } = data
   // Every surface but the terminal (the one with a Raster) draws SVG.
   const Svg = Raster === undefined && 'Svg' in ui ? (ui.Svg as SvgElement) : undefined
-  const frame = data.isFlashing ? 'yellow' : hero.color
+  const frame = data.isFlashing ? 'yellow' : hasFoeSide ? battleFrame(data.foe?.fx) : hero.color
   const fullName = `CLAUDE THE ${hero.title}`
   // Room for `Lv.NN` beside the name, and for the ? after it.
   const name = statsWidth >= fullName.length + 6 + (data.onHelp === undefined ? 0 : 2) ? fullName : 'CLAUDE'
@@ -153,7 +166,7 @@ export function renderStatus(ui: ElementTable, data: StatusData, Raster?: Elemen
   const fightRoom = data.onFight === undefined ? 0 : FIGHT_LABEL.length + 1
   const bossBar = barParts(boss?.hp ?? 0, boss?.maxHp ?? 0, Math.max(4, Math.min(10, statsWidth - (boss?.name.length ?? 0) - 9 - fightRoom)))
   const bossRow =
-    boss === null ? null : (
+    boss === null || hasFoeSide ? null : (
       <Box height={1}>
         <Box flexGrow={1}>
           {Svg !== undefined ? (
@@ -181,10 +194,18 @@ export function renderStatus(ui: ElementTable, data: StatusData, Raster?: Elemen
     <Box flexDirection="row" width={width} height={STATUS_ROWS} borderStyle="double" borderColor={frame} paddingX={1}>
       {hasPortrait && (
         // A drawing sits at the top of its box: off the terminal the portrait is centred down the stats column.
-        <Box width={HERO_CELLS.columns + PORTRAIT_GAP} {...(Svg === undefined ? {} : { height: STATS_ROWS, alignItems: 'center' as const })}>
+        <Box width={HERO_CELLS.columns + (hasFoeSide ? 1 : PORTRAIT_GAP)} {...(Svg === undefined ? {} : { height: STATS_ROWS, alignItems: 'center' as const })}>
           {Raster ? <Raster key="hero" {...HERO_CELLS} cells={anim.shownCells} /> : portrait}
         </Box>
       )}
+      {hasFoeSide && data.foe !== undefined
+        ? renderFoeSide(ui, { ...data.foe, ...(data.onFight === undefined ? {} : { onFight: data.onFight }) }, STATS_ROWS, duel)
+        : renderStats()}
+    </Box>
+  )
+
+  function renderStats() {
+    return (
       <Box flexDirection="column" width={statsWidth} height={STATS_ROWS}>
         <Box height={1}>
           <Box flexGrow={1}>
@@ -250,6 +271,6 @@ export function renderStatus(ui: ElementTable, data: StatusData, Raster?: Elemen
             </Text>
           ))}
       </Box>
-    </Box>
-  )
+    )
+  }
 }

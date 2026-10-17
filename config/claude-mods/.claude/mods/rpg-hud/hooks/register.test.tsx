@@ -7,12 +7,13 @@ import { bossFor, bossesFor, countFailures, failedGuard, fightBoss, fightText, r
 import { GIT_STATUS, diffArgv, isLinear, parseBag, parseLog, parseLogLine, parseStatus, parseWorktrees, shortAge } from './git'
 import { layoutLanes, laneText } from './lanes'
 import { campsOn, exploredRegions } from './map'
-import { BOSS_COLUMNS, BOSS_ROWS, FX_MS, bossFrames } from './encounter'
-import { OVERWORLD_ROWS, drawOverworld, mainRoad, phaseOf, regionName } from './overworld'
+import { BOSS_COLUMNS, BOSS_ROWS, FX_MS, VS_COLUMNS, VS_ROWS, bossFrames } from './encounter'
+import { OVERWORLD_ROWS, RAINBOW_MS, drawOverworld, mainRoad, phaseOf, regionName, weatherOf } from './overworld'
+import { EMPTY_LOOT, claimLoot, forge, lootText } from './loot'
 import { parseDiff, rarityOf, splitBar } from './diff'
 import { countPatch, patchSource } from './edit-card'
 import { trailStops } from './map'
-import { gaugeColor, heroStats, manaLeft, normalizeCall, rankFor, statusLayout } from './hero'
+import { gaugeColor, heroStats, manaLeft, normalizeCall, panelDuel, rankFor, statusLayout } from './hero'
 import { rosterOrder } from './pets'
 import { petCells, speciesFor } from './pet-sprites'
 import { MANA_ALARMS, campFor, localHour, parseUtcOffset, isRefusal, manaAlarm, returnToast, skillOfPrompt, touchFile } from './register'
@@ -268,6 +269,13 @@ test('fits the portrait only beside a usable stats column', () => {
   expect(statusLayout(60, true)).toEqual({ hasPortrait: true, statsWidth: 34, barWidth: 18 })
   expect(statusLayout(40, true).hasPortrait).toBe(false)
   expect(statusLayout(60, false).hasPortrait).toBe(false)
+  // A foe takes the stats' place: twice its size beside the hero where it fits, then its own size, then alone.
+  expect(panelDuel(60, true)).toEqual({ hasPortrait: true, scale: 2, midColumns: 10, arenaColumns: 24 })
+  expect(panelDuel(50, true)).toMatchObject({ hasPortrait: true, scale: 1 })
+  expect(panelDuel(40, true)).toMatchObject({ hasPortrait: false, scale: 2 })
+  expect(panelDuel(20, true)).toMatchObject({ hasPortrait: false, scale: 0 })
+  // A wide pane widens the middle column a little, and the arena takes the rest.
+  expect(panelDuel(90, true)).toEqual({ hasPortrait: true, scale: 2, midColumns: 16, arenaColumns: 48 })
 })
 
 test('gauges turn yellow then red as they drain', () => {
@@ -286,63 +294,81 @@ test('the combo grows with each clean cast and breaks on a fizzle', async ($, on
   expect(shown).toContain(' best 3')
 })
 
-test('the boss stands in the status panel', async ($, on) => {
+test('on a pane too narrow for a duel the boss stands in a row of the status panel', async ($, on) => {
   world(on, { tool: failBash('Found 4 errors in 2 files.') })
   await $.tool.call({ tool: 'Bash', command: 'npx tsc --noEmit' })
-  const ui = await mountPane($, 'terminal')
-  expect((await texts(ui)).join('|')).toContain('☠ Type Wraith ')
+  const ui = await mountPane($, 'terminal', 32, 20)
+  const shown = (await texts(ui)).join('|')
+  expect(shown).toContain('☠ Type Wraith ')
+  expect(shown).not.toContain('VS')
 })
 
 for (const surface of ['terminal', 'desktop'] as const) {
-  test(`a boss is met on an encounter card, takes hits and crumbles when slain on ${surface}`, async ($, on) => {
+  test(`a boss is met in a duel on the status panel, takes hits and crumbles when slain on ${surface}`, async ($, on) => {
     let output = 'Tests: 3 failed, 9 passed'
     const { clock } = world(on, { tool: e => (e.tool === 'Bash' ? (output === '' ? { result: { text: 'all green' } } : fail(output)) : undefined) })
     await $.tool.call({ tool: 'Bash', command: 'pnpm test' })
     const ui = await mountPane($, surface, 40)
     let shown = (await texts(ui)).join('|')
-    expect(shown).toContain('! A wild Bug Hydra appears!')
-    expect(shown).toContain('ENCOUNTER')
-    if (surface === 'terminal') expect((await ui.findAll({ type: 'Raster' })).some(r => r.props?.columns === BOSS_COLUMNS)).toBe(true)
+    expect(shown).toContain('! APPEARS')
+    expect(shown).toContain('⚔ STRIKE')
+    if (surface === 'terminal') expect((await ui.findAll({ type: 'Raster' })).some(r => r.props?.columns === VS_COLUMNS && r.props?.rows === VS_ROWS)).toBe(true)
+    else expect((await ui.findAll({ type: 'Svg' })).map(svg => String(svg.props?.alt))).toContain('VS')
+    expect(shown).toContain('Bug Hydra')
+    expect(shown).toContain('HP 3/3')
+    // The stats step aside for the duel.
+    expect(shown).not.toContain('CLAUDE')
+    expect(shown).not.toContain('☠ Bug Hydra ')
+    if (surface === 'terminal') expect((await ui.findAll({ type: 'Raster' })).some(r => r.props?.columns === BOSS_COLUMNS * 2)).toBe(true)
     else expect((await ui.findAll({ type: 'Svg' })).map(svg => String(svg.props?.alt))).toContain('Bug Hydra')
 
     await clock.advance(FX_MS.appear + 10)
     output = '1 failed'
     await $.tool.call({ tool: 'Bash', command: 'pnpm test' })
     shown = (await texts(ui)).join('|')
-    expect(shown).toContain('💥 CRITICAL! -2 HP')
-    expect(shown).toContain(' 1/3')
+    expect(shown).toContain('💥 CRIT!')
+    expect(shown).toContain('HP 1/3')
 
     await clock.advance(FX_MS.hit + 10)
     output = ''
     await $.tool.call({ tool: 'Bash', command: 'pnpm test' })
     shown = (await texts(ui)).join('|')
-    expect(shown).toContain('✦ Bug Hydra is defeated! ✦')
+    expect(shown).toContain('✦ VICTORY')
     await clock.advance(FX_MS.defeat + 10)
-    expect((await texts(ui)).join('|')).not.toContain('Bug Hydra')
+    const after = (await texts(ui)).join('|')
+    expect(after).not.toContain('Bug Hydra')
+    expect(after).toContain('CLAUDE')
   })
 }
 
-test('a short pane keeps the window and leaves the encounter card out', async ($, on) => {
-  world(on, { tool: failBash('2 failed') })
-  await $.tool.call({ tool: 'Bash', command: 'pnpm test' })
-  const ui = await mountPane($, 'terminal', 20)
-  const shown = (await texts(ui)).join('|')
-  expect(shown).toContain('☠ Bug Hydra ')
-  expect(shown).not.toContain('ENCOUNTER')
-})
-
-test('each monster bobs while it stands, flashes when hit and crumbles to nothing', () => {
+test('each monster bobs, walks in out of the dark, takes a slash with its damage and bursts to sparks', () => {
   for (const kind of ['test', 'lint', 'types', 'e2e', 'unknown']) {
-    const idle = bossFrames(kind, undefined)
-    expect(idle.loop).toBe(true)
-    expect(idle.grids).toHaveLength(2)
-    for (const grid of idle.grids) {
-      expect(grid.art).toHaveLength(BOSS_ROWS * 2)
-      for (const line of grid.art) expect(line).toHaveLength(BOSS_COLUMNS)
+    for (const scale of [1, 2]) {
+      const idle = bossFrames(kind, undefined, scale)
+      expect(idle.loop).toBe(true)
+      expect(idle.grids).toHaveLength(2)
+      for (const event of [undefined, 'appear', 'hit', 'defeat'] as const) {
+        for (const grid of bossFrames(kind, event, scale, 2).grids) {
+          expect(grid.art).toHaveLength(BOSS_ROWS * 2 * scale)
+          for (const line of grid.art) expect(line).toHaveLength(BOSS_COLUMNS * scale)
+        }
+      }
+      // It enters from beyond the right edge: only the arena's floor shows.
+      expect(bossFrames(kind, 'appear', scale).grids[0]?.art.slice(0, -1).join('')).toMatch(/^\.+$/)
+      // In a wider arena it stands in the middle, torches at either side.
+      const wide = bossFrames(kind, undefined, scale, 0, 48).grids[0]
+      for (const line of wide?.art ?? []) expect(line).toHaveLength(48)
+      expect(wide?.art.join('')).toContain('|')
+      const hit = bossFrames(kind, 'hit', scale, 2)
+      expect(hit.loop).toBe(false)
+      // The slash's white core, and the damage in yellow pixels.
+      expect(hit.grids.some(grid => grid.art.join('').includes('#'))).toBe(true)
+      expect(hit.grids.at(-3)?.art.join('')).toContain('*')
+      // Burst: none of the monster is left, only sparks.
+      const burst = bossFrames(kind, 'defeat', scale).grids.at(-1)
+      expect(burst?.art.slice(0, -1).join('')).toMatch(/^[.*+]+$/)
+      expect(burst?.art.join('')).toMatch(/[*+]/)
     }
-    expect(bossFrames(kind, 'hit').loop).toBe(false)
-    const crumbled = bossFrames(kind, 'defeat').grids.at(-1)
-    expect(crumbled?.art.join('')).toMatch(/^\.+$/)
   }
 })
 
@@ -498,6 +524,71 @@ test('the land takes the light of the local hour, and the hero sparks while cast
   expect(night).toContain(0xe8ff7a)
   expect(day).not.toContain(0xe8ff7a)
   expect(draw('day', true)).toContain(0xfff07a)
+})
+
+test('the sky follows the boss: a storm while one stands, a rainbow once it falls', () => {
+  expect(weatherOf(null, null, 0)).toBe('clear')
+  expect(weatherOf({}, null, 0)).toBe('storm')
+  expect(weatherOf(null, { event: 'defeat', at: 1000 }, 1000 + RAINBOW_MS - 1)).toBe('rainbow')
+  expect(weatherOf(null, { event: 'defeat', at: 1000 }, 1000 + RAINBOW_MS)).toBe('clear')
+
+  const rows = parseLog([
+    logLine('a000001', 'a000002', 'HEAD -> main', '1 hour ago', 'a'),
+    logLine('a000002', '', 'origin/main', '1 day ago', 'b'),
+  ])
+  const draw = (weather: 'clear' | 'storm' | 'rainbow') => drawOverworld({ rows, dirty: 0, width: 48, seed: 'repo', weather }).frames
+  const sum = (colors: number[]) => colors.reduce((total, c) => total + ((c >> 16) & 255) + ((c >> 8) & 255) + (c & 255), 0)
+  const clear = draw('clear')
+  const storm = draw('storm')
+  // The storm darkens the land, yet its rain shows, and it falls: the frames differ.
+  expect(sum(storm.flat(2))).toBeLessThan(sum(clear.flat(2)) * 0.8)
+  expect(storm.flat(2)).toContain(0x9cc4f0)
+  expect(clear.flat(2)).not.toContain(0x9cc4f0)
+  expect(JSON.stringify(storm[0])).not.toBe(JSON.stringify(storm[1]))
+  // The rainbow tints the sky alone: the bottom of the land is as it was.
+  const rainbow = draw('rainbow')
+  expect(JSON.stringify(rainbow[0]?.slice(0, 3))).not.toBe(JSON.stringify(clear[0]?.slice(0, 3)))
+  expect(JSON.stringify(rainbow[0]?.slice(-4))).toBe(JSON.stringify(clear[0]?.slice(-4)))
+})
+
+test('loot reads what a turn won, and a closing line takes the turn its length matches', () => {
+  expect(lootText(EMPTY_LOOT)).toBe('')
+  expect(lootText({ xp: 12, forged: ['a.ts', 'b.ts', 'c.ts'], bosses: 1, level: 4 })).toBe('+12 XP · 3 files forged · ☠×1 · ✦ Lv.4')
+  expect(lootText(forge(forge(EMPTY_LOOT, 'a.ts'), 'a.ts'))).toBe('1 file forged')
+  const waiting = [
+    { ...EMPTY_LOOT, xp: 1, durationMs: 4000 },
+    { ...EMPTY_LOOT, xp: 2, durationMs: 9000 },
+  ]
+  expect(claimLoot(waiting, 9300)).toBe(1)
+  expect(claimLoot(waiting, 4100)).toBe(0)
+  expect(claimLoot(waiting, 60_000)).toBe(-1)
+})
+
+test('the line closing a turn tells its loot, and keeps it when drawn again', async ($, on) => {
+  let runs = 0
+  const { clock } = world(on, {
+    tool: e => (e.tool === 'Bash' && (runs += 1) === 1 ? fail('Tests: 3 failed, 10 passed') : undefined),
+  })
+  on('ui.render', { component: 'TurnDuration' }, async ($$, e) => {
+    const { Text } = $$.ui.resolve(e)
+    return <Text>{`${e.props.word} for 5s`}</Text>
+  })
+  await $.tool.call({ tool: 'Bash', command: 'pnpm test' })
+  await $.tool.call({ tool: 'Edit', file_path: '/x/a.ts', old_string: 'a', new_string: 'b' } as never)
+  await $.tool.call({ tool: 'Edit', file_path: '/x/a.ts', old_string: 'b', new_string: 'c' } as never)
+  await $.tool.call({ tool: 'Bash', command: 'pnpm test' })
+  await $.turn.complete({ answer: '', durationMs: 5000, isAborted: false, turnId: 't' } as never)
+
+  const line = (requestId: string, durationMs: number) =>
+    $.ui.mount({ plugin: 'rpg-hud', surface: 'terminal', component: 'TurnDuration', requestId, props: { word: 'Battled', durationMs } })
+  // A line of another length is some other turn's.
+  expect((await texts(await line('other', 90_000))).join('|')).not.toContain('XP')
+  const ui = await line('m1', 5000)
+  expect((await texts(ui)).join('|')).toContain('+4 XP · 1 file forged · ☠×1')
+  // Once claimed, the line keeps its loot, and a second line of the same length takes nothing.
+  await clock.advance(10)
+  expect((await texts(ui)).join('|')).toContain('+4 XP · 1 file forged · ☠×1')
+  expect((await texts(await line('m2', 5000))).join('|')).not.toContain('XP')
 })
 
 test('explored files gather into regions by their top folder, the root last', () => {

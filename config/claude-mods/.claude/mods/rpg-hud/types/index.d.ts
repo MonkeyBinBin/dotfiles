@@ -176,6 +176,12 @@ declare module 'claude-code' {
       // When the HUD began watching this session: its start, or the first call it saw. 0 until then.
       startedAt: number
       progress: Progress
+      // The main loop's winnings since its last turn ended.
+      turnLoot: import('../hooks/loot').Loot
+      // Finished turns waiting for the transcript line that closes them.
+      unclaimedLoot: import('../hooks/loot').TurnLoot[]
+      // Each closing line's loot, by the line's id.
+      claimedLoot: Record<string, import('../hooks/loot').Loot>
     }
   }
 }

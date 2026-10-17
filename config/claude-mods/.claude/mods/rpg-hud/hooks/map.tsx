@@ -7,7 +7,7 @@ import type { GraphRow } from './git'
 import { layoutLanes } from './lanes'
 import type { LaneRow } from './lanes'
 import { OVERWORLD_MIN_COLUMNS, OVERWORLD_ROWS, colorsToPixels, drawOverworld, regionName } from './overworld'
-import type { Phase } from './overworld'
+import type { Phase, Weather } from './overworld'
 import { COLUMN_PX, spriteSvg } from './svg'
 import { composeColors, oneLine } from './util'
 import type { Item } from './window'
@@ -227,6 +227,8 @@ export type MapActions = {
   phase?: Phase
   // Whether a call runs: the hero on the map casts.
   isCasting?: boolean
+  // The sky over the boss fight; clear when absent.
+  weather?: Weather
 }
 
 // The banner's left ornament: the sun by day, the moon by night, the half-lit sky between.
@@ -248,6 +250,7 @@ function overworldItems(ui: ElementTable, map: GitMap, rows: readonly GraphRow[]
     ...(actions.heroColor === undefined ? {} : { heroColor: actions.heroColor }),
     ...(actions.phase === undefined ? {} : { phase: actions.phase }),
     isCasting: actions.isCasting === true,
+    ...(actions.weather === undefined ? {} : { weather: actions.weather }),
   })
   let drawn: Item['node']
   if (Raster !== undefined) {
@@ -269,7 +272,7 @@ function overworldItems(ui: ElementTable, map: GitMap, rows: readonly GraphRow[]
       <Box height={1} justifyContent="center">
         <Text wrap="truncate">
           <Text color="yellow" dimColor>{'═'.repeat(flourish)}</Text>
-          <Text color="yellow"> {PHASE_MARKS[actions.phase ?? 'day']} </Text>
+          <Text color="yellow"> {actions.weather === 'storm' ? '☂' : PHASE_MARKS[actions.phase ?? 'day']} </Text>
           <Text bold color="yellow">{name}</Text>
           <Text color="yellow"> ✦ </Text>
           <Text color="yellow" dimColor>{'═'.repeat(flourish)}</Text>

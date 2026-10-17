@@ -29,18 +29,18 @@ import { HERO_CLASS_FRAMES } from './hero-cells'
 import type { HeroClassId } from './hero-cells'
 import { cellsToPixels, gridToPixels, spriteSvg } from './svg'
 import { fightBoss, fightText, runsGit } from './boss'
-import { BOSS_COLUMNS, BOSS_ROWS, ENCOUNTER_MIN_COLUMNS, ENCOUNTER_ROWS, FX_MS, bossCells, liveFx, renderEncounter, shownBoss } from './encounter'
+import { BOSS_ROWS, FX_MS, bossCells, liveFx, shownBoss } from './encounter'
 import type { BagProps, BagRow } from './bag-client'
 import { GIT_LOG, GIT_NUMSTAT, GIT_REMOTES, GIT_STATUS, GIT_WORKTREES, diffArgv, outpostArgv, parseBag, parseStatus, parseWorktrees, shortAge } from './git'
 import type { OutpostRow, OutpostsProps } from './outposts-client'
 import { bagSubtitle, inspectItems } from './inspect'
 import { renderEditCard } from './edit-card'
 import type { EditOutput } from './edit-card'
-import { CALLS_PER_LEVEL, STATUS_ROWS, heroStats, normalizeCall, renderStatus, statusLayout } from './hero'
+import { CALLS_PER_LEVEL, STATUS_ROWS, heroStats, normalizeCall, panelDuel, renderStatus, statusLayout } from './hero'
 import { PORTRAIT_BUSTS, PORTRAIT_FRAMES } from './portrait-cells'
 import { CLASS_IDS, classOf, isClassId, rankOf, rollClass } from './classes'
 import { mapItems, mapSubtitle } from './map'
-import { phaseOf } from './overworld'
+import { RAINBOW_MS, phaseOf, weatherOf } from './overworld'
 import { ICON_COLUMNS, ICON_ROWS, MENU, drawnIcon, entryOf, iconText, isTab } from './menu'
 import { cardWidth, slotKey } from './menu-client'
 import type { MenuIconProps } from './menu-client'
@@ -54,6 +54,8 @@ import { EMPTY_PROGRESS, progressOf } from './progress'
 import { MARCH_COLUMNS, addJob, endJob, jobItems, jobsSubtitle, marchCells, parseJobEnds, reconcileJobs, trimJobs } from './jobs'
 import type { JobEnd } from './jobs'
 import { summarize } from './util'
+import { EMPTY_LOOT, KEPT_CLAIMED, KEPT_UNCLAIMED, claimLoot, forge, lootText } from './loot'
+import type { Loot, TurnLoot } from './loot'
 import { WINDOW_CHROME_COLUMNS, WINDOW_CHROME_ROWS, clampOffset, pageItems, renderWindow, totalRows } from './window'
 import type { Item } from './window'
 
@@ -94,6 +96,11 @@ const tally = atom({ plugin: 'rpg-hud', key: 'tally' } as const, EMPTY_TALLY)
 const startedAt = atom({ plugin: 'rpg-hud', key: 'startedAt' } as const, 0)
 const isHelpOpen = atom({ plugin: 'rpg-hud', key: 'isHelpOpen' } as const, false)
 const waitingFor = atom({ plugin: 'rpg-hud', key: 'waitingFor' } as const, null as string | null)
+// The main loop's winnings since its last turn ended, the finished turns waiting for their closing line, and the
+// lines that have taken theirs, by the line's id.
+const turnLoot = atom({ plugin: 'rpg-hud', key: 'turnLoot' } as const, EMPTY_LOOT)
+const unclaimedLoot = atom({ plugin: 'rpg-hud', key: 'unclaimedLoot' } as const, [] as TurnLoot[])
+const claimedLoot = atom({ plugin: 'rpg-hud', key: 'claimedLoot' } as const, {} as Record<string, Loot>)
 
 // Starts the HUD's watch of the session, once; a reload keeps it.
 const markStart = async ($: EngineInterface) => {
@@ -101,6 +108,17 @@ const markStart = async ($: EngineInterface) => {
     const now = await $.clock.now()
     await update($, startedAt, at => (at === 0 ? now : at))
   }
+}
+
+// A closing line takes its turn's loot: out of the waiting list, kept under the line's id. A line that claimed
+// already, or a turn another line took, is left as it is.
+async function claim($: EngineInterface, line: string, durationMs: number, won: Loot) {
+  if ((await read($, claimedLoot))[line] !== undefined) return
+  const waiting = await read($, unclaimedLoot)
+  const at = waiting.findIndex(loot => loot.durationMs === durationMs)
+  if (at === -1) return
+  await update($, unclaimedLoot, list => list.filter((_, index) => index !== at))
+  await update($, claimedLoot, all => Object.fromEntries([...Object.entries(all), [line, won]].slice(-KEPT_CLAIMED)))
 }
 
 // Moving to another session (a /clear, an in-session /resume) empties every figure the HUD keeps for the one
@@ -122,6 +140,8 @@ async function resetSession($: EngineInterface) {
     update($, skillCasts, () => ({})),
     update($, tally, () => EMPTY_TALLY),
     update($, waitingFor, () => null),
+    update($, turnLoot, () => EMPTY_LOOT),
+    update($, unclaimedLoot, () => []),
     update($, startedAt, () => now),
     update($, pets, list => list.filter(pet => pet.status === 'run')),
     update($, jobs, list => list.filter(job => job.status === 'run')),
@@ -717,7 +737,7 @@ async function paintBoss($: EngineInterface) {
   const step = Math.floor((anim.tick - monster.start) / monster.ticks)
   const cells = monster.frames[monster.loop ? step % monster.frames.length : Math.min(step, monster.frames.length - 1)] ?? monster.shown
   if (cells === monster.shown) return
-  if (await blit($, 'boss', cells, BOSS_COLUMNS, BOSS_ROWS)) monster.shown = cells
+  if (await blit($, 'boss', cells, monster.columns, monster.rows)) monster.shown = cells
   else anim.boss = undefined
 }
 
@@ -893,6 +913,7 @@ const mapPage = async ($: EngineInterface, { ui, inner, now, Raster }: PageConte
       ...(Raster === undefined ? {} : { Raster }),
       phase: phaseOf(localHour(now, utcOffsetMs)),
       isCasting: anim.running > 0,
+      weather: weatherOf(await read($, boss), await read($, bossFx), now),
     }),
     subtitle: mapSubtitle(world),
   }
@@ -1214,6 +1235,11 @@ export const register: Register = on => {
     }
     // An interrupted prompt leaves nothing waiting on the person.
     await update($, waitingFor, () => null)
+    // The turn's winnings wait for the line that closes it.
+    const won = await read($, turnLoot)
+    await update($, turnLoot, () => EMPTY_LOOT)
+    const durationMs = e.durationMs
+    if (lootText(won) !== '') await update($, unclaimedLoot, list => [...list, { ...won, durationMs }].slice(-KEPT_UNCLAIMED))
     // The outposts list, while open, is surveyed again after each turn.
     const isSurveying = (await read($, mapView)).view === 'outposts'
     void refreshAll($)
@@ -1319,6 +1345,7 @@ export const register: Register = on => {
       const path = filePath.startsWith(`${cwd}/`) ? filePath.slice(cwd.length + 1) : filePath
       await update($, touched, list => touchFile(list, path, EDIT_TOOLS.has(e.tool)))
       if (EDIT_TOOLS.has(e.tool)) void refreshMap($, 'files').catch(() => undefined)
+      if (isMain && !isError && EDIT_TOOLS.has(e.tool)) await update($, turnLoot, loot => forge(loot, path))
     }
     if (e.tool === 'Bash' && !isRefused) {
       const command = e.command
@@ -1338,7 +1365,10 @@ export const register: Register = on => {
       }
       if (fight.event === 'defeat') {
         $.ui.toast('⚔ Boss defeated!')
+        // The rainbow over the map fades once its while is up.
+        $.clock.after(RAINBOW_MS, () => $.ui.invalidate('ui.render'))
         await update($, tally, t => ({ ...t, bossesDefeated: t.bossesDefeated + 1 }))
+        await update($, turnLoot, loot => ({ ...loot, bosses: loot.bosses + 1 }))
       }
       if (runsGit(command)) {
         void refreshMap($).catch(() => undefined)
@@ -1405,8 +1435,10 @@ export const register: Register = on => {
     }
 
     const total = await read($, castCount)
+    await update($, turnLoot, loot => ({ ...loot, xp: loot.xp + 1 }))
     if (total % CALLS_PER_LEVEL === 0) {
       const level = 1 + total / CALLS_PER_LEVEL
+      await update($, turnLoot, loot => ({ ...loot, level }))
       $.ui.toast(`✦ Level up! Lv.${level} ${rankOf(classOf(await read($, heroClass)), level)}`)
       await update($, flashUntil, () => endedAt + FLASH_MS)
       void $.clock
@@ -1483,6 +1515,29 @@ export const register: Register = on => {
     return renderEditCard($.ui.resolve(e), e.props.tool, output as EditOutput, await $.session.cwd())
   })
 
+  // The line closing a turn tells what it won. A line takes the waiting turn its duration matches, once, and keeps
+  // it; drawing is pure, so the claim is written just after.
+  on('ui.render', { component: 'TurnDuration' }, async ($, e, next) => {
+    const drawn = await next(e)
+    let loot = (await read($, claimedLoot))[e.requestId]
+    if (loot === undefined) {
+      const waiting = await read($, unclaimedLoot)
+      const claimed = waiting[claimLoot(waiting, e.props.durationMs)]
+      if (claimed === undefined) return drawn
+      const { durationMs, ...won } = claimed
+      loot = won
+      const line = e.requestId
+      $.clock.after(0, () => void claim($, line, durationMs, won).catch(() => undefined))
+    }
+    const { Box, Text } = $.ui.resolve(e)
+    return (
+      <Box flexDirection="row">
+        {drawn}
+        <Text color="yellow" wrap="truncate"> · {lootText(loot)}</Text>
+      </Box>
+    )
+  })
+
   // Every window draws only what fits, so the engine has nothing to scroll:
   // the wheel and scroll keys move the active window's items instead.
   on('ui.scroll', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
@@ -1524,9 +1579,33 @@ export const register: Register = on => {
     if (portrait !== undefined) anim.shownPng = portrait
     const fitsPortrait = statusLayout(width, true).hasPortrait
     if (portrait !== undefined && canDrawImage === undefined && fitsPortrait) probeImage($, portrait)
+    // A boss out turns the status panel to a duel; its frames start over with each new moment of the fight, and
+    // only a foe on screen animates.
+    const fightFx = liveFx(await read($, bossFx), now)
+    const foe = shownBoss(bossNow, fightFx)
+    const duel = foe === undefined ? undefined : panelDuel(width, true)
+    if (foe !== undefined && duel !== undefined && duel.scale > 0 && Raster !== undefined) {
+      const { scale, arenaColumns } = duel
+      const key = `${foe.kind}:${fightFx?.event ?? 'idle'}:${fightFx?.at ?? 0}:${scale}:${arenaColumns}`
+      if (anim.boss?.key !== key) {
+        const played = bossCells(foe.kind, fightFx?.event, scale, fightFx?.event === 'hit' ? fightFx.damage : 0, arenaColumns)
+        anim.boss = { key, ...played, columns: arenaColumns, rows: BOSS_ROWS * scale, start: anim.tick, shown: played.frames[0] ?? '' }
+      }
+    } else {
+      anim.boss = undefined
+    }
     const status = renderStatus(
       ui,
       {
+        ...(foe === undefined
+          ? {}
+          : {
+              foe: {
+                boss: foe,
+                ...(fightFx === undefined ? {} : { fx: fightFx }),
+                ...(Raster === undefined ? {} : { Raster, cells: anim.boss?.shown ?? '' }),
+              },
+            }),
         hero,
         list: callList,
         casts: await read($, castCount),
@@ -1574,37 +1653,11 @@ export const register: Register = on => {
     const sectionGap = isTerminal ? 0 : SECTION_GAP
     const cardGap = isTerminal ? 0 : CARD_GAP
     const card = cardWidth(width - cardGap * (MENU.length - 1), MENU.length, isTerminal ? ICON_COLUMNS : DRAWN_ICON_COLUMNS)
-    // The encounter card takes its rows from the window, when the window keeps enough of its own.
-    const fightFx = liveFx(await read($, bossFx), now)
-    const foe = shownBoss(bossNow, fightFx)
-    const freeRows = e.props.scroll.bodyRows - STATUS_ROWS - WINDOW_CHROME_ROWS - sectionGap * 2
-    const hasEncounter = foe !== undefined && width >= ENCOUNTER_MIN_COLUMNS && freeRows - ENCOUNTER_ROWS - sectionGap - 1 >= MIN_WINDOW_ROWS
-    const roomRows = freeRows - (hasEncounter ? ENCOUNTER_ROWS + sectionGap : 0)
+    const roomRows = e.props.scroll.bodyRows - STATUS_ROWS - WINDOW_CHROME_ROWS - sectionGap * 2
     const slotRows = isTerminal ? SLOT_ROWS : DRAWN_SLOT_ROWS
     const isIconMenu = card >= (isTerminal ? MIN_SLOT_COLUMNS : DRAWN_MIN_SLOT_COLUMNS) && roomRows - slotRows >= MIN_WINDOW_ROWS
     const menuRows = isIconMenu ? slotRows : 1
     const rows = Math.max(MIN_WINDOW_ROWS, roomRows - menuRows)
-
-    // The monster's frames start over with each new moment of the fight; only a card on screen animates.
-    let encounter: RenderChildren = null
-    if (hasEncounter && foe !== undefined) {
-      if (Raster !== undefined) {
-        const key = `${foe.kind}:${fightFx?.event ?? 'idle'}:${fightFx?.at ?? 0}`
-        if (anim.boss?.key !== key) {
-          const played = bossCells(foe.kind, fightFx?.event)
-          anim.boss = { key, ...played, start: anim.tick, shown: played.frames[0] ?? '' }
-        }
-      }
-      encounter = renderEncounter(ui, {
-        boss: foe,
-        ...(fightFx === undefined ? {} : { fx: fightFx }),
-        width,
-        ...(Raster === undefined ? {} : { Raster, cells: anim.boss?.shown ?? '' }),
-        ...(bossNow === null ? {} : { onFight: () => fillPrompt($, fightText(bossNow), `Ask Claude: ${fightText(bossNow)}`) }),
-      })
-    } else {
-      anim.boss = undefined
-    }
 
     // Each slot's label is a button carrying its number as a hotkey, so once the pane has the keys (a click,
     // ctrl+x tab) the number picks the tab; Tab and Enter reach it as well.
@@ -1740,7 +1793,6 @@ export const register: Register = on => {
     return (
       <Box flexDirection="column" width={width} rowGap={sectionGap}>
         {status}
-        {encounter}
         {menu}
         {renderWindow(ui, {
           title: page.title ?? entry.title,

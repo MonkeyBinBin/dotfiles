@@ -3,20 +3,20 @@ import type { ElementTable, RenderChildren } from 'claude-code'
 import type { Boss, BossFx } from '../types'
 import { FRAME_MS } from './anim'
 import { barSvg, BAR_HEIGHT, COLUMN_PX, gridToPixels, spriteSvg } from './svg'
-import { barParts, composeSprite, oneLine } from './util'
+import { barParts, composeSprite } from './util'
 
-// The encounter: while a boss stands, a card under the status panel shows it as a monster to beat, its HP as a
-// long bar, and the blow each passing run lands: a white flash and the damage dealt. A slain boss crumbles away.
+// The encounter: while a boss stands, the status panel turns to a duel. The stats step aside, the hero on the left
+// faces the monster on the right, twice its size where it fits, its HP between them. It walks in out of the dark,
+// each passing run slashes it and pops the damage off it, and a slain boss bursts apart.
 
-export const BOSS_COLUMNS = 12
-// Nine pixel rows of art and one to bob in: five terminal rows of half blocks.
+// The monster's art, in pixels: twelve across and nine down.
+const BOSS_ART_COLUMNS = 12
+const ART_ROWS = 9
+// Its terminal cells at its own size, the art and a row to bob in: five rows of half blocks.
+export const BOSS_COLUMNS = BOSS_ART_COLUMNS
 export const BOSS_ROWS = 5
-// The card: the sprite's rows inside a border.
-export const ENCOUNTER_ROWS = BOSS_ROWS + 2
-// The narrowest pane the card is worth drawing in: the sprite, a gap and a usable bar.
-export const ENCOUNTER_MIN_COLUMNS = 40
-// How long each moment of the fight stays on the card.
-export const FX_MS: Record<BossFx['event'], number> = { appear: 2400, hit: 1200, defeat: 1800 }
+// How long each moment of the fight stays on the panel.
+export const FX_MS: Record<BossFx['event'], number> = { appear: 2400, hit: 1600, defeat: 1800 }
 
 type Monster = { art: readonly string[]; palette: Readonly<Record<string, number>> }
 
@@ -86,68 +86,223 @@ const MONSTERS: Record<string, Monster> = {
 
 const monsterOf = (kind: string): Monster => MONSTERS[kind] ?? MONSTERS.test!
 
-// The art in a canvas one row taller, `drop` rows down: 0 or 1, so the idle frames bob.
-const canvas = (art: readonly string[], drop: number): string[] => {
-  const blank = '.'.repeat(BOSS_COLUMNS)
-  return [...Array.from({ length: drop }, () => blank), ...art, ...Array.from({ length: 1 - drop }, () => blank)]
+const WHITE = 0xffffff
+const EMBER = 0xff7a1a
+const SHADOW = 0x2a1e3a
+// The effects' own pixels, keyed by characters no monster uses.
+const FX_PALETTE: Readonly<Record<string, number>> = {
+  '#': WHITE,
+  '*': 0xffe14a,
+  '+': EMBER,
+  '%': 0xff3b3b,
+  // The arena: its floor, the monster's shadow, the torches' posts.
+  '=': 0x564a78,
+  '~': 0x3d3456,
+  '_': 0x15121e,
+  '|': 0x6a4a2e,
 }
 
-// Every lit pixel one colour: the frame a blow lands on.
-const silhouette = (monster: Monster, color: number): Monster => ({
-  art: monster.art.map(line => line.replace(/[^.]/g, 'X')),
-  palette: { X: color },
-})
+// A frame as one character per pixel, '.' see-through, in a canvas `scale` times the art's size and one art
+// row taller, so the idle frames bob.
+type Canvas = string[][]
 
-// A stable [0, 1) per pixel: which pixels crumble first.
+const blankCanvas = (scale: number, columns: number): Canvas =>
+  Array.from({ length: (ART_ROWS + 1) * scale }, () => Array.from({ length: columns }, () => '.'))
+
+// The arena the monster stands in, `columns` wide: a stone floor along the bottom, its shadow under it, and where
+// there is room a torch at either side, the flames flickering with `frame`.
+const arena = (scale: number, columns: number, frame: number): Canvas => {
+  const canvas = blankCanvas(scale, columns)
+  const height = canvas.length
+  const art = BOSS_ART_COLUMNS * scale
+  const left = Math.floor((columns - art) / 2)
+  for (let x = 0; x < columns; x += 1) {
+    plot(canvas, x, height - 1, x >= left + scale && x < left + art - scale ? '_' : x % 3 === 0 ? '~' : '=')
+  }
+  if (columns - art >= 10) {
+    for (const x of [2, columns - 3]) {
+      for (let y = height - 2; y >= height - 1 - 3 * scale; y -= 1) plot(canvas, x, y, '|')
+      // A bowl on the post, the flame leaning one way then the other.
+      const top = height - 2 - 3 * scale
+      const lean = frame % 2 === 0 ? -1 : 1
+      for (const dx of [-1, 0, 1]) plot(canvas, x + dx, top, '|')
+      for (const dx of [-1, 0, 1]) plot(canvas, x + dx, top - 1, dx === 0 ? '*' : '+')
+      plot(canvas, x, top - 2, '*')
+      plot(canvas, x + lean, top - 2, '+')
+      plot(canvas, x + lean, top - 3, '*')
+      if (frame % 3 === 0) plot(canvas, x - lean, top - 4, '+')
+    }
+  }
+  return canvas
+}
+
+// The art drawn into `canvas` `scale` times over, shifted by `dx`, `dy` pixels; `as` paints every lit pixel one
+// character (a silhouette).
+const stampArt = (canvas: Canvas, art: readonly string[], scale: number, dx: number, dy: number, as?: string) => {
+  art.forEach((line, y) =>
+    [...line].forEach((ch, x) => {
+      if (ch === '.') return
+      for (let sy = 0; sy < scale; sy += 1) {
+        for (let sx = 0; sx < scale; sx += 1) {
+          const row = canvas[y * scale + sy + dy]
+          const at = x * scale + sx + dx
+          if (row !== undefined && at >= 0 && at < row.length) row[at] = as ?? ch
+        }
+      }
+    }),
+  )
+}
+
+const plot = (canvas: Canvas, x: number, y: number, ch: string) => {
+  const row = canvas[Math.round(y)]
+  const at = Math.round(x)
+  if (row !== undefined && at >= 0 && at < row.length) row[at] = ch
+}
+
+// A 3×5 pixel font for the damage that pops off the monster.
+const DIGITS: Readonly<Record<string, readonly string[]>> = {
+  '-': ['...', '...', '###', '...', '...'],
+  '0': ['###', '#.#', '#.#', '#.#', '###'],
+  '1': ['.#.', '##.', '.#.', '.#.', '###'],
+  '2': ['###', '..#', '###', '#..', '###'],
+  '3': ['###', '..#', '###', '..#', '###'],
+  '4': ['#.#', '#.#', '###', '..#', '..#'],
+  '5': ['###', '#..', '###', '..#', '###'],
+  '6': ['###', '#..', '###', '#.#', '###'],
+  '7': ['###', '..#', '..#', '..#', '..#'],
+  '8': ['###', '#.#', '###', '#.#', '###'],
+  '9': ['###', '#.#', '###', '..#', '###'],
+}
+
+// `text` in the pixel font, centred on `cx` with its top at `top`, outlined in red so it reads over the monster.
+const stampText = (canvas: Canvas, text: string, cx: number, top: number, ch: string) => {
+  const width = text.length * 4 - 1
+  const left = Math.round(cx - width / 2)
+  ;[...text].forEach((letter, at) =>
+    (DIGITS[letter] ?? []).forEach((line, y) =>
+      [...line].forEach((pixel, x) => {
+        if (pixel !== '#') return
+        for (const [ox, oy] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
+          const px = left + at * 4 + x + ox
+          const py = top + y + oy
+          if (canvas[py]?.[px] !== ch) plot(canvas, px, py, '%')
+        }
+        plot(canvas, left + at * 4 + x, top + y, ch)
+      }),
+    ),
+  )
+  // The outline went down under neighbouring strokes too: draw the strokes again over it.
+  ;[...text].forEach((letter, at) =>
+    (DIGITS[letter] ?? []).forEach((line, y) => [...line].forEach((pixel, x) => pixel === '#' && plot(canvas, left + at * 4 + x, top + y, ch))),
+  )
+}
+
+// A stable [0, 1) per pixel: which pixels crumble first, where sparks fly.
 const crumbleOrder = (x: number, y: number): number => {
   let hash = Math.imul(x + 1, 374761393) ^ Math.imul(y + 1, 668265263)
   hash = Math.imul(hash ^ (hash >>> 13), 1274126177)
   return ((hash ^ (hash >>> 16)) >>> 0) / 4294967296
 }
 
-// The monster falling apart: at `share` that much of it gone, and the bottom row of what is left aglow.
-const crumbled = (monster: Monster, share: number): Monster => ({
-  art: monster.art.map((line, y) => [...line].map((ch, x) => (ch === '.' || crumbleOrder(x, y) < share ? '.' : ch)).join('')),
-  palette: monster.palette,
+// The art with `share` of its pixels gone.
+const crumbledArt = (art: readonly string[], share: number): string[] =>
+  art.map((line, y) => [...line].map((ch, x) => (ch === '.' || crumbleOrder(x, y) < share ? '.' : ch)).join(''))
+
+export type BossGrid = { art: string[]; palette: Readonly<Record<string, number>> }
+
+const grid = (canvas: Canvas, palette: Readonly<Record<string, number>>): BossGrid => ({
+  art: canvas.map(row => row.join('')),
+  palette: { ...palette, ...FX_PALETTE },
 })
 
-export type BossFrames = { frames: string[][]; ticks: number; loop: boolean }
-
-const WHITE = 0xffffff
-const EMBER = 0xff7a1a
-
-// The frames a moment of the fight shows, as pixel grids, and how long each holds (in animation ticks).
-export const bossFrames = (kind: string, event: BossFx['event'] | undefined): { grids: Monster[]; ticks: number; loop: boolean } => {
+// The frames a moment of the fight shows, as pixel grids `scale` times the art, and how long each holds (in
+// animation ticks). It walks in out of the dark, takes a slash and the damage pops off it, or bursts apart.
+// The arena is `columns` pixels wide (the monster's own width when absent), the monster in its middle.
+export const bossFrames = (
+  kind: string,
+  event: BossFx['event'] | undefined,
+  scale = 1,
+  damage = 0,
+  columns = BOSS_ART_COLUMNS * scale,
+): { grids: BossGrid[]; ticks: number; loop: boolean } => {
   const monster = monsterOf(kind)
-  const idle = [
-    { art: canvas(monster.art, 0), palette: monster.palette },
-    { art: canvas(monster.art, 1), palette: monster.palette },
-  ]
-  if (event === 'hit') {
-    const flash = silhouette(monster, WHITE)
-    const flashed = { art: canvas(flash.art, 0), palette: flash.palette }
-    return { grids: [flashed, idle[0]!, flashed, idle[0]!, ...idle, ...idle], ticks: 1, loop: false }
+  const { art, palette } = monster
+  const width = columns
+  const height = (ART_ROWS + 1) * scale
+  const left = Math.floor((columns - BOSS_ART_COLUMNS * scale) / 2)
+  // Each frame numbered as it is made, so the torches flicker through every moment.
+  let made = 0
+  const stage = () => arena(scale, columns, made++)
+  const pose = (dx: number, dy: number, as?: string) => {
+    const canvas = stage()
+    stampArt(canvas, art, scale, left + dx, dy, as)
+    return canvas
   }
-  if (event === 'defeat') {
-    const burn = silhouette(monster, EMBER)
-    const steps = [0.15, 0.35, 0.55, 0.75, 0.9, 1].map(share => crumbled(monster, share))
+  const idle = [grid(pose(0, 0), palette), grid(pose(0, scale), palette)]
+
+  if (event === 'appear') {
+    // A shadow slides in from the right, flashes white, then flickers into the light.
+    const slide = [1, 0.66, 0.33, 0].map(share => grid(pose(Math.round((width - left) * share), 0, 'X'), { X: SHADOW }))
     return {
-      grids: [
-        { art: canvas(silhouette(monster, WHITE).art, 0), palette: { X: WHITE } },
-        { art: canvas(burn.art, 0), palette: burn.palette },
-        ...steps.map(step => ({ art: canvas(step.art, 0), palette: step.palette })),
-      ],
+      grids: [...slide, grid(pose(0, 0, 'X'), { X: WHITE }), idle[0]!, grid(pose(0, 0, 'X'), { X: SHADOW }), idle[0]!, grid(pose(0, 0, 'X'), { X: WHITE }), ...idle, ...idle],
+      ticks: 1,
+      loop: false,
+    }
+  }
+
+  if (event === 'hit') {
+    // A slash crosses it from the top right, it flashes and shakes red, and the damage rises off it.
+    const slashed = (upTo: number, canvas: Canvas) => {
+      const span = BOSS_ART_COLUMNS * scale
+      for (let step = 0; step <= upTo; step += 1) {
+        const x = left + span - 1 - step * (span / height)
+        plot(canvas, x, step, '#')
+        plot(canvas, x + 1, step, '*')
+        plot(canvas, x - 1, step, '*')
+      }
+      return canvas
+    }
+    const red = Object.fromEntries(Object.keys(palette).map(ch => [ch, 0xff3b3b]))
+    const cuts = [0.35, 0.7, 1].map(share => grid(slashed(Math.round((height - 1) * share), pose(0, 0)), palette))
+    const shakes = [scale, -scale, scale, 0].map(dx => {
+      const canvas = pose(dx, 0)
+      return grid(canvas, dx === 0 ? palette : red)
+    })
+    const pops = [0, 1, 2, 3, 4, 5].map(rise => {
+      const canvas = pose(0, rise % 2 === 0 ? 0 : scale)
+      if (damage > 0) stampText(canvas, `-${damage}`, width / 2, Math.max(0, Math.round(height / 2) - 2 - rise * scale), rise < 4 ? '*' : '#')
+      return grid(canvas, palette)
+    })
+    return { grids: [...cuts, grid(pose(0, 0, 'X'), { X: WHITE }), ...shakes, ...pops], ticks: 1, loop: false }
+  }
+
+  if (event === 'defeat') {
+    // A white flash, an ember glow, then it bursts: the pixels fall away as sparks fly out from its middle.
+    const cx = width / 2
+    const cy = height / 2
+    const burst = [0.15, 0.35, 0.55, 0.75, 0.9, 1].map((share, step) => {
+      const canvas = stage()
+      stampArt(canvas, crumbledArt(art, share), scale, left, 0)
+      for (let k = 0; k < 18; k += 1) {
+        const angle = crumbleOrder(k, 7) * Math.PI * 2
+        const reach = (step + 1) * (Math.max(width, BOSS_ART_COLUMNS * scale * 1.5) / 14) * (0.6 + crumbleOrder(k, 9) * 0.6)
+        plot(canvas, cx + Math.cos(angle) * reach, cy + Math.sin(angle) * reach * 0.6, step < 3 ? '*' : '+')
+      }
+      return grid(canvas, palette)
+    })
+    return {
+      grids: [grid(pose(0, 0, 'X'), { X: WHITE }), grid(pose(0, 0, 'X'), { X: EMBER }), ...burst],
       ticks: 2,
       loop: false,
     }
   }
-  // Standing (or just appeared), it bobs in place.
+  // Standing, it bobs in place.
   return { grids: idle, ticks: 5, loop: true }
 }
 
-export const bossCells = (kind: string, event: BossFx['event'] | undefined): { frames: string[]; ticks: number; loop: boolean } => {
-  const { grids, ticks, loop } = bossFrames(kind, event)
-  return { frames: grids.map(grid => composeSprite(grid.art, grid.palette)), ticks, loop }
+export const bossCells = (kind: string, event: BossFx['event'] | undefined, scale = 1, damage = 0, columns?: number): { frames: string[]; ticks: number; loop: boolean } => {
+  const { grids, ticks, loop } = bossFrames(kind, event, scale, damage, columns)
+  return { frames: grids.map(one => composeSprite(one.art, one.palette)), ticks, loop }
 }
 
 // The moment of the fight still on the card at `now`, if any.
@@ -158,10 +313,9 @@ export const liveFx = (fx: BossFx | null, now: number): BossFx | undefined =>
 export const shownBoss = (boss: Boss | null, fx: BossFx | undefined): Boss | undefined =>
   boss ?? (fx?.event === 'defeat' ? fx.boss : undefined)
 
-export type EncounterProps = {
+export type FoeSideProps = {
   boss: Boss
   fx?: BossFx
-  width: number
   // The terminal's Raster, which the animation blits; elsewhere the monster is a drawing.
   Raster?: ElementTable<'terminal'>['Raster']
   // The cells the Raster first draws, before the animation's next blit.
@@ -169,85 +323,129 @@ export type EncounterProps = {
   onFight?: () => void
 }
 
-const FIGHT_LABEL = '⚔ fix it'
+// The duel's middle column: the foe's name and HP over a big VS, the moment of the fight cried under it. It
+// widens a little on a wide pane; the arena takes the rest.
+export const DUEL_MID_COLUMNS = 10
+const DUEL_MID_MAX_COLUMNS = 16
+const DUEL_GAP = 1
+const FIGHT_LABEL = '⚔ STRIKE'
 
-// The card: the monster on the left, then its name, the HP bar, the command it guards and the call to arms.
-export function renderEncounter(ui: ElementTable, props: EncounterProps) {
+// The big VS between the fighters, in pixels: six tall in four terminal rows of half blocks, a pixel spare above
+// and below, so under the three rows of the foe's name and HP it sits in the panel's exact middle.
+export const VS_COLUMNS = 10
+export const VS_ROWS = 4
+const VS_ART = [
+  '..........',
+  'V...V..SSS',
+  'V...V.S...',
+  'V...V..SS.',
+  '.V.V.....S',
+  '.V.V.....S',
+  '..V...SSS.',
+  '..........',
+]
+// Burning down from gold to red; all gold once the foe falls.
+const VS_FLAME = [0, 0xffe14a, 0xffe14a, 0xff9a2e, 0xff9a2e, 0xff3b3b, 0xff3b3b]
+
+export const vsGrid = (isDefeat: boolean): BossGrid => ({
+  art: VS_ART.map((line, y) => line.replace(/[VS]/g, String(y))),
+  palette: Object.fromEntries(VS_FLAME.map((color, y) => [String(y), isDefeat ? 0xffd23c : color])),
+})
+
+export type Duel = { hasPortrait: boolean; scale: number; midColumns: number; arenaColumns: number }
+
+// How the panel's `inner` columns hold a duel: the hero's picture when it still fits, and the monster at twice
+// its size when there is room, else at its own; scale 0 when even that does not fit. Columns to spare widen the
+// middle column, then the arena.
+export const duelLayout = (inner: number, hasPicture: boolean, pictureColumns: number): Duel => {
+  const room = (withPicture: boolean) => inner - (withPicture ? pictureColumns + DUEL_GAP : 0) - DUEL_GAP
+  const pick = (withPicture: boolean): Duel | undefined => {
+    const free = room(withPicture)
+    const scale = [2, 1].find(one => free >= DUEL_MID_COLUMNS + BOSS_COLUMNS * one)
+    if (scale === undefined) return undefined
+    const midColumns = Math.min(DUEL_MID_MAX_COLUMNS, free - BOSS_COLUMNS * scale)
+    return { hasPortrait: withPicture, scale, midColumns, arenaColumns: free - midColumns }
+  }
+  return (hasPicture ? pick(true) : undefined) ?? pick(false) ?? { hasPortrait: false, scale: 0, midColumns: 0, arenaColumns: 0 }
+}
+
+// The status panel's frame through the fight: red while it stands, white as a blow lands, gold when it falls.
+export const battleFrame = (fx: BossFx | undefined): string => (fx?.event === 'defeat' ? 'yellow' : fx?.event === 'hit' ? 'white' : 'red')
+
+// The foe's side of the duel: the middle column, then the monster `scale` times its size, `rows` tall.
+export function renderFoeSide(ui: ElementTable, props: FoeSideProps, rows: number, duel: Duel) {
+  const { scale, midColumns } = duel
   const { Box, Text, Button } = ui
   const { boss, fx, Raster } = props
   const Svg = Raster === undefined && 'Svg' in ui ? ui.Svg : undefined
   const isDefeat = fx?.event === 'defeat'
-  const inner = props.width - 4
-  const textWidth = Math.max(8, inner - BOSS_COLUMNS - 2)
   const hp = isDefeat ? 0 : boss.hp
-  const barWidth = Math.max(6, textWidth - String(boss.maxHp).length * 2 - 5)
-  const bar = barParts(hp, boss.maxHp, barWidth)
-  const frame = isDefeat ? 'yellow' : fx?.event === 'hit' ? 'white' : 'red'
+  const bar = barParts(hp, boss.maxHp, midColumns)
+  const columns = duel.arenaColumns
+  const spriteRows = BOSS_ROWS * scale
+  const damage = fx?.event === 'hit' ? fx.damage : 0
 
   let sprite: RenderChildren = null
   if (Raster !== undefined) {
-    sprite = <Raster key="boss" columns={BOSS_COLUMNS} rows={BOSS_ROWS} cells={props.cells ?? ''} />
+    sprite = <Raster key="boss" columns={columns} rows={spriteRows} cells={props.cells ?? ''} />
   } else if (Svg !== undefined) {
-    const { grids } = bossFrames(boss.kind, fx?.event)
-    const drawn = spriteSvg(
-      grids.map(grid => gridToPixels(grid.art, grid.palette)),
-      COLUMN_PX,
-      FRAME_MS * (fx === undefined || fx.event === 'appear' ? 5 : 2),
-    )
+    const { grids, ticks } = bossFrames(boss.kind, fx?.event, scale, damage, columns)
+    const drawn = spriteSvg(grids.map(one => gridToPixels(one.art, one.palette)), COLUMN_PX, FRAME_MS * ticks)
     sprite = <Svg key="boss" source={drawn.source} alt={boss.name} width={drawn.width} height={drawn.height} {...(drawn.isAnimated ? { isInteractive: true } : {})} />
   }
 
-  const headline = isDefeat
-    ? <Text bold color="yellow">✦ {boss.name} is defeated! ✦</Text>
-    : fx?.event === 'appear'
-    ? <Text bold color="red">! A wild {boss.name} appears!</Text>
-    : <Text bold color="red">☠ {boss.name}</Text>
-  const damage = fx?.event === 'hit' && fx.damage > 0
-  const isCritical = damage && fx.damage * 2 >= fx.boss.maxHp
+  // The moment, cried under the VS; quiet while it only stands.
+  const cry = isDefeat ? (
+    <Text bold color="yellow">✦ VICTORY</Text>
+  ) : fx?.event === 'appear' ? (
+    <Text bold color="red">! APPEARS</Text>
+  ) : damage > 0 ? (
+    <Text bold color="yellow">{damage * 2 >= fx!.boss.maxHp ? '💥 CRIT!' : '⚔ HIT!'}</Text>
+  ) : (
+    <Text> </Text>
+  )
+  const accent = isDefeat ? 'yellow' : 'red'
+  const vs = vsGrid(isDefeat)
+  let vsDrawn: RenderChildren = <Text bold color={accent}>VS</Text>
+  if (Raster !== undefined) {
+    vsDrawn = <Raster key="vs" columns={VS_COLUMNS} rows={VS_ROWS} cells={composeSprite(vs.art, vs.palette)} />
+  } else if (Svg !== undefined) {
+    const drawn = spriteSvg([gridToPixels(vs.art, vs.palette)], COLUMN_PX, FRAME_MS)
+    vsDrawn = <Svg key="vs" source={drawn.source} alt="VS" width={drawn.width} height={drawn.height} />
+  }
 
   return (
-    <Box key="encounter" flexDirection="row" width={props.width} height={ENCOUNTER_ROWS} borderStyle="round" borderColor={frame} paddingX={1}>
-      <Box width={BOSS_COLUMNS + 2} height={BOSS_ROWS}>{sprite}</Box>
-      <Box flexDirection="column" width={textWidth} height={BOSS_ROWS}>
-        <Box height={1}>
-          <Box flexGrow={1}>
-            <Text wrap="truncate">{headline}</Text>
-          </Box>
-          {!isDefeat && <Text dimColor>ENCOUNTER</Text>}
-        </Box>
+    <Box key="foe" flexDirection="row" height={rows} columnGap={DUEL_GAP}>
+      <Box flexDirection="column" width={midColumns} height={rows}>
+        <Text bold color={accent} wrap="truncate">{boss.name}</Text>
         {Svg !== undefined ? (
-          <Box flexDirection="row" height={1} alignItems="center">
-            <Text bold color="red">HP </Text>
-            <Svg key="bar-encounter" source={barSvg(hp, boss.maxHp, barWidth, 'red')} alt={`${boss.name} ${hp}/${boss.maxHp}`} width={barWidth * COLUMN_PX} height={BAR_HEIGHT} />
-            <Text color="red"> {hp}/{boss.maxHp}</Text>
-          </Box>
+          <Svg key="bar-encounter" source={barSvg(hp, boss.maxHp, midColumns, 'red')} alt={`${boss.name} ${hp}/${boss.maxHp}`} width={midColumns * COLUMN_PX} height={BAR_HEIGHT} />
         ) : (
           <Text wrap="truncate">
-            <Text bold color="red">HP </Text>
             <Text color="red">{bar.filled}</Text>
             <Text dimColor>{bar.empty}</Text>
-            <Text color="red"> {hp}/{boss.maxHp}</Text>
           </Text>
         )}
-        <Box height={1}>
-          {damage ? (
-            <Text bold color="yellow">
-              {isCritical ? '💥 CRITICAL! ' : '⚔ '}-{fx.damage} HP
-            </Text>
-          ) : isDefeat ? (
-            <Text color="yellow">⚑ The check passes. Victory!</Text>
-          ) : (
-            <Text dimColor wrap="truncate">guards {oneLine(boss.command, textWidth - 7)}</Text>
-          )}
+        <Text color="red">HP {hp}/{boss.maxHp}</Text>
+        <Box height={VS_ROWS} justifyContent="center">
+          {vsDrawn}
         </Box>
-        <Text> </Text>
-        <Box height={1}>
-          <Box flexGrow={1}>
-            <Text dimColor wrap="truncate">{isDefeat ? '' : 'pass the check to slay it'}</Text>
+        <Box height={1} justifyContent="center">
+          {cry}
+        </Box>
+        <Box flexGrow={1} />
+        {/* A command of the battle menu: a solid red key that turns gold under the pointer or the focus. */}
+        {!isDefeat && props.onFight !== undefined && (
+          <Box height={1} justifyContent="center">
+            <Button key="fight" label={FIGHT_LABEL} plain onPress={props.onFight}>
+              <Text bold color="#1a1020" backgroundColor="#ff5a3c" hover={{ backgroundColor: '#ffd23c' }}>
+                {` ${FIGHT_LABEL} `}
+              </Text>
+            </Button>
           </Box>
-          {!isDefeat && props.onFight !== undefined && <Button key="encounter-fight" label={FIGHT_LABEL} plain onPress={props.onFight} />}
-        </Box>
+        )}
       </Box>
+      <Box width={columns} height={rows}>{sprite}</Box>
     </Box>
   )
 }

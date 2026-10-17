@@ -189,8 +189,25 @@ const tint = (color: number, [r, g, b]: readonly [number, number, number]): numb
   return channel(16, r) | channel(8, g) | channel(0, b)
 }
 
-// Lights keep their colour whatever the hour: fire, a lit gate, fireflies, a spell's spark.
-const LIGHT = { gate: 0xffc864, firefly: 0xe8ff7a, spark: 0xfff07a, sparkCool: 0x9ae6ff }
+// Lights keep their colour whatever the hour: fire, a lit gate, fireflies, a spell's spark, rain.
+const LIGHT = { gate: 0xffc864, firefly: 0xe8ff7a, spark: 0xfff07a, sparkCool: 0x9ae6ff, rain: 0x9cc4f0 }
+
+// The sky follows the boss fight: a storm while one stands, a rainbow once it falls.
+export type Weather = 'clear' | 'storm' | 'rainbow'
+
+// How long the rainbow stays once the boss falls.
+export const RAINBOW_MS = 60_000
+
+export const weatherOf = (boss: object | null, fx: { event: string; at: number } | null, now: number): Weather =>
+  boss !== null ? 'storm' : fx?.event === 'defeat' && now - fx.at < RAINBOW_MS ? 'rainbow' : 'clear'
+
+// Under a storm the land darkens further, whatever the hour.
+const STORM_TINT: readonly [number, number, number] = [0.55, 0.58, 0.7]
+const CLOUD = { light: 0x9a9eb2, dark: 0x6c7084 }
+const cloud: readonly string[] = ['.cCCc..', 'cCCCCCc', 'CCCCCCC']
+// Outermost band first, each mixed over the land so it shows through.
+const RAINBOW = [0xff4a4a, 0xffb02e, 0xffe14a, 0x5ad27a, 0x5aa9ff, 0xb466ff]
+const RAINBOW_SHARE = 0.6
 
 export type OverworldInput = {
   rows: readonly GraphRow[]
@@ -204,6 +221,8 @@ export type OverworldInput = {
   phase?: Phase
   // A spell's spark above the hero while a call runs.
   isCasting?: boolean
+  // Clear when absent.
+  weather?: Weather
 }
 
 export type Overworld = {
@@ -218,6 +237,11 @@ export type Overworld = {
 
 const scale = (color: number, k: number): number => {
   const channel = (shift: number) => Math.round(((color >> shift) & 0xff) * k) << shift
+  return channel(16) | channel(8) | channel(0)
+}
+
+const mix = (a: number, b: number, share: number): number => {
+  const channel = (shift: number) => Math.round(((a >> shift) & 0xff) * (1 - share) + ((b >> shift) & 0xff) * share) << shift
   return channel(16) | channel(8) | channel(0)
 }
 
@@ -326,6 +350,9 @@ export function drawOverworld(input: OverworldInput): Overworld {
   const hat = HAT[input.heroColor ?? 'magenta'] ?? HAT.magenta!
   const phase = input.phase ?? 'day'
   const isNight = phase === 'night'
+  const weather = input.weather ?? 'clear'
+  // The castle where the boss's storm gathers and its rainbow ends, when the map shows it.
+  const townX = townAt !== -1 && townAt < steps ? stepX(townAt) - (townAt === 0 ? 4 : 0) : undefined
   const frames = Array.from({ length: OVERWORLD_FRAMES }, (_, frame) => {
     const colors: number[][] = kinds.map(row => row.map((kind): number => PALETTE[kind]))
     // Pixels that shine on their own, untouched by the hour's light.
@@ -342,6 +369,21 @@ export function drawOverworld(input: OverworldInput): Overworld {
         if ((kind === 'water' || kind === 'waterDeep') && noise(seed + 5 + frame, x, y) < 0.07) colors[y]![x] = PALETTE.glint
       }),
     )
+    // The rainbow arcs over the land from the castle (the middle without one), behind every sprite.
+    if (weather === 'rainbow') {
+      const centerX = townX ?? Math.floor(width / 2)
+      const centerY = HEIGHT - 2
+      const reachX = Math.max(8, Math.min(24, Math.floor(width / 2) - 2))
+      colors.forEach((row, y) => {
+        if (y > centerY - 4) return
+        for (let x = 0; x < width; x += 1) {
+          const d = Math.hypot((x - centerX) / reachX, (y - centerY) / centerY)
+          const band = Math.floor((1 - d) * centerY)
+          const color = RAINBOW[band]
+          if (color !== undefined) row[x] = mix(row[x] ?? 0, color, RAINBOW_SHARE)
+        }
+      })
+    }
     // `glows` names the sprite's characters that shine: its fire, a gate lit at night.
     const stamp = (sprite: Sprite, centerX: number, bottomY: number, glows = '') => {
       const left = centerX - Math.floor((sprite.art[0]?.length ?? 0) / 2)
@@ -371,9 +413,9 @@ export function drawOverworld(input: OverworldInput): Overworld {
       stamp(branchFlag, x + 1, y + 4 < HEIGHT ? y + 3 : y - 2)
     }
     if (!isCut) stamp(startFlag, oldestX, (road[oldestX] ?? 0) - 1)
-    if (townAt !== -1 && townAt < steps) {
+    if (townX !== undefined) {
       // Synced, you stand at the gate: the castle steps back a little to make room.
-      const x = stepX(townAt) - (townAt === 0 ? 4 : 0)
+      const x = townX
       const keep = castle(frame)
       // At night the gate is lit from within.
       stamp(isNight ? { ...keep, colors: { ...keep.colors, G: LIGHT.gate } } : keep, x, (road[x] ?? 0) - 1, isNight ? 'G' : '')
@@ -389,8 +431,30 @@ export function drawOverworld(input: OverworldInput): Overworld {
       light(heroX + (frame === 0 ? 2 : -2), heroY - 6, frame === 0 ? LIGHT.spark : LIGHT.sparkCool)
       light(heroX + (frame === 0 ? 1 : -1), heroY - 7 + frame, LIGHT.spark)
     }
-    if (phase !== 'day') {
-      const k = TINTS[phase]
+    if (weather === 'storm') {
+      // Clouds drift along the top, one always over the castle; rain falls a step down and left each frame.
+      const at = new Set<number>([...(townX === undefined ? [] : [townX]), ...Array.from({ length: Math.ceil(width / 16) }, (_, k) => k * 16 + Math.floor(noise(seed + 20, k, 0) * 8))])
+      for (const x of at) {
+        const left = x - 3 + frame
+        cloud.forEach((line, y) =>
+          [...line].forEach((ch, dx) => {
+            // Clouds stand out of the storm's gloom, dimmed by the hour alone.
+            if (ch !== '.') light(left + dx, y, tint(ch === 'c' ? CLOUD.light : CLOUD.dark, TINTS[phase]))
+          }),
+        )
+      }
+      // Each drop a two-pixel streak slanting down to the left.
+      for (let y = 3; y < HEIGHT - 1; y += 1) {
+        for (let x = 1; x < width; x += 1) {
+          if (noise(seed + 21, x + y + frame, y - frame * 2) >= 0.035) continue
+          light(x, y, LIGHT.rain)
+          light(x - 1, y + 1, LIGHT.rain)
+        }
+      }
+    }
+    if (phase !== 'day' || weather === 'storm') {
+      const day = TINTS[phase]
+      const k: [number, number, number] = weather === 'storm' ? [day[0] * STORM_TINT[0], day[1] * STORM_TINT[1], day[2] * STORM_TINT[2]] : [...day]
       colors.forEach((row, y) => {
         for (let x = 0; x < width; x += 1) if (!lights.has(y * width + x)) row[x] = tint(row[x] ?? 0, k)
       })
