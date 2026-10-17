@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { CAST_COLUMNS, castCells, comboLabel, FLASH_TICKS, flashCells, groupIcon, landingOf, rowIcon, skillIcon } from './register'
+import { CAST_COLUMNS, CRIT_DAMAGE, castCells, comboColor, comboLabel, damageOf, FLASH_TICKS, formatDamage, landingText, flashCells, groupIcon, landingOf, rowIcon, skillIcon } from './register'
 
 const ROW = { tool: 'Bash', isErrored: false, isInterrupted: false }
 
@@ -132,4 +132,25 @@ test('on desktop the cast bar charges as a drawing, flashes as it lands, then cl
   expect((await bars())[0]?.alt).toBe('MISS')
   await clock.advance(80 * (FLASH_TICKS + 1))
   expect(await bars()).toHaveLength(0)
+})
+
+test('a hit deals the damage it brought back; a big haul lands as a critical', () => {
+  expect(damageOf(undefined)).toBe(0)
+  expect(damageOf('abc')).toBe(3)
+  expect(damageOf({ stdout: 'ok' })).toBe(JSON.stringify({ stdout: 'ok' }).length)
+  expect(formatDamage(950)).toBe('950')
+  expect(formatDamage(1234)).toBe('1.2k')
+  expect(formatDamage(24_400)).toBe('24k')
+  expect(landingText('hit', 0)).toEqual({ text: ' HIT!', color: 'success' })
+  expect(landingText('hit', 1234)).toEqual({ text: ' HIT! -1.2k', color: 'success' })
+  expect(landingText('hit', CRIT_DAMAGE)).toEqual({ text: ' CRITICAL! -10k', color: 'warning' })
+  expect(landingText('miss', 99).text).toBe(' MISS')
+  expect(landingText('fled').dimColor).toBe(true)
+})
+
+test('long runs climb the combo tiers', () => {
+  expect(comboLabel(9)).toBe(' ×9 COMBO')
+  expect(comboLabel(10)).toBe(' ×10 SUPER COMBO')
+  expect(comboLabel(20)).toBe(' ×20 ULTRA COMBO')
+  expect([comboColor(3), comboColor(10), comboColor(25)]).toEqual(['warning', 'permission', 'error'])
 })
