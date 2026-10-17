@@ -9,6 +9,8 @@ import type { SlimePose } from './slime-sprite'
 import { formatTokens, layoutHud } from './hud'
 import type { HudFact, HudPixel } from './hud'
 import { gaugeRuns, sceneSize, sceneSvg, sceneWidth, walkAt } from './desktop'
+import { SHIMMER_TICKS, bannerFor, readMoments } from './banner'
+import type { Banner } from './banner'
 import type { SceneSlime } from './desktop'
 
 const info = atom({ plugin: 'slime-band', key: 'info' } as const, {
@@ -148,6 +150,10 @@ const slime = {
   // The columns left of the HUD, where the slime hops.
   areaWidth: 0,
   hud: [] as HudPixel[],
+  // While a banner shows: its letters in each colour of its shimmer, taking turns on the terminal.
+  shimmer: [] as HudPixel[][],
+  // Draws the band again once the banner's moment passes.
+  bannerTimer: undefined as Timer | undefined,
   requestId: '',
   ticker: undefined as Timer | undefined,
   shown: '',
@@ -177,7 +183,8 @@ async function paint($: EngineInterface) {
     slime.dir = moved.dir
   }
   const snore = pose === 'sleep' ? Math.floor(slime.tick / SNORE_TICKS) % 3 : 0
-  const cells = composeTrack(slime.trackWidth, { x: slime.x, dir: slime.dir, pose, snore, alert }, slime.hud)
+  const hud = slime.shimmer.length > 0 ? (slime.shimmer[Math.floor(slime.tick / SHIMMER_TICKS) % slime.shimmer.length] ?? slime.hud) : slime.hud
+  const cells = composeTrack(slime.trackWidth, { x: slime.x, dir: slime.dir, pose, snore, alert }, hud)
   if (cells === slime.shown) return
 
   // A refusal and a failed blit both mean the track is not on screen.
@@ -228,7 +235,11 @@ const FACT_COLORS = {
   magenta: 0xc88cff,
   blue: 0x5aa9ff,
   green: 0x5ad27a,
+  red: 0xff5f5f,
 } as const
+
+// The banner's shimmer: its colour, then a flash of white.
+const SHIMMER = 0xffffff
 
 const LABEL_HEX: Record<string, string> = Object.fromEntries(
   Object.entries(FACT_COLORS).map(([name, rgb]) => [name, `#${rgb.toString(16).padStart(6, '0')}`]),
@@ -264,6 +275,22 @@ export const infoSegments = (value: BandInfo, turns: number): HudFact[] => {
     )
   }
   return segments
+}
+
+// A banner as the band's one fact: the word in big letters, what happened beneath it.
+export const bannerFact = (banner: Banner, rgb?: number): HudFact => ({
+  ...fact('banner', banner.icon, banner.word, banner.label, banner.color),
+  ...(rgb === undefined ? {} : { rgb }),
+})
+
+// The facts the band shows now, a banner in their place while one lasts; the band is drawn again when it ends.
+async function bandFacts($: EngineInterface, value: BandInfo): Promise<{ facts: HudFact[]; banner?: Banner }> {
+  const now = await $.clock.now()
+  const banner = bannerFor(await readMoments($), now)
+  slime.bannerTimer?.cancel()
+  slime.bannerTimer = banner === undefined ? undefined : $.clock.after(banner.until - now, () => $.ui.invalidate('ui.render'))
+  if (banner !== undefined) return { facts: [bannerFact(banner)], banner }
+  return { facts: infoSegments(value, await $.session.turns()) }
 }
 
 const SEPARATOR = '  │  '
@@ -423,7 +450,7 @@ export const register: Register = on => {
       const { Box, Text, Svg } = $.ui.resolve(e)
       const now = await $.clock.now()
       if (e.props.isWorking && !slime.isWorking) slime.isWorking = true
-      const segments = infoSegments(value, await $.session.turns())
+      const segments = (await bandFacts($, value)).facts
       const width = sceneWidth(e.props.bodyColumns)
       const hud = layoutHud(segments, width)
       const last = Math.max(0, hud.areaWidth - SLIME_WIDTH)
@@ -493,10 +520,17 @@ export const register: Register = on => {
     }
     const trackWidth = e.props.bodyColumns
     const gauge = layoutGauge(context, trackWidth)
-    const hud = layoutHud(infoSegments(value, await $.session.turns()), trackWidth)
+    let band = await bandFacts($, value)
+    let hud = layoutHud(band.facts, trackWidth)
+    // A band too narrow for the banner keeps its facts.
+    if (band.banner !== undefined && hud.pixels.length === 0) {
+      band = { facts: infoSegments(value, await $.session.turns()) }
+      hud = layoutHud(band.facts, trackWidth)
+    }
     slime.trackWidth = trackWidth
     slime.areaWidth = hud.areaWidth
     slime.hud = hud.pixels
+    slime.shimmer = band.banner === undefined ? [] : [hud.pixels, layoutHud([bannerFact(band.banner, SHIMMER)], trackWidth).pixels]
     slime.x = Math.min(slime.x, Math.max(0, hud.areaWidth - SLIME_WIDTH))
     slime.requestId = e.requestId
     slime.ticker ??= $.clock.every(FRAME_MS, () => void paint($))

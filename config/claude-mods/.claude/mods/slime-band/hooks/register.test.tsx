@@ -4,6 +4,7 @@ import { SLIME_WIDTH } from './slime-sprite'
 import { SLIME_AREA_MIN, layoutHud } from './hud'
 import { allocateCells, frameLines, gaugeLine, layoutGauge, legendLines, percentColor, wrapLegend } from './context-bar'
 import { HOP_MS, gaugeRuns, sceneSize, sceneSvg, walkAt } from './desktop'
+import { BANNER_MS, bannerFor } from './banner'
 import { NAP_AFTER_MS, TRACK_ROWS, composeTrack, floorAt, formatTokens, infoLine, infoSegments, slimePose, stepSlime } from './register'
 
 const BAND_PROPS = {
@@ -475,4 +476,41 @@ test('on desktop the slime sets off when work starts and settles when it ends', 
   const rest = await sceneOf(false)
   expect(rest.alt).toContain('sitting')
   expect(rest.source).toContain(`translate(${5 * 6} 0)`)
+})
+
+test('the biggest moment wins the banner: a slain boss, a boss appearing, a level up, a return', () => {
+  const now = 10_000
+  const boss = { name: 'Bug Hydra' }
+  expect(bannerFor({}, now)).toBeUndefined()
+  expect(bannerFor({ flashUntil: now + 100 }, now)?.word).toBe('LEVEL UP!')
+  expect(bannerFor({ flashUntil: now + 100, bossFx: { event: 'appear', at: now - 10, boss } }, now)).toMatchObject({ word: 'BOSS!', color: 'red' })
+  expect(bannerFor({ bossFx: { event: 'defeat', at: now - 10, boss } }, now)).toMatchObject({ word: 'VICTORY!', label: 'Bug Hydra is defeated' })
+  // A hit is the encounter card's to show; an old moment is over.
+  expect(bannerFor({ bossFx: { event: 'hit', at: now - 10, boss } }, now)).toBeUndefined()
+  expect(bannerFor({ bossFx: { event: 'defeat', at: now - BANNER_MS - 1, boss } }, now)).toBeUndefined()
+  const back = bannerFor({ pets: [{ status: 'ok', endedAt: now - 5, description: 'a very long description of what the scout went out to find' }] }, now)
+  expect(back?.word).toBe('QUEST CLEAR')
+  expect(back?.label.length).toBeLessThanOrEqual(30)
+  expect(bannerFor({ pets: [{ status: 'err', endedAt: now - 5, description: 'x' }] }, now)).toBeUndefined()
+})
+
+test('a banner takes the big numbers\' place on the track, then the facts come back', async ($, on) => {
+  const start = Date.UTC(2026, 9, 2, 12)
+  const clock = mock.clock(on, { now: start })
+  on('session.turns', async () => ({ value: 3 }))
+  on('state.get', async (_$, e, next) =>
+    (e as { plugin: string; key: string }).plugin === 'rpg-hud' && (e as { key: string }).key === 'flashUntil'
+      ? ({ value: { value: start + BANNER_MS, version: 1 } } as never)
+      : next(e))
+  on('ui.render', { component: 'AbovePrompt' }, async ($$, e) => {
+    const { Text } = $$.ui.resolve(e)
+    return <Text> </Text>
+  })
+  const ui = await $.ui.mount({ plugin: 'slime-band', surface: 'terminal', component: 'AbovePrompt', props: { ...BAND_PROPS, bodyColumns: 80 } })
+  let shown = (await ui.findAll({ type: 'Text' })).map(row => row.text ?? '').join('|')
+  expect(shown).toContain('✦ the hero grows stronger')
+  expect(shown).not.toContain('turns')
+  await clock.advance(BANNER_MS + 10)
+  shown = (await ui.findAll({ type: 'Text' })).map(row => row.text ?? '').join('|')
+  expect(shown).toContain('turns')
 })
