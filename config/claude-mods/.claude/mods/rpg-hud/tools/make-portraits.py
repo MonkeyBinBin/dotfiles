@@ -552,6 +552,25 @@ HOLY = (253, 226, 78)
 GEAR, GEAR_DARK = (167, 165, 161), (85, 82, 94)
 
 
+# A bust frame from the one bust shrunk from the figure at rest: lifted a pixel when the figure floats, shaken
+# and tinted when hurt, its outline left white. Shrinking each moved, glowing frame on its own let the glow and
+# the aura sway which colour a 2x2 block kept, so the face and hair changed from frame to frame; this way the
+# head only moves, and its look holds.
+def bust_frame(still, mood, n):
+    lifted = (mood == 'idle' and n in (1, 2)) or (mood == 'cast' and n % 2 == 1)
+    dx = [-1, 1, 0][n] if mood == 'hurt' else 0
+    dy = -1 if lifted else 0
+    hurt = [(WHITE, 0.6), (RED, 0.45), (RED, 0.2)][n] if mood == 'hurt' else None
+    out = [[None] * BUST for _ in range(BUST)]
+    for y in range(BUST):
+        for x in range(BUST):
+            rgb = still[y][x]
+            if rgb is None or not (0 <= x + dx < BUST and 0 <= y + dy < BUST):
+                continue
+            out[y + dy][x + dx] = blend(rgb, *hurt) if hurt is not None and rgb != WHITE else rgb
+    return out
+
+
 def decorate(sprite, mood, n, spec):
     out = copy(sprite)
 
@@ -768,8 +787,8 @@ def main():
                         fill = Counter(around).most_common(1)[0][0]
                         for x, y in block(bx, by):
                             painted[y][x] = fill
-        # The bust's frames come from that source, through the same moves, tints and trimmings.
-        built[name] = (frames(base, spec), frames(painted, spec))
+        # The bust is shrunk once from that source at rest; each frame moves and tints it (bust_frame).
+        built[name] = (frames(base, spec), bust(painted, spec['crop'], keep=spec.get('keep', ()), ink=spec.get('ink', 1), reink=spec.get('reink', False)))
 
     counts = {mood: len(sprites) for mood, sprites in next(iter(built.values()))[0].items()}
     lines = [
@@ -784,7 +803,7 @@ def main():
         'export const PORTRAIT_BUSTS: Partial<Record<HeroClassId, Record<Mood, readonly string[]>>> = {',
     ]
     previews = []
-    for name, (moods, bust_moods) in built.items():
+    for name, (moods, still) in built.items():
         out_dir = ROOT / 'assets' / 'portraits' / name
         scene = backdrop(name, CLASSES[name].get('scene_dim', 0))
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -799,7 +818,7 @@ def main():
                 shown = picture(sprite, scene)
                 shown.resize((GRID * SCALE, GRID * SCALE), Image.NEAREST).save(out_dir / f'{mood}-{n}.png', optimize=True)
                 spec = {**DEFAULTS, **CLASSES[name]}
-                small = bust(bust_moods[mood][n], spec['crop'], keep=spec.get('keep', ()), ink=spec.get('ink', 1), reink=spec.get('reink', False))
+                small = bust_frame(still, mood, n)
                 if 'charm' in spec:
                     small = decorate(small, mood, n, spec)
                 lines.append(f"      '{encode(small)}',")

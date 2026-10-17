@@ -25,7 +25,7 @@ import { barFill, oneLine } from './util'
 import { cardWidth } from './menu-client'
 import { pageItems } from './window'
 import { CLASSES, CLASS_IDS, rankOf, rollClass } from './classes'
-import { HERO_CLASS_FRAMES } from './hero-cells'
+import { HERO_CLASS_FRAMES, HERO_SIZE as HERO_CELLS_SIZE } from './hero-cells'
 import { PORTRAIT_BUSTS } from './portrait-cells'
 import { cellsToPixels, gridToPixels, spriteSvg } from './svg'
 import { composeSprite } from './util'
@@ -2342,4 +2342,26 @@ test('a running job marches on; a finished one says how it ended, as the quest n
   expect(jobState({ ...job, status: 'ok' }, 0).text).toBe('✅ back · 1m05s')
   expect(jobState({ ...job, status: 'err', exitCode: 2 }, 0).text).toBe('❌ exit 2 · 1m05s')
   expect(jobState({ ...job, status: 'kill' }, 0).text).toBe('🛑 recalled · 1m05s')
+})
+
+test('a portrait bust only moves between frames: the figure never changes its look', () => {
+  for (const [hero, moods] of Object.entries(PORTRAIT_BUSTS)) {
+    const pixels = (cells: string) => cellsToPixels(cells, HERO_CELLS_SIZE.columns, HERO_CELLS_SIZE.rows)
+    // The head and shoulders: the class's trimmings (a gear, leaves, sparks) play around them, in the corners.
+    const still = pixels(moods!.idle[0]!).map((row, y) => row.map((color, x) => (x >= 3 && x <= 16 && y >= 4 && y <= 17 ? color : undefined)))
+    // Floating frames: every pixel of the figure at rest sits one row higher, unchanged.
+    for (const cells of [moods!.idle[1]!, moods!.idle[2]!, moods!.cast[1]!, moods!.cast[3]!]) {
+      const lifted = pixels(cells)
+      still.forEach((row, y) =>
+        row.forEach((color, x) => {
+          if (color !== undefined && y > 0) expect([hero, x, y, lifted[y - 1]?.[x]]).toEqual([hero, x, y, color])
+        }),
+      )
+    }
+    // Frames at rest keep the figure in place.
+    for (const cells of [moods!.idle[3]!, moods!.cast[0]!, moods!.cast[2]!]) {
+      const rest = pixels(cells)
+      still.forEach((row, y) => row.forEach((color, x) => color !== undefined && expect(rest[y]?.[x]).toBe(color)))
+    }
+  }
 })
