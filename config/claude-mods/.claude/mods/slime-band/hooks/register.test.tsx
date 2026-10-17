@@ -488,10 +488,13 @@ test('the biggest moment wins the banner: a slain boss, a boss appearing, a leve
   // A hit is the encounter card's to show; an old moment is over.
   expect(bannerFor({ bossFx: { event: 'hit', at: now - 10, boss } }, now)).toBeUndefined()
   expect(bannerFor({ bossFx: { event: 'defeat', at: now - BANNER_MS - 1, boss } }, now)).toBeUndefined()
-  const back = bannerFor({ pets: [{ status: 'ok', endedAt: now - 5, description: 'a very long description of what the scout went out to find' }] }, now)
+  const back = bannerFor({ pets: [{ status: 'ok', endedAt: now - 5, isBackground: true, description: 'a very long description of what the scout went out to find' }] }, now)
   expect(back?.word).toBe('QUEST CLEAR')
   expect(back?.label.length).toBeLessThanOrEqual(30)
-  expect(bannerFor({ pets: [{ status: 'err', endedAt: now - 5, description: 'x' }] }, now)).toBeUndefined()
+  expect(bannerFor({ pets: [{ status: 'err', endedAt: now - 5, isBackground: true, description: 'x' }] }, now)).toBeUndefined()
+  // One the turn waited on reports in the transcript: no banner.
+  expect(bannerFor({ pets: [{ status: 'ok', endedAt: now - 5, description: 'x' }] }, now)).toBeUndefined()
+  expect(bannerFor({ pets: [{ status: 'ok', endedAt: now - 5, isBackground: false, description: 'x' }] }, now)).toBeUndefined()
 })
 
 test('a banner takes the big numbers\' place on the track, then the facts come back', async ($, on) => {
