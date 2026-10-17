@@ -166,6 +166,32 @@ const startFlag: Sprite = { art: ['PS', 'PS', 'P.'], colors: { P: PALETTE.pole, 
 
 const branchFlag: Sprite = { art: ['PB', 'PB', 'P.'], colors: { P: PALETTE.pole, B: PALETTE.branch } }
 
+// The time of day by the local hour: the land's light, and what glows in the dark.
+export type Phase = 'dawn' | 'day' | 'dusk' | 'night'
+
+export const phaseOf = (hour: number): Phase => {
+  if (hour >= 5 && hour < 7) return 'dawn'
+  if (hour >= 7 && hour < 17) return 'day'
+  if (hour >= 17 && hour < 19) return 'dusk'
+  return 'night'
+}
+
+// Each channel's share of its daylight value; daylight leaves the land as drawn.
+const TINTS: Record<Phase, readonly [number, number, number]> = {
+  dawn: [1, 0.84, 0.86],
+  day: [1, 1, 1],
+  dusk: [1, 0.72, 0.55],
+  night: [0.36, 0.44, 0.78],
+}
+
+const tint = (color: number, [r, g, b]: readonly [number, number, number]): number => {
+  const channel = (shift: number, k: number) => Math.min(255, Math.round(((color >> shift) & 0xff) * k)) << shift
+  return channel(16, r) | channel(8, g) | channel(0, b)
+}
+
+// Lights keep their colour whatever the hour: fire, a lit gate, fireflies, a spell's spark.
+const LIGHT = { gate: 0xffc864, firefly: 0xe8ff7a, spark: 0xfff07a, sparkCool: 0x9ae6ff }
+
 export type OverworldInput = {
   rows: readonly GraphRow[]
   dirty: number
@@ -174,6 +200,10 @@ export type OverworldInput = {
   seed: string
   // The class's colour name, for the hero's hat.
   heroColor?: string
+  // Daylight when absent.
+  phase?: Phase
+  // A spell's spark above the hero while a call runs.
+  isCasting?: boolean
 }
 
 export type Overworld = {
@@ -294,15 +324,26 @@ export function drawOverworld(input: OverworldInput): Overworld {
   }
 
   const hat = HAT[input.heroColor ?? 'magenta'] ?? HAT.magenta!
+  const phase = input.phase ?? 'day'
+  const isNight = phase === 'night'
   const frames = Array.from({ length: OVERWORLD_FRAMES }, (_, frame) => {
     const colors: number[][] = kinds.map(row => row.map((kind): number => PALETTE[kind]))
+    // Pixels that shine on their own, untouched by the hour's light.
+    const lights = new Set<number>()
+    const light = (x: number, y: number, color: number) => {
+      const row = colors[y]
+      if (row === undefined || x < 0 || x >= width) return
+      row[x] = color
+      lights.add(y * width + x)
+    }
     // Water glints shift between frames.
     kinds.forEach((row, y) =>
       row.forEach((kind, x) => {
         if ((kind === 'water' || kind === 'waterDeep') && noise(seed + 5 + frame, x, y) < 0.07) colors[y]![x] = PALETTE.glint
       }),
     )
-    const stamp = (sprite: Sprite, centerX: number, bottomY: number) => {
+    // `glows` names the sprite's characters that shine: its fire, a gate lit at night.
+    const stamp = (sprite: Sprite, centerX: number, bottomY: number, glows = '') => {
       const left = centerX - Math.floor((sprite.art[0]?.length ?? 0) / 2)
       const top = bottomY - sprite.art.length + 1
       sprite.art.forEach((line, dy) =>
@@ -311,7 +352,16 @@ export function drawOverworld(input: OverworldInput): Overworld {
           const row = colors[top + dy]
           const x = left + dx
           if (color === undefined || row === undefined || x < 0 || x >= width) return
-          row[x] = color
+          if (glows.includes(ch)) light(x, top + dy, color)
+          else row[x] = color
+        }),
+      )
+    }
+    // Fireflies over the grass at night, a few, blinking between frames.
+    if (isNight) {
+      kinds.forEach((row, y) =>
+        row.forEach((kind, x) => {
+          if (kind.startsWith('grass') && noise(seed + 11 + frame, x, y) < 0.018) light(x, y, LIGHT.firefly)
         }),
       )
     }
@@ -324,13 +374,27 @@ export function drawOverworld(input: OverworldInput): Overworld {
     if (townAt !== -1 && townAt < steps) {
       // Synced, you stand at the gate: the castle steps back a little to make room.
       const x = stepX(townAt) - (townAt === 0 ? 4 : 0)
-      stamp(castle(frame), x, (road[x] ?? 0) - 1)
+      const keep = castle(frame)
+      // At night the gate is lit from within.
+      stamp(isNight ? { ...keep, colors: { ...keep.colors, G: LIGHT.gate } } : keep, x, (road[x] ?? 0) - 1, isNight ? 'G' : '')
     }
     if (dirty > 0) {
       const x = width - 4
-      stamp(tent(frame), x, (road[x] ?? 0) - 1)
+      stamp(tent(frame), x, (road[x] ?? 0) - 1, 'FEe')
     }
-    stamp(hero(frame, hat), heroX, road[heroX] ?? 0)
+    const heroY = road[heroX] ?? 0
+    stamp(hero(frame, hat), heroX, heroY)
+    // Casting, a spark dances over the hat: up and right, then up and left.
+    if (input.isCasting === true) {
+      light(heroX + (frame === 0 ? 2 : -2), heroY - 6, frame === 0 ? LIGHT.spark : LIGHT.sparkCool)
+      light(heroX + (frame === 0 ? 1 : -1), heroY - 7 + frame, LIGHT.spark)
+    }
+    if (phase !== 'day') {
+      const k = TINTS[phase]
+      colors.forEach((row, y) => {
+        for (let x = 0; x < width; x += 1) if (!lights.has(y * width + x)) row[x] = tint(row[x] ?? 0, k)
+      })
+    }
     // Fog where the road goes on past the edge: darker the further back.
     if (isCut) {
       const reach = Math.max(FOG_COLUMNS, oldestX)

@@ -40,6 +40,7 @@ import { CALLS_PER_LEVEL, STATUS_ROWS, heroStats, normalizeCall, renderStatus, s
 import { PORTRAIT_BUSTS, PORTRAIT_FRAMES } from './portrait-cells'
 import { CLASS_IDS, classOf, isClassId, rankOf, rollClass } from './classes'
 import { mapItems, mapSubtitle } from './map'
+import { phaseOf } from './overworld'
 import { ICON_COLUMNS, ICON_ROWS, MENU, drawnIcon, entryOf, iconText, isTab } from './menu'
 import { cardWidth, slotKey } from './menu-client'
 import type { MenuIconProps } from './menu-client'
@@ -846,7 +847,21 @@ const petsPage = async (_$: EngineInterface, { ui, inner, now, Raster, petList }
   subtitle: partySubtitle(petList),
 })
 
-const mapPage = async ($: EngineInterface, { ui, inner, Raster }: PageContext): Promise<Page> => {
+// The local clock's offset from UTC, read once a session from `date`; UTC until it answers.
+let utcOffsetMs = 0
+export const parseUtcOffset = (text: string): number | undefined => {
+  const match = /^([+-])(\d{2})(\d{2})$/.exec(text.trim())
+  if (match === null) return undefined
+  return (match[1] === '-' ? -1 : 1) * (Number(match[2]) * 60 + Number(match[3])) * 60_000
+}
+async function readUtcOffset($: EngineInterface) {
+  const ran = await $.process.run(['date', '+%z']).catch(() => undefined)
+  const offset = ran?.exitCode === 0 ? parseUtcOffset(ran.stdout) : undefined
+  if (offset !== undefined) utcOffsetMs = offset
+}
+export const localHour = (now: number, offsetMs: number): number => Math.floor(((now + offsetMs) % 86_400_000 + 86_400_000) % 86_400_000 / 3_600_000)
+
+const mapPage = async ($: EngineInterface, { ui, inner, now, Raster }: PageContext): Promise<Page> => {
   const world = await read($, map)
   const list = await read($, outposts)
   const hero = classOf(await read($, heroClass))
@@ -864,6 +879,8 @@ const mapPage = async ($: EngineInterface, { ui, inner, Raster }: PageContext): 
       camps: Object.fromEntries(list.filter(one => !one.isHere && one.branch !== '').map(one => [one.branch, one.name])),
       heroColor: hero.color,
       ...(Raster === undefined ? {} : { Raster }),
+      phase: phaseOf(localHour(now, utcOffsetMs)),
+      isCasting: anim.running > 0,
     }),
     subtitle: mapSubtitle(world),
   }
@@ -1054,6 +1071,7 @@ export const register: Register = on => {
     })
     await markStart($)
     await loadProgress($)
+    void readUtcOffset($).catch(() => undefined)
     // A tab kept from an older build (`feats`) no longer names a page: the spell book stands in.
     await update($, tab, kept => (isTab(kept) ? kept : 'spells'))
     await dropStrayPets($)

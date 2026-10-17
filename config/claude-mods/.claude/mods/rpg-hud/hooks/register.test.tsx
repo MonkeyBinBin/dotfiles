@@ -8,14 +8,14 @@ import { GIT_STATUS, diffArgv, isLinear, parseBag, parseLog, parseLogLine, parse
 import { layoutLanes, laneText } from './lanes'
 import { campsOn, exploredRegions } from './map'
 import { BOSS_COLUMNS, BOSS_ROWS, FX_MS, bossFrames } from './encounter'
-import { OVERWORLD_ROWS, drawOverworld, mainRoad, regionName } from './overworld'
+import { OVERWORLD_ROWS, drawOverworld, mainRoad, phaseOf, regionName } from './overworld'
 import { parseDiff, rarityOf, splitBar } from './diff'
 import { countPatch, patchSource } from './edit-card'
 import { trailStops } from './map'
 import { gaugeColor, heroStats, manaLeft, normalizeCall, rankFor, statusLayout } from './hero'
 import { rosterOrder } from './pets'
 import { petCells, speciesFor } from './pet-sprites'
-import { MANA_ALARMS, campFor, isRefusal, manaAlarm, returnToast, skillOfPrompt, touchFile } from './register'
+import { MANA_ALARMS, campFor, localHour, parseUtcOffset, isRefusal, manaAlarm, returnToast, skillOfPrompt, touchFile } from './register'
 import { formatDuration, recapText, topTools } from './recap'
 import { HELP_COMMANDS, helpText } from './help'
 import { filterSpells, timeColor } from './spellbook'
@@ -473,6 +473,31 @@ test('the overworld walks the first-parent road, fogs what it cannot fit and kee
   ])
   expect(mainRoad(forked).map(row => row.hash)).toEqual(['b000001', 'a000002'])
   expect(regionName('repo', 'wood', 'main')).toMatch(/ of main$/)
+})
+
+test('the land takes the light of the local hour, and the hero sparks while casting', () => {
+  expect([4, 5, 7, 16, 17, 19, 23].map(phaseOf)).toEqual(['night', 'dawn', 'day', 'day', 'dusk', 'night', 'night'])
+  expect(parseUtcOffset('+0800\n')).toBe(8 * 3_600_000)
+  expect(parseUtcOffset('-0530')).toBe(-(5 * 60 + 30) * 60_000)
+  expect(parseUtcOffset('UTC')).toBeUndefined()
+  // 23:00 UTC is 07:00 the next morning in Taipei.
+  expect(localHour(Date.UTC(2026, 9, 2, 23), 8 * 3_600_000)).toBe(7)
+  expect(localHour(Date.UTC(2026, 9, 2, 1), -5 * 3_600_000)).toBe(20)
+
+  const rows = parseLog([
+    logLine('a000001', 'a000002', 'HEAD -> main', '1 hour ago', 'a'),
+    logLine('a000002', '', 'origin/main', '1 day ago', 'b'),
+  ])
+  const draw = (phase: 'day' | 'night', isCasting = false) =>
+    drawOverworld({ rows, dirty: 1, width: 48, seed: 'repo', phase, isCasting }).frames.flat(2)
+  const day = draw('day')
+  const night = draw('night')
+  // Night is darker overall, yet the fire and the fireflies still glow.
+  const sum = (colors: number[]) => colors.reduce((total, c) => total + ((c >> 16) & 255) + ((c >> 8) & 255) + (c & 255), 0)
+  expect(sum(night)).toBeLessThan(sum(day) * 0.7)
+  expect(night).toContain(0xe8ff7a)
+  expect(day).not.toContain(0xe8ff7a)
+  expect(draw('day', true)).toContain(0xfff07a)
 })
 
 test('explored files gather into regions by their top folder, the root last', () => {
