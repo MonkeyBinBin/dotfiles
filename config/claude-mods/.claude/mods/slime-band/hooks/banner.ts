@@ -8,7 +8,7 @@ export const BANNER_MS = 2500
 // Ticks each colour of a banner's shimmer holds on the terminal.
 export const SHIMMER_TICKS = 4
 
-export type BannerColor = 'yellow' | 'red' | 'green' | 'magenta' | 'cyan'
+export type BannerColor = 'yellow' | 'red' | 'green' | 'magenta' | 'cyan' | 'blue'
 
 export type Banner = { word: string; icon: string; label: string; color: BannerColor; until: number }
 
@@ -16,22 +16,25 @@ export type Banner = { word: string; icon: string; label: string; color: BannerC
 export type HudMoments = {
   // Until when the status panel glows after a level up.
   flashUntil?: number
-  bossFx?: { event: 'appear' | 'hit' | 'defeat'; at: number; boss: { name: string } } | null
+  bossFx?: { event: 'appear' | 'hit' | 'defeat' | 'enrage'; at: number; boss: { name: string } } | null
   // `isBackground`: sent with run_in_background, so nothing in the transcript waits on its return.
   pets?: readonly { status: string; endedAt?: number; description: string; isBackground?: boolean }[]
   knockout?: { state: 'down' | 'up'; at: number } | null
   mapFx?: { event: 'save' | 'deliver'; at: number } | null
+  // When the conversation was last compacted: a night at the inn.
+  restFx?: { at: number } | null
 }
 
 // Another plugin's state is read-only. Read while drawing, so its writes redraw the band.
 export async function readMoments($: EngineInterface): Promise<HudMoments> {
   // The engine lists every value a module reads, so each key is written out.
-  const [flash, fx, pets, knockout, mapFx] = await Promise.all([
+  const [flash, fx, pets, knockout, mapFx, restFx] = await Promise.all([
     $.state.get({ plugin: 'rpg-hud', key: 'flashUntil' } as never).catch(() => undefined),
     $.state.get({ plugin: 'rpg-hud', key: 'bossFx' } as never).catch(() => undefined),
     $.state.get({ plugin: 'rpg-hud', key: 'pets' } as never).catch(() => undefined),
     $.state.get({ plugin: 'rpg-hud', key: 'knockout' } as never).catch(() => undefined),
     $.state.get({ plugin: 'rpg-hud', key: 'mapFx' } as never).catch(() => undefined),
+    $.state.get({ plugin: 'rpg-hud', key: 'restFx' } as never).catch(() => undefined),
   ])
   return {
     flashUntil: flash?.value as HudMoments['flashUntil'],
@@ -39,6 +42,7 @@ export async function readMoments($: EngineInterface): Promise<HudMoments> {
     pets: pets?.value as HudMoments['pets'],
     knockout: knockout?.value as HudMoments['knockout'],
     mapFx: mapFx?.value as HudMoments['mapFx'],
+    restFx: restFx?.value as HudMoments['restFx'],
   }
 }
 
@@ -47,13 +51,14 @@ const LABEL_MAX = 30
 const short = (text: string): string => (text.length > LABEL_MAX ? `${text.slice(0, LABEL_MAX - 1)}…` : text)
 
 // The banner showing at `now`, the biggest moment first: a slain boss, a boss appearing, a knockout, a level up,
-// a revive, a delivery, a save, a return.
+// a revive, a night at the inn, a delivery, a save, a return.
 // A pet the turn waited on reports in the transcript already; only one sent off in the background gets a banner.
 export const bannerFor = (moments: HudMoments, now: number): Banner | undefined => {
   const fx = moments.bossFx
   if (fx != null && now - fx.at < BANNER_MS) {
     if (fx.event === 'defeat') return { word: 'VICTORY!', icon: '⚑', label: short(`${fx.boss.name} is defeated`), color: 'yellow', until: fx.at + BANNER_MS }
     if (fx.event === 'appear') return { word: 'BOSS!', icon: '☠', label: short(`a wild ${fx.boss.name} appears`), color: 'red', until: fx.at + BANNER_MS }
+    if (fx.event === 'enrage') return { word: 'ENRAGED!', icon: '🔥', label: short(`${fx.boss.name} flies into a rage`), color: 'red', until: fx.at + BANNER_MS }
   }
   const ko = moments.knockout
   if (ko != null && ko.state === 'down' && now - ko.at < BANNER_MS) {
@@ -64,6 +69,10 @@ export const bannerFor = (moments: HudMoments, now: number): Banner | undefined 
   }
   if (ko != null && ko.state === 'up' && now - ko.at < BANNER_MS) {
     return { word: 'REVIVE!', icon: '✨', label: 'every heart restored', color: 'green', until: ko.at + BANNER_MS }
+  }
+  const rest = moments.restFx
+  if (rest != null && now - rest.at < BANNER_MS) {
+    return { word: 'REST AT INN', icon: '🌙', label: 'the mana is restored', color: 'blue', until: rest.at + BANNER_MS }
   }
   const map = moments.mapFx
   if (map != null && now - map.at < BANNER_MS) {

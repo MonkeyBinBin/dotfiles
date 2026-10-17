@@ -497,6 +497,8 @@ test('the hero falling and rising, a save and a delivery get banners too, behind
   // A level up outranks a revive or a save; a knockout outranks a level up.
   expect(bannerFor({ flashUntil: now + 100, knockout: { state: 'up', at: now - 10 }, mapFx: { event: 'save', at: now - 10 } }, now)?.word).toBe('LEVEL UP!')
   expect(bannerFor({ flashUntil: now + 100, knockout: { state: 'down', at: now - 10 } }, now)?.word).toBe('GAME OVER')
+  expect(bannerFor({ restFx: { at: now - 10 } }, now)).toMatchObject({ word: 'REST AT INN', color: 'blue' })
+  expect(bannerFor({ bossFx: { event: 'enrage', at: now - 10, boss: { name: 'Bug Hydra' } } }, now)).toMatchObject({ word: 'ENRAGED!', color: 'red' })
 })
 
 test('a banner takes the big numbers\' place on the track, then the facts come back', async ($, on) => {

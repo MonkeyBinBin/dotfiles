@@ -32,6 +32,8 @@ const TUBE_FRAME_MS = FRAME_MS * TUBE_TICKS
 const RUN_TICKS = 3
 // How long the slime sits after a turn before it naps.
 export const NAP_AFTER_MS = 20_000
+// How long the slime naps at the inn once the conversation is compacted, the mana poured back.
+export const REST_MS = 4000
 // Ticks each 'z Z' frame of the nap stays up.
 const SNORE_TICKS = 10
 
@@ -221,6 +223,8 @@ const slime = {
   isManaCritical: false,
   // Until when the slime listens to the person typing.
   listenUntil: 0,
+  // Until when it naps at the inn after the conversation was compacted.
+  restUntil: 0,
   // The tick a sent prompt's cast began, while it plays.
   castFrom: undefined as number | undefined,
   // On an SVG surface: when the cast began, so a redraw within it keeps the sparks.
@@ -251,8 +255,13 @@ async function paint($: EngineInterface) {
   if (cast !== undefined && cast >= CAST_TICKS) slime.castFrom = undefined
   const casting = cast !== undefined && cast < CAST_TICKS ? cast : undefined
   // Casting it crouches then leaps; listening it sits still; otherwise as the turn has it.
+  const isResting = now < slime.restUntil
   const pose: SlimePose =
-    casting !== undefined ? (casting < 2 ? 'run1' : casting < 5 ? 'run2' : 'sit') : isListening ? 'sit' : slimePose(slime.isWorking, now - slime.idleSince, slime.tick, isWaiting)
+    casting !== undefined
+      ? casting < 2 ? 'run1' : casting < 5 ? 'run2' : 'sit'
+      : isListening ? 'sit'
+      : isResting ? 'sleep'
+      : slimePose(slime.isWorking, now - slime.idleSince, slime.tick, isWaiting)
   const alert = isWaiting && Math.floor(slime.tick / ALERT_TICKS) % 2 === 0
   // The slime only travels while it is in the air.
   if (pose === 'run2' && casting === undefined) {
@@ -455,6 +464,17 @@ export const register: Register = on => {
   })
 
   // /clear and resume end this conversation without a session.start: drop its gauge until the next measure.
+  // A compaction is a night at the inn: the slime naps while the mana pours back. Not a precompute, which installs
+  // nothing, nor a subagent's own.
+  on('session.compact', async ($, e, next) => {
+    const result = await next(e)
+    if (e.trigger === 'precompute' || e.agentId !== undefined || result.skip !== undefined) return result
+    slime.restUntil = (await $.clock.now()) + REST_MS
+    redraw($)
+    $.clock.after(REST_MS, () => redraw($))
+    return result
+  })
+
   on('session.end', async ($, e, next) => {
     await update($, contextInfo, () => EMPTY_CONTEXT)
     return next(e)
@@ -569,7 +589,8 @@ export const register: Register = on => {
         slime.walk = { x: slime.x, dir: slime.dir, last, since: now }
       }
       const idleMs = now - slime.idleSince
-      const mode: SceneSlime['mode'] = isWaiting ? 'wait' : isListening ? 'listen' : slime.walk ? 'walk' : idleMs >= NAP_AFTER_MS ? 'sleep' : 'sit'
+      const isResting = now < slime.restUntil
+      const mode: SceneSlime['mode'] = isWaiting ? 'wait' : isListening ? 'listen' : isResting ? 'sleep' : slime.walk ? 'walk' : idleMs >= NAP_AFTER_MS ? 'sleep' : 'sit'
       const castMs = now - slime.castAt < CAST_MS ? now - slime.castAt : undefined
       slime.napTimer?.cancel()
       slime.napTimer = mode === 'sit' ? $.clock.after(NAP_AFTER_MS - idleMs, () => $.ui.invalidate('ui.render')) : undefined
