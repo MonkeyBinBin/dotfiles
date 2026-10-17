@@ -20,7 +20,7 @@ import { formatDuration, recapText, topTools } from './recap'
 import { HELP_COMMANDS, helpText } from './help'
 import { filterSpells, timeColor } from './spellbook'
 import { SKILL_KEYS, groupSkills, masteryStars, skillKeys } from './skills'
-import { KEPT_JOBS, endJob, jobOrder, parseJobEnds, reconcileJobs, trimJobs } from './jobs'
+import { KEPT_JOBS, MARCH_COLUMNS, MARCH_TICKS, endJob, jobState, marchCells, jobOrder, parseJobEnds, reconcileJobs, trimJobs } from './jobs'
 import { barFill, oneLine } from './util'
 import { cardWidth } from './menu-client'
 import { pageItems } from './window'
@@ -2171,13 +2171,13 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(shown).toContain('⚙ JOBS')
     expect(shown).toContain('Start the dev server')
     expect(shown).toContain('$ npm run dev')
-    expect(shown).toContain('1 running')
+    expect(shown).toContain('1 on expedition')
     expect(shown).toContain('⚙ 1| job')
 
     await $.prompt.submit({ text: notification('b1', 'completed', 'Background command "x" completed (exit code 3)'), origin: { kind: 'task-notification' } } as never)
     await showTab($, ui, 'jobs', surface)
     shown = (await texts(ui)).join('|')
-    expect(shown).toContain('✗ exit 3')
+    expect(shown).toContain('❌ exit 3')
     expect(shown).toContain('⚙ 0| jobs')
     expect(toasts).toContain('⚙ Job failed: Start the dev server')
   })
@@ -2196,7 +2196,7 @@ test('TaskStop stops the job it names', async ($, on) => {
   await $.tool.call({ tool: 'Monitor', command: 'tail -f log', description: 'Watch the log', timeout_ms: 0 } as never)
   expect((await texts(ui)).join('|')).toContain('◉ ')
   await $.tool.call({ tool: 'TaskStop', task_id: 'm1' } as never)
-  expect((await texts(ui)).join('|')).toContain('■ stopped')
+  expect((await texts(ui)).join('|')).toContain('🛑 recalled')
 })
 
 test("a running job's stop button stops it through TaskStop", async ($, on) => {
@@ -2218,7 +2218,7 @@ test("a running job's stop button stops it through TaskStop", async ($, on) => {
   await ui.press({ key: 'job-stop-b1' })
   expect(stops).toEqual(['b1'])
   const shown = (await texts(ui)).join('|')
-  expect(shown).toContain('■ stopped')
+  expect(shown).toContain('🛑 recalled')
   // The HUD's own TaskStop is none of the hero's casts.
   expect(shown).toContain('1 casts')
   await showTab($, ui, 'spells', 'desktop')
@@ -2236,7 +2236,7 @@ test('a stop the engine refuses leaves the job running and says so', async ($, o
   await ui.press({ key: 'job-stop-b1' })
   await ui.press({ key: 'job-stop-b1' })
   expect(toasts).toContain('⚙ Could not stop: Dev server')
-  expect((await texts(ui)).join('|')).toContain('1 running')
+  expect((await texts(ui)).join('|')).toContain('1 on expedition')
 })
 
 test('a stop pressed once settles back after a moment', async ($, on) => {
@@ -2332,3 +2332,14 @@ test('on desktop a questing pet hops as a drawing', async ($, on) => {
   expect(String(pet?.props.source)).toContain('<animate ')
 })
 
+test('a running job marches on; a finished one says how it ended, as the quest notices do', () => {
+  expect(marchCells(0)).not.toBe(marchCells(MARCH_TICKS))
+  expect(marchCells(0)).toBe(marchCells(0))
+  const words = new Uint32Array(Uint8Array.from(atob(marchCells(0)), ch => ch.charCodeAt(0)).buffer)
+  expect(words.length).toBe(MARCH_COLUMNS * 3)
+  const job = { id: 'b', toolUseId: 't', kind: 'shell' as const, command: 'x', description: '', startedAt: 0, endedAt: 65_000 }
+  expect(jobState({ ...job, status: 'run', endedAt: undefined }, 5_000).text).toBe('⚔ 5s')
+  expect(jobState({ ...job, status: 'ok' }, 0).text).toBe('✅ back · 1m05s')
+  expect(jobState({ ...job, status: 'err', exitCode: 2 }, 0).text).toBe('❌ exit 2 · 1m05s')
+  expect(jobState({ ...job, status: 'kill' }, 0).text).toBe('🛑 recalled · 1m05s')
+})

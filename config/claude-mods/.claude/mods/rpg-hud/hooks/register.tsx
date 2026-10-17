@@ -51,7 +51,7 @@ import { castText, skillItems, skillKeys, skillRows, skillsSubtitle } from './sk
 import { filterSpells, spellFilters, spellItems } from './spellbook'
 import { HELP_COMMANDS, helpItems, helpText } from './help'
 import { EMPTY_PROGRESS, progressOf } from './progress'
-import { addJob, endJob, jobItems, jobsSubtitle, parseJobEnds, reconcileJobs, trimJobs } from './jobs'
+import { MARCH_COLUMNS, addJob, endJob, jobItems, jobsSubtitle, marchCells, parseJobEnds, reconcileJobs, trimJobs } from './jobs'
 import type { JobEnd } from './jobs'
 import { summarize } from './util'
 import { WINDOW_CHROME_COLUMNS, WINDOW_CHROME_ROWS, clampOffset, pageItems, renderWindow, totalRows } from './window'
@@ -690,6 +690,16 @@ async function paintPets($: EngineInterface) {
   }
 }
 
+// The running jobs' marches; a job that refuses its blit has scrolled away and leaves the animation.
+async function paintJobs($: EngineInterface) {
+  const cells = marchCells(anim.tick)
+  for (const [key, job] of anim.jobs) {
+    if (cells === job.shown) continue
+    if (await blit($, key, cells, MARCH_COLUMNS, 1)) job.shown = cells
+    else anim.jobs.delete(key)
+  }
+}
+
 // The overworld's idle frames; a refusal means it scrolled away, and it leaves the animation.
 async function paintOverworld($: EngineInterface) {
   const world = anim.overworld
@@ -715,12 +725,14 @@ async function paint($: EngineInterface) {
   anim.tick += 1
   const hasPets = anim.tab === 'pets' && anim.pets.size > 0
   const hasMap = anim.tab === 'map' && anim.overworld !== undefined
+  const hasJobs = anim.tab === 'jobs' && anim.jobs.size > 0
   // The portrait refusing means the pane is closed: nothing of ours is on screen.
   if (anim.hasHero && !(await paintHero($))) return stop()
   if (hasPets) await paintPets($)
   if (hasMap) await paintOverworld($)
   if (anim.boss !== undefined) await paintBoss($)
-  if (!anim.hasHero && !hasPets && !hasMap && anim.boss === undefined) stop()
+  if (hasJobs) await paintJobs($)
+  if (!anim.hasHero && !hasPets && !hasMap && !hasJobs && anim.boss === undefined) stop()
 }
 
 // Each draw of an animated tab starts the clock again if a refusal stopped it.
@@ -976,10 +988,10 @@ const skillsPage = async ($: EngineInterface, { ui, inner, now, progress: progre
   }
 }
 
-const jobsPage = async ($: EngineInterface, { ui, inner, now }: PageContext): Promise<Page> => {
+const jobsPage = async ($: EngineInterface, { ui, inner, now, Raster }: PageContext): Promise<Page> => {
   const list = await read($, jobs)
   const armed = await read($, stopArmed)
-  return { items: jobItems(ui, list, now, inner, job => void pressStop($, job), armed), subtitle: jobsSubtitle(list) }
+  return { items: jobItems(ui, list, now, inner, job => void pressStop($, job), armed, Raster), subtitle: jobsSubtitle(list) }
 }
 
 const helpPage = async ($: EngineInterface, { ui }: PageContext): Promise<Page> => ({
@@ -1718,7 +1730,12 @@ export const register: Register = on => {
     }
     // Only an overworld the window shows (the map itself, not its bag) can take a blit.
     if (windowKey !== 'map' || !pageItems(items, offset, rows).shown.some(item => item.key === 'overworld')) anim.overworld = undefined
-    if (anim.hasHero || (active === 'pets' && anim.pets.size > 0) || anim.overworld !== undefined || anim.boss !== undefined) startAnim($)
+    if (active === 'jobs') {
+      // Only the jobs the window shows can take a blit.
+      const shown = new Set(pageItems(items, offset, rows).shown.map(item => `job-${item.key}`))
+      for (const key of anim.jobs.keys()) if (!shown.has(key)) anim.jobs.delete(key)
+    }
+    if (anim.hasHero || (active === 'pets' && anim.pets.size > 0) || anim.overworld !== undefined || anim.boss !== undefined || (active === 'jobs' && anim.jobs.size > 0)) startAnim($)
 
     return (
       <Box flexDirection="column" width={width} rowGap={sectionGap}>

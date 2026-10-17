@@ -55,6 +55,13 @@ const DEFAULT_COLOR = 0x01000000
 export const composeSprite = (pixels: readonly string[], palette: Readonly<Record<string, number>>): string =>
   composeColors(pixels.map(line => [...line].map(ch => palette[ch])))
 
+// Raster cells from glyphs, each [code point, foreground, background]: text that animates by blits.
+export const packCells = (cells: ReadonlyArray<readonly [number, number, number]>): string => {
+  const words = new Uint32Array(cells.length * 3)
+  cells.forEach(([glyph, fg, bg], at) => words.set([glyph, fg, bg], at * 3))
+  return btoa(String.fromCharCode(...new Uint8Array(words.buffer)))
+}
+
 // A colour per pixel, undefined see-through, as Raster cells: two pixel rows per terminal row.
 export const composeColors = (pixels: readonly (readonly (number | undefined)[])[]): string => {
   const columns = pixels[0]?.length ?? 0

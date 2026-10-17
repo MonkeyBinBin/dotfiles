@@ -54,6 +54,8 @@ export const anim = {
   pets: new Map<string, { seed: string; shown: string }>(),
   // The encounter card's monster while on screen: the frames of the moment it plays, from the tick it began.
   boss: undefined as { key: string; frames: string[]; ticks: number; loop: boolean; start: number; shown: string } | undefined,
+  // Running jobs on screen, by Raster key: the march strip shown last.
+  jobs: new Map<string, { shown: string }>(),
   // The map tab's overworld while on screen: its frames as Raster cells and the one shown.
   overworld: undefined as { frames: string[]; columns: number; rows: number; shown: string } | undefined,
 }

@@ -1,8 +1,31 @@
 import type { ElementTable } from 'claude-code'
 
 import type { Job, JobStatus } from '../types'
-import { formatElapsed, oneLine } from './util'
+import { anim } from './anim'
+import { formatElapsed, oneLine, packCells } from './util'
 import type { Item } from './window'
+
+// A running job's march: chevrons sweeping along a dim track, on the terminal a Raster the animation blits.
+export const MARCH_COLUMNS = 10
+// Ticks each step of the sweep holds.
+export const MARCH_TICKS = 2
+const MARCH_GAP = 5
+const DEFAULT_COLOR = 0x01000000
+const TRACK = 0x4a4a4a
+const MARCH_SHADES = [0xfff07a, 0xffd23c, 0xa08a32]
+const CHEVRON = 0x203a // ›
+const TRACK_GLYPH = 0x2504 // ┄
+
+export const marchCells = (tick: number): string => {
+  const step = Math.floor(tick / MARCH_TICKS)
+  return packCells(
+    Array.from({ length: MARCH_COLUMNS }, (_, col) => {
+      const behind = (((step - col) % MARCH_GAP) + MARCH_GAP) % MARCH_GAP
+      const shade = MARCH_SHADES[behind]
+      return shade === undefined ? ([TRACK_GLYPH, TRACK, DEFAULT_COLOR] as const) : ([CHEVRON, shade, DEFAULT_COLOR] as const)
+    }),
+  )
+}
 
 // Finished jobs kept beside the running ones, newest first.
 export const KEPT_JOBS = 30
@@ -94,22 +117,23 @@ export const jobOrder = (list: readonly Job[]): Job[] => {
 export const jobsSubtitle = (list: readonly Job[]): string => {
   const running = list.filter(job => job.status === 'run').length
   const failed = list.filter(job => job.status === 'err').length
-  return `${running} running${failed > 0 ? ` · ${failed} failed` : ''} · ${list.length} in all`
+  return `${running} on expedition${failed > 0 ? ` · ${failed} fallen` : ''} · ${list.length} in all`
 }
 
 export const jobState = (job: Job, now: number): { text: string; color: string } => {
   const elapsed = formatElapsed((job.endedAt ?? now) - job.startedAt)
   switch (job.status) {
+    // Endings marked as rpg-quest marks the notification that reports them.
     case 'run':
-      return { text: `▶ ${elapsed}`, color: 'yellow' }
+      return { text: `⚔ ${elapsed}`, color: 'yellow' }
     case 'ok':
-      return { text: `✓ ${elapsed}`, color: 'green' }
+      return { text: `✅ back · ${elapsed}`, color: 'green' }
     case 'err':
-      return { text: `✗ ${job.exitCode === undefined ? 'failed' : `exit ${job.exitCode}`} · ${elapsed}`, color: 'red' }
+      return { text: `❌ ${job.exitCode === undefined ? 'fell' : `exit ${job.exitCode}`} · ${elapsed}`, color: 'red' }
     case 'kill':
-      return { text: `■ stopped · ${elapsed}`, color: 'gray' }
+      return { text: `🛑 recalled · ${elapsed}`, color: 'gray' }
     case 'done':
-      return { text: `· ended ${elapsed}`, color: 'gray' }
+      return { text: `📨 ended · ${elapsed}`, color: 'gray' }
   }
 }
 
@@ -126,8 +150,15 @@ export function jobItems(
   width: number,
   onStop?: (job: Job) => void,
   armed?: string | null,
+  Raster?: ElementTable<'terminal'>['Raster'],
 ): Item[] {
   const { Box, Button, Text } = ui
+  // The animation marches the running jobs; the window decides which are on screen, so all are candidates.
+  anim.jobs = new Map(
+    list
+      .filter(job => Raster !== undefined && job.status === 'run')
+      .map(job => [`job-${job.id}`, { shown: anim.jobs.get(`job-${job.id}`)?.shown ?? '' }]),
+  )
   if (list.length === 0) {
     return [{ key: 'empty', rows: 1, node: <Text dimColor>No background jobs. Shells and monitors sent to the background show here.</Text> }]
   }
@@ -153,10 +184,17 @@ export function jobItems(
             {canStop && <Text> </Text>}
             {canStop && <Button key={`job-stop-${job.id}`} label={armed === job.id ? ARMED_LABEL : STOP_LABEL} plain onPress={() => onStop(job)} />}
           </Box>
-          <Text dimColor wrap="truncate">
-            {job.command === '' ? '' : oneLine(`$ ${job.command}`, width - (job.agentId === undefined ? 0 : 6))}
-            {job.agentId !== undefined && ' · pet'}
-          </Text>
+          <Box height={1}>
+            {isRunning && Raster !== undefined && (
+              <Box width={MARCH_COLUMNS + 1} flexShrink={0}>
+                <Raster key={`job-${job.id}`} columns={MARCH_COLUMNS} rows={1} cells={marchCells(anim.tick)} />
+              </Box>
+            )}
+            <Text dimColor wrap="truncate">
+              {job.command === '' ? '' : oneLine(`$ ${job.command}`, width - (job.agentId === undefined ? 0 : 6) - (isRunning && Raster !== undefined ? MARCH_COLUMNS + 1 : 0))}
+              {job.agentId !== undefined && ' · pet'}
+            </Text>
+          </Box>
         </Box>
       ),
     }
