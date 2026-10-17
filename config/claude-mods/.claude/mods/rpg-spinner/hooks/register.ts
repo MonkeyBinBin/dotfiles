@@ -3,16 +3,17 @@ import type { Register } from 'claude-code'
 type Mode = 'requesting' | 'responding' | 'thinking' | 'tool-input' | 'tool-use'
 
 // One pool per phase of the turn, so the line says what the hero is doing.
+// Emoji with default emoji presentation only: no VS16, so every terminal gives them two cells.
 export const VERBS: Record<Mode, readonly string[]> = {
-  requesting: ['🗺️ Setting out', '🐎 Riding forth', '🚪 Entering the dungeon', '🔦 Scouting ahead'],
+  requesting: ['🧭 Setting out', '🐎 Riding forth', '🚪 Entering the dungeon', '🔦 Scouting ahead'],
   thinking: ['🔮 Channeling', '📖 Studying the tome', '🧠 Consulting the oracle', '✨ Charging mana'],
   'tool-input': ['📜 Inscribing runes', '🪄 Preparing a spell', '🎯 Taking aim'],
-  'tool-use': ['⚔️ Attacking', '🔥 Casting Fireball', '🛡️ Holding the line', '🏹 Loosing arrows', '🗝️ Picking the lock'],
+  'tool-use': ['🤺 Attacking', '🔥 Casting Fireball', '🧱 Holding the line', '🏹 Loosing arrows', '🔑 Picking the lock'],
   responding: ['🎶 Singing the saga', '📯 Reporting to the guild', '🪶 Writing the chronicle'],
 }
 
 export const PAST_VERBS: readonly string[] = [
-  '⚔️ Battled', '🐉 Slew dragons', '🗡️ Quested', '🏰 Raided', '💎 Looted', '🧭 Adventured',
+  '🤺 Battled', '🐉 Slew dragons', '🪓 Quested', '🏰 Raided', '💎 Looted', '🌋 Adventured',
 ]
 
 // FNV-1a: stable picks, so a verb holds still for the whole turn.

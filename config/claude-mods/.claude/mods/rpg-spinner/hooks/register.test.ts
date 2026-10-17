@@ -12,3 +12,7 @@ test('picks from the pool of the current phase', () => {
     expect(PAST_VERBS).toContain(pick(PAST_VERBS, seed))
   }
 })
+
+test('no verb carries VS16, which some terminals draw a cell short', () => {
+  for (const verb of [...Object.values(VERBS).flat(), ...PAST_VERBS]) expect(verb.includes('️')).toBe(false)
+})
