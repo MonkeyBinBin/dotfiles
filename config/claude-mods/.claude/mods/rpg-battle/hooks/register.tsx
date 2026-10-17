@@ -157,6 +157,20 @@ const gutterTop = (surface: string) => (surface === 'terminal' ? 1 : 0)
 type Cast = { color: number; tick: number; misses: number; landing?: Landing; damage?: number }
 const casts = new Map<string, Cast>()
 const landed = new Set<string>()
+// When each running call was first seen, by tool_use_id: the channelling line counts from it.
+const castStarts = new Map<string, number>()
+// The channelling lines under long calls, by their site's requestId: the call each counts for and the text shown.
+const channels = new Map<string, { toolUseId: string; shown: string; misses: number }>()
+
+// The seconds a long call has channelled, right-aligned in the line's few columns: ` 12s`, `1m 05s`.
+export const CHANNEL_COLUMNS = 7
+export const channelText = (ms: number): string => {
+  const seconds = Math.max(0, Math.floor(ms / 1000))
+  const text = seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, '0')}s`
+  return text.padStart(CHANNEL_COLUMNS).slice(-CHANNEL_COLUMNS)
+}
+const CHANNEL_COLOR = 0xffd23c
+const channelCells = (text: string): string => pack([...text].map(ch => [ch.codePointAt(0) ?? 0x20, CHANNEL_COLOR, DEFAULT] as const))
 let ticker: ReturnType<EngineInterface['clock']['every']> | undefined
 // A tick still awaiting its blits makes the next one skip.
 let isPainting = false
@@ -188,13 +202,33 @@ async function paint($: EngineInterface) {
           if (cast.misses >= MAX_MISSES) casts.delete(id)
         }))
     }
+    // Each channelling line ticks its seconds over; one whose call has landed (or that keeps being refused) stops.
+    const now = await $.clock.now()
+    for (const [site, channel] of channels) {
+      const start = castStarts.get(channel.toolUseId)
+      if (start === undefined || landed.has(channel.toolUseId) || casts.get(channel.toolUseId)?.landing !== undefined) {
+        channels.delete(site)
+        continue
+      }
+      const text = channelText(now - start)
+      if (text === channel.shown) continue
+      blits.push($.ui
+        .blit({ requestId: site, key: 'channel', cells: channelCells(text) })
+        .catch(() => ({ deny: 'blit failed' }))
+        .then(shown => {
+          if (shown.deny === undefined) {
+            channel.shown = text
+            channel.misses = 0
+          } else if ((channel.misses += 1) >= MAX_MISSES) channels.delete(site)
+        }))
+    }
     await Promise.all(blits)
     // A finished flash leaves its row: redraw so the bar goes.
     if (hasLanded) $.ui.invalidate('ui.render')
   } finally {
     // A throw must not leave every later tick skipping.
     isPainting = false
-    if (casts.size === 0) {
+    if (casts.size === 0 && channels.size === 0) {
       ticker?.cancel()
       ticker = undefined
     }
@@ -238,6 +272,8 @@ export const register: Register = on => {
     const drawn = await next(e)
     const id = e.props.tool_use_id
     if (e.props.isInterrupted) fled.add(id)
+    if (e.props.isRunning && !castStarts.has(id)) castStarts.set(id, await $.clock.now())
+    if (!e.props.isRunning) castStarts.delete(id)
     if (e.surface !== 'terminal') {
       const drawnCast = castFor($, e.props)
       const { Box, Text, Svg } = $.ui.resolve(e)
@@ -295,6 +331,35 @@ export const register: Register = on => {
       <Box flexDirection="row">
         <Box marginTop={gutterTop(e.surface)}><Text>{`${rowIcon(e.props)} `}</Text></Box>
         <Box flexGrow={1} flexDirection="column">{drawn}{bar}</Box>
+      </Box>
+    )
+  })
+
+  // A call running long enough to offer the background channels: its seconds tick by beside the engine's hint.
+  on('ui.render', { component: 'ToolProgress' }, async ($, e, next) => {
+    if (e.props.kind !== 'background_hint') return next(e)
+    const id = e.props.tool_use_id
+    const now = await $.clock.now()
+    const hint = e.props.hint.replace(/^\((.*)\)$/, '$1')
+    const rest = hint === '' ? '' : ` · ${hint}`
+    if (e.surface !== 'terminal') {
+      const { Box, Text } = $.ui.resolve(e)
+      return (
+        <Box flexDirection="row" marginLeft={2}>
+          <Text color="warning" bold>⌛ Channeling…</Text>
+          <Text dimColor wrap="truncate">{rest}</Text>
+        </Box>
+      )
+    }
+    const text = channelText(now - (castStarts.get(id) ?? now))
+    channels.set(e.requestId, { toolUseId: id, shown: text, misses: 0 })
+    ensureTicker($)
+    const { Box, Text, Raster } = $.ui.resolve(e)
+    return (
+      <Box flexDirection="row" marginLeft={2}>
+        <Text color="warning" bold>⌛ Channeling</Text>
+        <Raster key="channel" columns={CHANNEL_COLUMNS} rows={1} cells={channelCells(text)} />
+        <Text dimColor wrap="truncate">{rest}</Text>
       </Box>
     )
   })

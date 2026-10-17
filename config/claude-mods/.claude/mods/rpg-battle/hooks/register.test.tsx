@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { CAST_COLUMNS, CRIT_DAMAGE, castCells, comboColor, comboLabel, damageOf, FLASH_TICKS, formatDamage, landingText, flashCells, groupIcon, landingOf, rowIcon, skillIcon } from './register'
+import { CAST_COLUMNS, castCells, CHANNEL_COLUMNS, channelText, comboColor, comboLabel, CRIT_DAMAGE, damageOf, FLASH_TICKS, flashCells, formatDamage, groupIcon, landingOf, landingText, rowIcon, skillIcon } from './register'
 
 const ROW = { tool: 'Bash', isErrored: false, isInterrupted: false }
 
@@ -153,4 +153,36 @@ test('long runs climb the combo tiers', () => {
   expect(comboLabel(10)).toBe(' ×10 SUPER COMBO')
   expect(comboLabel(20)).toBe(' ×20 ULTRA COMBO')
   expect([comboColor(3), comboColor(10), comboColor(25)]).toEqual(['warning', 'permission', 'error'])
+})
+
+test('a long call channels: its seconds tick beside the engine\'s background hint', async ($, on) => {
+  expect(channelText(0)).toBe('     0s')
+  expect(channelText(12_400)).toBe('    12s')
+  expect(channelText(65_000)).toBe(' 1m 05s')
+  expect(channelText(65_000)).toHaveLength(CHANNEL_COLUMNS)
+
+  const clock = mock.clock(on)
+  on('ui.render', { component: 'ToolUse' }, async ($$, e) => {
+    const { Text } = $$.ui.resolve(e)
+    return <Text>Bash(sleep 30)</Text>
+  })
+  on('ui.render', { component: 'ToolProgress' }, async ($$, e) => {
+    const { Text } = $$.ui.resolve(e)
+    return <Text>{e.props.hint}</Text>
+  })
+  const row = { tool_use_id: 'c1', tool: 'Bash', input: { command: 'sleep 30' }, isRunning: true, isErrored: false, isInterrupted: false }
+  await $.ui.mount({ plugin: 'rpg-battle', surface: 'terminal', component: 'ToolUse', props: row })
+  await clock.advance(3000)
+  const pill = await $.ui.mount({
+    plugin: 'rpg-battle',
+    surface: 'terminal',
+    component: 'ToolProgress',
+    requestId: 'c1',
+    props: { tool_use_id: 'c1', kind: 'background_hint', hint: '(ctrl+b to run in background)' },
+  })
+  const shown = (await pill.findAll({ type: 'Text' })).map(found => found.text).join('|')
+  expect(shown).toContain('⌛ Channeling')
+  expect(shown).toContain(' · ctrl+b to run in background')
+  expect(shown).not.toContain('(ctrl+b')
+  expect((await pill.findAll({ type: 'Raster' })).some(raster => raster.key === 'channel')).toBe(true)
 })
