@@ -3,7 +3,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import { SLIME_WIDTH } from './slime-sprite'
 import { SLIME_AREA_MIN, layoutHud } from './hud'
 import { allocateCells, gaugeLine, layoutGauge, legendLines, percentColor, rowWidth, wrapLegend } from './context-bar'
-import { TUBE_ROWS, TUBE_TICKS, tubeColumns, tubePixels } from './mana-tube'
+import { TUBE_ROWS, TUBE_TICKS, groundPixels, soilAt, tubeColumns, tubePixels } from './mana-tube'
 import { hexOf, iconOf, liquidOf } from './liquids'
 import type { ContextInfo } from '../types'
 import { HOP_MS, sceneSize, sceneSvg, walkAt } from './desktop'
@@ -358,12 +358,12 @@ test('a context measure fills the gauge under the floor, above the engine band',
   const textOf = (node: Node): string =>
     (node.text ?? '') + (node.children ?? []).map(child => (typeof child === 'string' ? child : textOf(child as Node))).join('')
   const kids = (band?.children ?? []) as Node[]
-  // The slime's track, then the tube right under it, then its line: the legend and how full.
+  // One Raster: the slime, its grass and soil, and the tube of mana set in the ground below; then the line.
   const rasters = kids.flatMap((k, at) => (k.type === 'Raster' ? [at] : []))
-  expect(rasters).toHaveLength(2)
-  const [track = -1, tube = -1] = rasters
+  expect(rasters).toHaveLength(1)
+  const [tube = -1] = rasters
+  expect((kids[tube] as { props?: { rows?: number } }).props?.rows).toBe(TRACK_ROWS + TUBE_ROWS)
   const engine = kids.findIndex(k => textOf(k).includes('engine band'))
-  expect(tube).toBe(track + 1)
   const line = textOf(kids[tube + 1] ?? {})
   expect(line).toContain('💬 Messages')
   expect(line).toContain('20% · 40.0k / 200k')
@@ -416,7 +416,7 @@ test('ending the conversation (/clear, resume) drops the gauge', async ($, on) =
   })
   const shows = async () => {
     const ui = await $.ui.mount({ plugin: 'slime-band', surface: 'desktop', component: 'AbovePrompt', props: { ...BAND_PROPS, bodyColumns: 100 } })
-    return (await ui.findAll({ type: 'Svg' })).some(svg => String(svg.props.alt).startsWith('Mana tube'))
+    return (await ui.findAll({ type: 'Svg' })).some(svg => String(svg.props.alt).includes('. Mana '))
   }
   await $.session.measure({ context: { window: 200_000 }, rateLimits: [], changed: ['context'] } as never)
   expect(await shows()).toBe(true)
@@ -563,10 +563,29 @@ test('on desktop the mana tube is a drawing that ripples by itself', async ($, o
   })
   await $.session.measure({ context: { window: 200_000 }, rateLimits: [], changed: ['context'] } as never)
   const ui = await $.ui.mount({ plugin: 'slime-band', surface: 'desktop', component: 'AbovePrompt', props: { ...BAND_PROPS, bodyColumns: 100 } })
-  const tube = (await ui.findAll({ type: 'Svg' })).find(svg => String(svg.props.alt).startsWith('Mana tube'))
-  expect(String(tube?.props.source)).toContain('<animate')
+  // The ground is part of the slime's scene, its ripple frames taking turns under the soil.
+  const scene = (await ui.findAll({ type: 'Svg' })).find(svg => String(svg.props.alt).includes('. Mana 20%'))
+  expect(String(scene?.props.source)).toContain('attributeName="visibility"')
   const shown = (await ui.findAll({ type: 'Text' })).map(row => row.text ?? '').join('|')
   expect(shown).toContain('💬 ')
   expect(shown).toContain('20%')
   expect(shown).not.toContain('MANA')
+})
+
+test('the ground under the grass is the tube set in soil, and cracks glow near the rune', () => {
+  const ground = groundPixels(CONTEXT, 40, 0, false)
+  expect(ground).toHaveLength(TUBE_ROWS * 2)
+  // Soil at either end and in the tube's rounded corners: no gap shows under the grass.
+  for (const row of ground) {
+    expect(row).toHaveLength(40)
+    for (const color of row) expect(color).toBeDefined()
+  }
+  expect(ground[0]?.[0]).toBe(soilAt(0, 0))
+  expect(ground[0]?.[1]).toBe(soilAt(1, 0))
+  const slimeAt = { x: 0, dir: 1 as const, pose: 'sit' as const, snore: 0 }
+  const plain = composeTrack(40, slimeAt, [], ground)
+  expect(atob(plain).length).toBe(40 * (TRACK_ROWS + TUBE_ROWS) * 3 * 4)
+  expect(composeTrack(40, { ...slimeAt, embers: true }, [], ground)).not.toBe(plain)
+  // No ground, and the track ends at the soil as before.
+  expect(atob(composeTrack(40, slimeAt)).length).toBe(40 * TRACK_ROWS * 3 * 4)
 })

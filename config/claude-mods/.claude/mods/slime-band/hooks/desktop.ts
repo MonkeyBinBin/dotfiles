@@ -5,6 +5,8 @@
 import { SLIME_FRAMES, SLIME_PALETTE, SLIME_WIDTH } from './slime-sprite'
 import type { SlimePose } from './slime-sprite'
 import type { HudLayout } from './hud'
+import type { ContextInfo } from '../types'
+import { TUBE_ROWS, groundSvg } from './mana-tube'
 
 // CSS pixels per sprite pixel.
 export const PX = 6
@@ -123,11 +125,17 @@ const escapeXml = (text: string) => text.replace(/[&<>"]/g, ch => `&#${ch.charCo
 
 // The scene's size in CSS pixels. Given to the Svg: a sandboxed frame left to size itself takes the browser's
 // default 150px height and pads the scene above and below.
-export const sceneSize = (width: number) => ({ width: width * PX, height: (LABEL_ROWS + TRACK_PIXELS) * PX })
+export const sceneSize = (width: number, hasGround = false) => ({
+  width: width * PX,
+  height: (LABEL_ROWS + TRACK_PIXELS + (hasGround ? TUBE_ROWS * 2 : 0)) * PX,
+})
 
-// The whole track: labels over the big numbers, the slime, the grass and soil under both.
-export const sceneSvg = (width: number, hud: HudLayout, slime: SceneSlime, labelColors: Record<string, string>): string => {
-  const height = (LABEL_ROWS + TRACK_PIXELS) * PX
+// The ground under the soil: the context window as a tube of mana, rippling `frameMs` a step.
+export type SceneGround = { info: ContextInfo; isWorking: boolean; frameMs: number }
+
+// The whole track: labels over the big numbers, the slime, the grass and soil under both, and the ground below.
+export const sceneSvg = (width: number, hud: HudLayout, slime: SceneSlime, labelColors: Record<string, string>, ground?: SceneGround): string => {
+  const { height } = sceneSize(width, ground !== undefined)
   const floor = [0, 1].map(row =>
     Array.from({ length: width }, (_, col) => (row === 0 ? GRASS[col % GRASS.length] : SOIL[(col * 3) % SOIL.length])),
   )
@@ -145,6 +153,7 @@ export const sceneSvg = (width: number, hud: HudLayout, slime: SceneSlime, label
     digits +
     slimeGroup(slime) +
     runsToRects(floor, LABEL_ROWS + SPRITE_ROWS) +
+    (ground === undefined ? '' : groundSvg(ground.info, width, ground.isWorking, PX, ground.frameMs, (LABEL_ROWS + TRACK_PIXELS) * PX)) +
     `</svg>`
   )
 }

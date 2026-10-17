@@ -3,7 +3,7 @@ import type { ElementTable, EngineInterface, Register, Timer } from 'claude-code
 
 import type { BandInfo, ContextInfo } from '../types'
 import { layoutGauge, manaLevel } from './context-bar'
-import { TUBE_ROWS, TUBE_TICKS, tubeCells, tubeSvg } from './mana-tube'
+import { TUBE_ROWS, TUBE_TICKS, groundPixels, groundSvg } from './mana-tube'
 import type { ContextGauge } from './context-bar'
 import { SLIME_FRAMES, SLIME_PALETTE, SLIME_ROWS, SLIME_WIDTH } from './slime-sprite'
 import type { SlimePose } from './slime-sprite'
@@ -27,8 +27,6 @@ const contextInfo = atom({ plugin: 'slime-band', key: 'context' } as const, EMPT
 
 const FRAME_MS = 80
 // The desktop tube: CSS pixels per tube pixel, a band column's CSS width, and how long each ripple step holds.
-const TUBE_PX = 4
-const DESKTOP_COLUMN_PX = 8
 const TUBE_FRAME_MS = FRAME_MS * TUBE_TICKS
 // Ticks each hop frame (squash, stretch) stays up.
 const RUN_TICKS = 3
@@ -82,15 +80,24 @@ const pixelAt = (pose: SlimePose, row: number, col: number, dir: 1 | -1): number
   return SLIME_PALETTE[ch]
 }
 
-// The whole track as Raster cells: the slime at `x`, the HUD's big numbers,
-// the rest see-through.
+// Where the mana nears the rune, embers glow through cracks in the soil under the grass.
+const EMBER = 0xff5a3a
+const isCrack = (col: number) => (col * 7 + 3) % 13 === 0
+
+// The whole track as Raster cells: the slime at `x`, the HUD's big numbers, the grass and soil, then the
+// ground below them (the mana tube set in soil) when there is one; the rest see-through.
 export const composeTrack = (
   trackWidth: number,
-  slime: { x: number; dir: 1 | -1; pose: SlimePose; snore: number; alert?: boolean; sweat?: boolean },
+  slime: { x: number; dir: 1 | -1; pose: SlimePose; snore: number; alert?: boolean; sweat?: boolean; embers?: boolean },
   hud: readonly HudPixel[] = [],
+  ground?: readonly (readonly number[])[],
 ): string => {
   const lit = new Map(hud.map(pixel => [pixel.y * trackWidth + pixel.x, pixel.rgb]))
+  const groundTop = GRASS_Y + 2
+  const rows = TRACK_ROWS + Math.ceil((ground?.length ?? 0) / 2)
   const colorAt = (col: number, y: number): number | undefined => {
+    if (y >= groundTop) return ground?.[y - groundTop]?.[col]
+    if (slime.embers === true && y === GRASS_Y + 1 && isCrack(col)) return EMBER
     const floor = floorAt(col, y)
     if (floor !== undefined) return floor
     const spriteCol = col - slime.x
@@ -100,8 +107,8 @@ export const composeTrack = (
     }
     return lit.get(y * trackWidth + col)
   }
-  const words = new Uint32Array(trackWidth * TRACK_ROWS * 3)
-  for (let row = 0; row < TRACK_ROWS; row += 1) {
+  const words = new Uint32Array(trackWidth * rows * 3)
+  for (let row = 0; row < rows; row += 1) {
     for (let col = 0; col < trackWidth; col += 1) {
       const at = (row * trackWidth + col) * 3
       const top = colorAt(col, row * 2)
@@ -168,8 +175,8 @@ const slime = {
   requestId: '',
   ticker: undefined as Timer | undefined,
   shown: '',
-  // The mana tube on the terminal: what it shows, how wide, and the frame last blitted.
-  mana: undefined as { info: ContextInfo; width: number; shown: string } | undefined,
+  // The context window the ground below the grass shows as a tube of mana; none, and the track ends at the soil.
+  mana: undefined as ContextInfo | undefined,
   // The mana near the rune: the slime sweats.
   isManaCritical: false,
   // The surface that last drew the band.
@@ -179,22 +186,12 @@ const slime = {
   napTimer: undefined as Timer | undefined,
 }
 
+// The track's rows: the slime and its floor, and the ground under them while it shows the mana.
+const trackRows = () => TRACK_ROWS + (slime.mana === undefined ? 0 : TUBE_ROWS)
+
 // An SVG surface animates the scene itself and is drawn again only when the slime's state changes.
 const redraw = ($: EngineInterface) => {
   if (slime.surface !== undefined && slime.surface !== 'terminal') $.ui.invalidate('ui.render')
-}
-
-// The tube's ripple and bubbles; a refusal means the frame is gone, and the tube waits for the next draw.
-async function paintMana($: EngineInterface) {
-  const mana = slime.mana
-  if (mana === undefined) return
-  const cells = tubeCells(mana.info, mana.width, slime.tick, slime.isWorking)
-  if (cells === mana.shown) return
-  const done = await $.ui
-    .blit({ requestId: slime.requestId, key: 'mana', cells, columns: mana.width, rows: TUBE_ROWS })
-    .catch(() => ({ deny: 'blit failed' }))
-  if (done.deny === undefined) mana.shown = cells
-  else slime.mana = undefined
 }
 
 async function paint($: EngineInterface) {
@@ -212,14 +209,15 @@ async function paint($: EngineInterface) {
   }
   const snore = pose === 'sleep' ? Math.floor(slime.tick / SNORE_TICKS) % 3 : 0
   const hud = slime.shimmer.length > 0 ? (slime.shimmer[Math.floor(slime.tick / SHIMMER_TICKS) % slime.shimmer.length] ?? slime.hud) : slime.hud
-  const sweat = slime.isManaCritical && Math.floor(slime.tick / ALERT_TICKS) % 2 === 1
-  await paintMana($)
-  const cells = composeTrack(slime.trackWidth, { x: slime.x, dir: slime.dir, pose, snore, alert, sweat }, hud)
+  // Near the rune the slime sweats and the cracks glow, by turns.
+  const danger = slime.isManaCritical && Math.floor(slime.tick / ALERT_TICKS) % 2 === 1
+  const ground = slime.mana === undefined ? undefined : groundPixels(slime.mana, slime.trackWidth, slime.tick, slime.isWorking)
+  const cells = composeTrack(slime.trackWidth, { x: slime.x, dir: slime.dir, pose, snore, alert, sweat: danger, embers: danger }, hud, ground)
   if (cells === slime.shown) return
 
   // A refusal and a failed blit both mean the track is not on screen.
   const done = await $.ui
-    .blit({ requestId: slime.requestId, key: 'track', cells, columns: slime.trackWidth, rows: TRACK_ROWS })
+    .blit({ requestId: slime.requestId, key: 'track', cells, columns: slime.trackWidth, rows: trackRows() })
     .catch(() => ({ deny: 'blit failed' }))
   if (done.deny !== undefined) {
     slime.ticker?.cancel()
@@ -331,11 +329,10 @@ export const infoLine = (value: BandInfo, turns: number): string =>
     .join(SEPARATOR)
 
 
-type BandElements = Pick<ElementTable<'terminal'>, 'Box' | 'Text' | 'Raster'>
+type BandElements = Pick<ElementTable<'terminal'>, 'Box' | 'Text'>
 
-// The tube across the band, then what the mana is made of with how full it is at the line's end; a long legend
-// goes on below.
-const renderGauge = ({ Box, Text, Raster }: BandElements, gauge: ContextGauge, tube: string) => {
+// Under the ground: what the mana is made of, with how full it is at the line's end; a long legend goes on below.
+const renderGauge = ({ Box, Text }: BandElements, gauge: ContextGauge) => {
   const legendRow = (row: readonly ContextGauge['legend'][number][]) =>
     row.map((item, i) => (
       <Text key={item.name}>
@@ -347,7 +344,6 @@ const renderGauge = ({ Box, Text, Raster }: BandElements, gauge: ContextGauge, t
     ))
   const [first = [], ...rest] = gauge.legendRows
   return [
-    <Raster key="mana" columns={gauge.width} rows={TUBE_ROWS} cells={tube} />,
     <Box key="ctx-info" flexDirection="row" height={1}>
       <Box flexGrow={1}>
         <Text wrap="truncate">{legendRow(first)}</Text>
@@ -486,26 +482,25 @@ export const register: Register = on => {
       const mode: SceneSlime['mode'] = isWaiting ? 'wait' : slime.walk ? 'walk' : idleMs >= NAP_AFTER_MS ? 'sleep' : 'sit'
       slime.napTimer?.cancel()
       slime.napTimer = mode === 'sit' ? $.clock.after(NAP_AFTER_MS - idleMs, () => $.ui.invalidate('ui.render')) : undefined
-      const scene = sceneSvg(width, hud, { mode, x: slime.walk?.x ?? slime.x, dir: slime.walk?.dir ?? slime.dir, last }, LABEL_HEX)
       const gauge = layoutGauge(context, e.props.bodyColumns)
-      // The band's width in tube pixels.
-      const tubeWidth = Math.floor((e.props.bodyColumns * DESKTOP_COLUMN_PX) / TUBE_PX)
-      const size = sceneSize(width)
+      // The ground under the soil shows the mana, a step of its ripple each hop.
+      const ground = gauge === undefined ? undefined : { info: context, isWorking: slime.isWorking, frameMs: TUBE_FRAME_MS }
+      const scene = sceneSvg(width, hud, { mode, x: slime.walk?.x ?? slime.x, dir: slime.walk?.dir ?? slime.dir, last }, LABEL_HEX, ground)
+      const size = sceneSize(width, ground !== undefined)
       const facts = segments.map(s => `${s.icon} ${s.value} ${s.label}`).join(', ')
 
       return (
         <Box flexDirection="column">
-          <Svg key="track" source={scene} alt={`Slime ${MODE_ALT[mode]}. ${facts}`} width={size.width} height={size.height} isInteractive />
+          <Svg
+            key="track"
+            source={scene}
+            alt={`Slime ${MODE_ALT[mode]}. ${facts}${gauge === undefined ? '' : `. Mana ${gauge.fill}`}`}
+            width={size.width}
+            height={size.height}
+            isInteractive
+          />
           {gauge && (
-            <Box flexDirection="column" rowGap={1}>
-              <Svg
-                key="ctx-tube"
-                source={tubeSvg(context, tubeWidth, slime.isWorking, TUBE_PX, TUBE_FRAME_MS)}
-                alt={`Mana tube, ${gauge.fill}`}
-                width={tubeWidth * TUBE_PX}
-                height={TUBE_ROWS * 2 * TUBE_PX}
-                isInteractive
-              />
+            <Box flexDirection="column">
               <Box flexDirection="row" justifyContent="space-between" columnGap={2}>
                 <Box flexDirection="row" flexWrap="wrap" columnGap={2} flexShrink={1}>
                   {gauge.legend.map(item => (
@@ -533,8 +528,8 @@ export const register: Register = on => {
     }
     const trackWidth = e.props.bodyColumns
     const gauge = layoutGauge(context, trackWidth)
-    // The tube animates with the slime's ticker; its first frame is drawn here.
-    slime.mana = gauge === undefined ? undefined : { info: context, width: gauge.width, shown: tubeCells(context, gauge.width, slime.tick, slime.isWorking) }
+    // The ground animates with the slime's ticker, in step with its hops; its first frame is drawn here.
+    slime.mana = gauge === undefined ? undefined : context
     slime.isManaCritical = gauge !== undefined && manaLevel(context) === 'critical'
     let band = await bandFacts($, value)
     let hud = layoutHud(band.facts, trackWidth)
@@ -551,7 +546,8 @@ export const register: Register = on => {
     slime.requestId = e.requestId
     slime.ticker ??= $.clock.every(FRAME_MS, () => void paint($))
     const pose = slimePose(slime.isWorking, (await $.clock.now()) - slime.idleSince, slime.tick, slime.waitingFor !== undefined)
-    slime.shown = composeTrack(trackWidth, { x: slime.x, dir: slime.dir, pose, snore: 0 }, hud.pixels)
+    const ground = slime.mana === undefined ? undefined : groundPixels(slime.mana, trackWidth, slime.tick, slime.isWorking)
+    slime.shown = composeTrack(trackWidth, { x: slime.x, dir: slime.dir, pose, snore: 0 }, hud.pixels, ground)
 
     // Each label sits centred over its big number.
     let cursor = 0
@@ -571,8 +567,8 @@ export const register: Register = on => {
     return (
       <Box flexDirection="column">
         <Text wrap="truncate">{labelPieces}</Text>
-        <Raster key="track" columns={trackWidth} rows={TRACK_ROWS} cells={slime.shown} />
-        {gauge && renderGauge({ Box, Text, Raster }, gauge, slime.mana?.shown ?? '')}
+        <Raster key="track" columns={trackWidth} rows={trackRows()} cells={slime.shown} />
+        {gauge && renderGauge({ Box, Text }, gauge)}
         {engine}
       </Box>
     )

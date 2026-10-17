@@ -1,4 +1,5 @@
-// The context window as a crystal tube of mana under the slime's floor: each /context category a layer of
+// The context window as a crystal tube of mana set in the soil under the slime's grass, a cross-section of the
+// ground it hops on: each /context category a layer of
 // liquid in its own colour, the empty glass beyond, and a red rune where auto-compaction runs, the buffer past
 // it hatched off. The surface ripples, bubbles rise while Claude works, and the liquid flushes red near the rune.
 
@@ -130,42 +131,26 @@ export const tubePixels = (info: ContextInfo, width: number, tick: number, isWor
   return pixels
 }
 
-const UPPER_HALF = 0x2580
-const LOWER_HALF = 0x2584
-const SPACE = 0x20
-const DEFAULT_COLOR = 0x01000000
+// The soil the tube is set in, a few shades by position so it reads as earth.
+const SOIL = [0x8d5a2b, 0x8d5a2b, 0x6d4220, 0x8d5a2b, 0x7a4b24]
+export const soilAt = (x: number, y: number): number => SOIL[(x * 3 + y * 2) % SOIL.length]!
 
-// Pixels as Raster cells, two pixel rows per terminal row.
-export const pixelsToCells = (pixels: readonly (readonly (number | undefined)[])[]): string => {
-  const columns = pixels[0]?.length ?? 0
-  const rows = Math.ceil(pixels.length / 2)
-  const words = new Uint32Array(columns * rows * 3)
-  for (let row = 0; row < rows; row += 1) {
-    for (let col = 0; col < columns; col += 1) {
-      const at = (row * columns + col) * 3
-      const top = pixels[row * 2]?.[col]
-      const bottom = pixels[row * 2 + 1]?.[col]
-      if (top === undefined && bottom === undefined) words.set([SPACE, DEFAULT_COLOR, DEFAULT_COLOR], at)
-      else if (top === undefined) words.set([LOWER_HALF, bottom ?? DEFAULT_COLOR, DEFAULT_COLOR], at)
-      else words.set([UPPER_HALF, top, bottom ?? DEFAULT_COLOR], at)
-    }
-  }
-  const bytes = new Uint8Array(words.buffer)
-  let binary = ''
-  for (let at = 0; at < bytes.length; at += 0x8000) binary += String.fromCharCode(...bytes.subarray(at, at + 0x8000))
-  return btoa(binary)
+// The ground under the grass, `width` pixels across: the tube with a column of soil at either end, and soil
+// where its rounded corners leave the glass.
+export const groundPixels = (info: ContextInfo, width: number, tick: number, isWorking: boolean): number[][] => {
+  const tube = tubePixels(info, Math.max(0, width - 2), tick, isWorking)
+  return Array.from({ length: HEIGHT }, (_, y) =>
+    Array.from({ length: width }, (_, x) => (x === 0 || x === width - 1 ? undefined : tube[y]?.[x - 1]) ?? soilAt(x, y)),
+  )
 }
 
-export const tubeCells = (info: ContextInfo, width: number, tick: number, isWorking: boolean): string =>
-  pixelsToCells(tubePixels(info, width, tick, isWorking))
+// Frames of the ground for a surface that animates SVG itself: one step of the ripple each.
+export const GROUND_FRAMES = 4
 
-// Frames of the tube for a surface that animates SVG itself: one step of the ripple each.
-export const TUBE_FRAMES = 4
-
-// The tube as one SVG, its frames shown in turn by SMIL; `px` CSS pixels per tube pixel.
-export const tubeSvg = (info: ContextInfo, width: number, isWorking: boolean, px: number, frameMs: number): string => {
-  const frames = Array.from({ length: TUBE_FRAMES }, (_, frame) => tubePixels(info, width, frame * TUBE_TICKS, isWorking))
-  const rects = (pixels: (number | undefined)[][]) =>
+// The ground's frames as SVG shown in turn by SMIL, `top` CSS pixels down; `px` CSS pixels per pixel.
+export const groundSvg = (info: ContextInfo, width: number, isWorking: boolean, px: number, frameMs: number, top: number): string => {
+  const frames = Array.from({ length: GROUND_FRAMES }, (_, frame) => groundPixels(info, width, frame * TUBE_TICKS, isWorking))
+  const rects = (pixels: number[][]) =>
     pixels
       .map((row, y) => {
         let out = ''
@@ -174,16 +159,16 @@ export const tubeSvg = (info: ContextInfo, width: number, isWorking: boolean, px
           const color = row[x]
           let end = x + 1
           while (end < row.length && row[end] === color) end += 1
-          if (color !== undefined) out += `<rect x="${x * px}" y="${y * px}" width="${(end - x) * px}" height="${px}" fill="${hexOf(color)}"/>`
+          out += `<rect x="${x * px}" y="${top + y * px}" width="${(end - x) * px}" height="${px}" fill="${hexOf(color ?? 0)}"/>`
           x = end
         }
         return out
       })
       .join('')
-  const cycle = TUBE_FRAMES * frameMs
-  const body = frames
+  const cycle = GROUND_FRAMES * frameMs
+  return frames
     .map((frame, at) => {
-      const values = Array.from({ length: TUBE_FRAMES }, (_, n) => (n === at ? 'visible' : 'hidden')).join(';')
+      const values = Array.from({ length: GROUND_FRAMES }, (_, n) => (n === at ? 'visible' : 'hidden')).join(';')
       return (
         `<g visibility="${at === 0 ? 'visible' : 'hidden'}">` +
         `<animate attributeName="visibility" values="${values}" calcMode="discrete" dur="${cycle}ms" repeatCount="indefinite"/>` +
@@ -191,7 +176,4 @@ export const tubeSvg = (info: ContextInfo, width: number, isWorking: boolean, px
       )
     })
     .join('')
-  const w = width * px
-  const h = HEIGHT * px
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" shape-rendering="crispEdges">${body}</svg>`
 }
