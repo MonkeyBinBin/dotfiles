@@ -7,6 +7,7 @@ import { bossFor, bossesFor, countFailures, failedGuard, fightBoss, fightText, r
 import { GIT_STATUS, diffArgv, isLinear, parseBag, parseLog, parseLogLine, parseStatus, parseWorktrees, shortAge } from './git'
 import { layoutLanes, laneText } from './lanes'
 import { campsOn, exploredRegions } from './map'
+import { BOSS_COLUMNS, BOSS_ROWS, FX_MS, bossFrames } from './encounter'
 import { OVERWORLD_ROWS, drawOverworld, mainRoad, regionName } from './overworld'
 import { parseDiff, rarityOf, splitBar } from './diff'
 import { countPatch, patchSource } from './edit-card'
@@ -290,6 +291,59 @@ test('the boss stands in the status panel', async ($, on) => {
   await $.tool.call({ tool: 'Bash', command: 'npx tsc --noEmit' })
   const ui = await mountPane($, 'terminal')
   expect((await texts(ui)).join('|')).toContain('☠ Type Wraith ')
+})
+
+for (const surface of ['terminal', 'desktop'] as const) {
+  test(`a boss is met on an encounter card, takes hits and crumbles when slain on ${surface}`, async ($, on) => {
+    let output = 'Tests: 3 failed, 9 passed'
+    const { clock } = world(on, { tool: e => (e.tool === 'Bash' ? (output === '' ? { result: { text: 'all green' } } : fail(output)) : undefined) })
+    await $.tool.call({ tool: 'Bash', command: 'pnpm test' })
+    const ui = await mountPane($, surface, 40)
+    let shown = (await texts(ui)).join('|')
+    expect(shown).toContain('! A wild Bug Hydra appears!')
+    expect(shown).toContain('ENCOUNTER')
+    if (surface === 'terminal') expect((await ui.findAll({ type: 'Raster' })).some(r => r.props?.columns === BOSS_COLUMNS)).toBe(true)
+    else expect((await ui.findAll({ type: 'Svg' })).map(svg => String(svg.props?.alt))).toContain('Bug Hydra')
+
+    await clock.advance(FX_MS.appear + 10)
+    output = '1 failed'
+    await $.tool.call({ tool: 'Bash', command: 'pnpm test' })
+    shown = (await texts(ui)).join('|')
+    expect(shown).toContain('💥 CRITICAL! -2 HP')
+    expect(shown).toContain(' 1/3')
+
+    await clock.advance(FX_MS.hit + 10)
+    output = ''
+    await $.tool.call({ tool: 'Bash', command: 'pnpm test' })
+    shown = (await texts(ui)).join('|')
+    expect(shown).toContain('✦ Bug Hydra is defeated! ✦')
+    await clock.advance(FX_MS.defeat + 10)
+    expect((await texts(ui)).join('|')).not.toContain('Bug Hydra')
+  })
+}
+
+test('a short pane keeps the window and leaves the encounter card out', async ($, on) => {
+  world(on, { tool: failBash('2 failed') })
+  await $.tool.call({ tool: 'Bash', command: 'pnpm test' })
+  const ui = await mountPane($, 'terminal', 20)
+  const shown = (await texts(ui)).join('|')
+  expect(shown).toContain('☠ Bug Hydra ')
+  expect(shown).not.toContain('ENCOUNTER')
+})
+
+test('each monster bobs while it stands, flashes when hit and crumbles to nothing', () => {
+  for (const kind of ['test', 'lint', 'types', 'e2e', 'unknown']) {
+    const idle = bossFrames(kind, undefined)
+    expect(idle.loop).toBe(true)
+    expect(idle.grids).toHaveLength(2)
+    for (const grid of idle.grids) {
+      expect(grid.art).toHaveLength(BOSS_ROWS * 2)
+      for (const line of grid.art) expect(line).toHaveLength(BOSS_COLUMNS)
+    }
+    expect(bossFrames(kind, 'hit').loop).toBe(false)
+    const crumbled = bossFrames(kind, 'defeat').grids.at(-1)
+    expect(crumbled?.art.join('')).toMatch(/^\.+$/)
+  }
 })
 
 test('a summoned subagent joins the party and reports back', async ($, on) => {
@@ -2252,3 +2306,4 @@ test('on desktop a questing pet hops as a drawing', async ($, on) => {
   expect(pet?.props.isInteractive).toBe(true)
   expect(String(pet?.props.source)).toContain('<animate ')
 })
+

@@ -52,6 +52,8 @@ export const anim = {
   shownPng: '',
   // Running pets on screen, by Raster key, with the seed that picks their sprite.
   pets: new Map<string, { seed: string; shown: string }>(),
+  // The encounter card's monster while on screen: the frames of the moment it plays, from the tick it began.
+  boss: undefined as { key: string; frames: string[]; ticks: number; loop: boolean; start: number; shown: string } | undefined,
   // The map tab's overworld while on screen: its frames as Raster cells and the one shown.
   overworld: undefined as { frames: string[]; columns: number; rows: number; shown: string } | undefined,
 }

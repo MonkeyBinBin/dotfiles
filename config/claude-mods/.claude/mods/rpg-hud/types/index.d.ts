@@ -66,6 +66,10 @@ export type Combo = { current: number; best: number }
 // A failing test or lint run; cleared once the same kind of command passes.
 export type Boss = { name: string; kind: string; hp: number; maxHp: number; command: string }
 
+// The latest moment of a boss fight, which the encounter card plays for a while: the boss as it then stood
+// (the one slain, for a defeat) and the HP a hit took.
+export type BossFx = { event: 'appear' | 'hit' | 'defeat'; at: number; damage: number; boss: Boss }
+
 export type GitMap = {
   isRepo: boolean
   branch: string
@@ -151,6 +155,7 @@ declare module 'claude-code' {
       vitals: Vitals
       combo: Combo
       boss: Boss | null
+      bossFx: BossFx | null
       map: GitMap
       touched: TouchedFile[]
       bag: BagItem[]

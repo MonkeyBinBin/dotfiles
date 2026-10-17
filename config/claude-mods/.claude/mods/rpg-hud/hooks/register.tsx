@@ -4,6 +4,7 @@ import type { ElementTable, EngineInterface, Register, RenderChildren, Timer } f
 import type {
   BagItem,
   Boss,
+  BossFx,
   Combo,
   Gear,
   GitMap,
@@ -28,6 +29,7 @@ import { HERO_CLASS_FRAMES } from './hero-cells'
 import type { HeroClassId } from './hero-cells'
 import { cellsToPixels, gridToPixels, spriteSvg } from './svg'
 import { fightBoss, fightText, runsGit } from './boss'
+import { BOSS_COLUMNS, BOSS_ROWS, ENCOUNTER_MIN_COLUMNS, ENCOUNTER_ROWS, FX_MS, bossCells, liveFx, renderEncounter, shownBoss } from './encounter'
 import type { BagProps, BagRow } from './bag-client'
 import { GIT_LOG, GIT_NUMSTAT, GIT_REMOTES, GIT_STATUS, GIT_WORKTREES, diffArgv, outpostArgv, parseBag, parseStatus, parseWorktrees, shortAge } from './git'
 import type { OutpostRow, OutpostsProps } from './outposts-client'
@@ -68,6 +70,7 @@ const stopArmed = atom({ plugin: 'rpg-hud', key: 'stopArmed' } as const, null as
 const vitals = atom({ plugin: 'rpg-hud', key: 'vitals' } as const, {} as Vitals)
 const combo = atom({ plugin: 'rpg-hud', key: 'combo' } as const, { current: 0, best: 0 } as Combo)
 const boss = atom({ plugin: 'rpg-hud', key: 'boss' } as const, null as Boss | null)
+const bossFx = atom({ plugin: 'rpg-hud', key: 'bossFx' } as const, null as BossFx | null)
 const map = atom({ plugin: 'rpg-hud', key: 'map' } as const, {
   isRepo: false,
   branch: '',
@@ -113,6 +116,7 @@ async function resetSession($: EngineInterface) {
     update($, flashUntil, () => 0),
     update($, combo, () => ({ current: 0, best: 0 })),
     update($, boss, () => null),
+    update($, bossFx, () => null),
     update($, touched, () => []),
     update($, skillCasts, () => ({})),
     update($, tally, () => EMPTY_TALLY),
@@ -695,6 +699,17 @@ async function paintOverworld($: EngineInterface) {
   else anim.overworld = undefined
 }
 
+// The encounter's monster: its moment's frames from the tick the moment began, the last held once it ends.
+async function paintBoss($: EngineInterface) {
+  const monster = anim.boss
+  if (monster === undefined) return
+  const step = Math.floor((anim.tick - monster.start) / monster.ticks)
+  const cells = monster.frames[monster.loop ? step % monster.frames.length : Math.min(step, monster.frames.length - 1)] ?? monster.shown
+  if (cells === monster.shown) return
+  if (await blit($, 'boss', cells, BOSS_COLUMNS, BOSS_ROWS)) monster.shown = cells
+  else anim.boss = undefined
+}
+
 async function paint($: EngineInterface) {
   anim.tick += 1
   const hasPets = anim.tab === 'pets' && anim.pets.size > 0
@@ -703,7 +718,8 @@ async function paint($: EngineInterface) {
   if (anim.hasHero && !(await paintHero($))) return stop()
   if (hasPets) await paintPets($)
   if (hasMap) await paintOverworld($)
-  if (!anim.hasHero && !hasPets && !hasMap) stop()
+  if (anim.boss !== undefined) await paintBoss($)
+  if (!anim.hasHero && !hasPets && !hasMap && anim.boss === undefined) stop()
 }
 
 // Each draw of an animated tab starts the clock again if a refusal stopped it.
@@ -1276,8 +1292,17 @@ export const register: Register = on => {
     }
     if (e.tool === 'Bash' && !isRefused) {
       const command = e.command
-      const fight = fightBoss(await read($, boss), command, isError, ran.text ?? '')
+      const before = await read($, boss)
+      const fight = fightBoss(before, command, isError, ran.text ?? '')
       await update($, boss, () => fight.boss)
+      const fought = fight.event === 'defeat' ? before : fight.boss
+      if (fight.event !== undefined && fought !== null) {
+        const at = await $.clock.now()
+        const damage = fight.event === 'hit' && before !== null && fight.boss !== null ? before.hp - fight.boss.hp : 0
+        await update($, bossFx, (): BossFx => ({ event: fight.event!, at, damage, boss: fought }))
+        // The card plays the moment, then settles (or, the boss slain, goes).
+        $.clock.after(FX_MS[fight.event], () => $.ui.invalidate('ui.render'))
+      }
       if (fight.event === 'appear' && fight.boss !== null) {
         $.ui.toast(`☠ ${fight.boss.name} appears! HP ${fight.boss.hp}`)
       }
@@ -1519,11 +1544,37 @@ export const register: Register = on => {
     const sectionGap = isTerminal ? 0 : SECTION_GAP
     const cardGap = isTerminal ? 0 : CARD_GAP
     const card = cardWidth(width - cardGap * (MENU.length - 1), MENU.length, isTerminal ? ICON_COLUMNS : DRAWN_ICON_COLUMNS)
-    const roomRows = e.props.scroll.bodyRows - STATUS_ROWS - WINDOW_CHROME_ROWS - sectionGap * 2
+    // The encounter card takes its rows from the window, when the window keeps enough of its own.
+    const fightFx = liveFx(await read($, bossFx), now)
+    const foe = shownBoss(bossNow, fightFx)
+    const freeRows = e.props.scroll.bodyRows - STATUS_ROWS - WINDOW_CHROME_ROWS - sectionGap * 2
+    const hasEncounter = foe !== undefined && width >= ENCOUNTER_MIN_COLUMNS && freeRows - ENCOUNTER_ROWS - sectionGap - 1 >= MIN_WINDOW_ROWS
+    const roomRows = freeRows - (hasEncounter ? ENCOUNTER_ROWS + sectionGap : 0)
     const slotRows = isTerminal ? SLOT_ROWS : DRAWN_SLOT_ROWS
     const isIconMenu = card >= (isTerminal ? MIN_SLOT_COLUMNS : DRAWN_MIN_SLOT_COLUMNS) && roomRows - slotRows >= MIN_WINDOW_ROWS
     const menuRows = isIconMenu ? slotRows : 1
     const rows = Math.max(MIN_WINDOW_ROWS, roomRows - menuRows)
+
+    // The monster's frames start over with each new moment of the fight; only a card on screen animates.
+    let encounter: RenderChildren = null
+    if (hasEncounter && foe !== undefined) {
+      if (Raster !== undefined) {
+        const key = `${foe.kind}:${fightFx?.event ?? 'idle'}:${fightFx?.at ?? 0}`
+        if (anim.boss?.key !== key) {
+          const played = bossCells(foe.kind, fightFx?.event)
+          anim.boss = { key, ...played, start: anim.tick, shown: played.frames[0] ?? '' }
+        }
+      }
+      encounter = renderEncounter(ui, {
+        boss: foe,
+        ...(fightFx === undefined ? {} : { fx: fightFx }),
+        width,
+        ...(Raster === undefined ? {} : { Raster, cells: anim.boss?.shown ?? '' }),
+        ...(bossNow === null ? {} : { onFight: () => fillPrompt($, fightText(bossNow), `Ask Claude: ${fightText(bossNow)}`) }),
+      })
+    } else {
+      anim.boss = undefined
+    }
 
     // Each slot's label is a button carrying its number as a hotkey, so once the pane has the keys (a click,
     // ctrl+x tab) the number picks the tab; Tab and Enter reach it as well.
@@ -1649,11 +1700,12 @@ export const register: Register = on => {
     }
     // Only an overworld the window shows (the map itself, not its bag) can take a blit.
     if (windowKey !== 'map' || !pageItems(items, offset, rows).shown.some(item => item.key === 'overworld')) anim.overworld = undefined
-    if (anim.hasHero || (active === 'pets' && anim.pets.size > 0) || anim.overworld !== undefined) startAnim($)
+    if (anim.hasHero || (active === 'pets' && anim.pets.size > 0) || anim.overworld !== undefined || anim.boss !== undefined) startAnim($)
 
     return (
       <Box flexDirection="column" width={width} rowGap={sectionGap}>
         {status}
+        {encounter}
         {menu}
         {renderWindow(ui, {
           title: page.title ?? entry.title,
