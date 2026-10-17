@@ -1828,8 +1828,9 @@ export const register: Register = on => {
     // Client's click and hover: the name under it is a button.
     // Elsewhere a tab bar of the surface's own: the selected tab on a backdrop of its colour's deep shade, its icon
     // in colour and a bar of its colour under it, right on the window's frame of that colour; the others bare, their
-    // icons grey and names dim, the name lit in the tab's colour while hovered. The drawn icon takes no click: the
-    // name is the button. Too narrow or short for icons, one row of the buttons alone.
+    // icons grey and names dim, the name lit in the tab's colour while hovered. The drawn icon takes no click, so a
+    // Client over the whole tab does, and the name is plain text as the terminal's is, no button chrome; a surface
+    // without the Client keeps the name a button. Too narrow or short for icons, one row of the buttons alone.
     let menu
     // The selected tab's span along the window's top, for the window to leave open.
     let openTab: { left: number; width: number } | undefined
@@ -1906,6 +1907,11 @@ export const register: Register = on => {
         </Box>
       )
     } else if (isIconMenu) {
+      // A Client laid over each tab takes a click anywhere on it, the drawing and the name alike, and the number
+      // and arrow keys once it has them. The bar lies along the tab's foot, out of the flow, so the icon and the
+      // name centre in the whole tab.
+      const Client = (ui as ElementTable<'desktop'>).Client as ElementTable<'desktop'>['Client'] | undefined
+      const ids = MENU.map(slot => slot.id)
       menu = (
         <Box flexDirection="row" width={width} height={menuRows} justifyContent="space-between" columnGap={cardGap}>
           {MENU.map((slot, index) => {
@@ -1917,24 +1923,57 @@ export const register: Register = on => {
                 key={`card-${slot.id}`}
                 flexDirection="column"
                 alignItems="center"
-                justifyContent="flex-end"
+                justifyContent="center"
                 width={card}
                 height={menuRows}
                 {...(isActive ? { backgroundColor: tintOf(slot.color, 0.22) } : {})}
               >
                 {Svg && (
-                  <Box key={`icon-${slot.id}`} height={DRAWN_ICON_ROWS} alignItems="center" justifyContent="center">
+                  <Box key={`art-${slot.id}`} height={DRAWN_ICON_ROWS} alignItems="center" justifyContent="center">
                     <Svg source={icon.source} alt={slot.label} width={icon.width} height={icon.height} />
                   </Box>
                 )}
                 <Box flexDirection="row" width={card} height={1} justifyContent="center">
-                  {labelButton(slot, index)}
+                  {Client ? (
+                    <Text
+                      key={`menu-label-${slot.id}`}
+                      bold={isActive}
+                      {...(isActive ? { color: slot.color } : { dimColor: true, hover: { scope: `card-${slot.id}`, color: slot.color, dimColor: false } })}
+                    >
+                      {slot.label.toUpperCase()}
+                    </Text>
+                  ) : (
+                    labelButton(slot, index)
+                  )}
                 </Box>
-                <Box key={`line-${slot.id}`} width={card} height={1} alignItems="flex-end">
+                <Box key={`line-${slot.id}`} position="absolute" bottom={0} left={0} width={card} height={1} alignItems="flex-end">
                   {isActive && Svg && (
                     <Svg source={tabLineSvg(card, slot.color)} alt={`${slot.label} selected`} width={card * COLUMN_PX} height={TAB_LINE_HEIGHT} />
                   )}
                 </Box>
+                {Client && (
+                  <Box key={`hit-${slot.id}`} position="absolute" top={0} left={0} width={card} height={menuRows}>
+                    <Client
+                      key={`icon-${slot.id}`}
+                      module="./menu-client.tsx"
+                      props={{
+                        id: slot.id,
+                        ids,
+                        active,
+                        isHelpOpen: helpOpen,
+                        icon: [],
+                        dimIcon: [],
+                        label: slot.label,
+                        color: slot.color,
+                        width: card,
+                        scope: `card-${slot.id}`,
+                        overlay: { height: menuRows },
+                      } satisfies MenuIconProps}
+                      width={card}
+                      height={menuRows}
+                    />
+                  </Box>
+                )}
               </Box>
             )
           })}

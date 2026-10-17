@@ -111,9 +111,11 @@ const world = (on: On, options: World = {}) => {
 
 const failBash = (text: string): World['tool'] => e => (e.tool === 'Bash' ? fail(text) : undefined)
 
-// A click on the tab on the terminal, a button press elsewhere.
-const showTab = async ($: Engine, ui: Awaited<ReturnType<typeof mountPane>>, key: string, surface: Surface = 'terminal') => {
-  if (surface !== 'terminal') return void (await ui.press({ key: `menu-${key}` }))
+// A click on the tab, on the terminal and on desktop alike: a Client takes it either way; a menu folded into one
+// line of buttons, a press.
+const showTab = async (_$: Engine, ui: Awaited<ReturnType<typeof mountPane>>, key: string, _surface: Surface = 'terminal') => {
+  const hasTab = (await ui.findAll({ type: 'Client' })).some(c => c.props?.key === `icon-${key}`)
+  if (!hasTab) return void (await ui.press({ key: `menu-${key}` }))
   await ui.pointer({ type: 'down', x: 4, y: 1, button: 'left', in: `icon-${key}` })
   await ui.pointer({ type: 'up', x: 4, y: 1, button: 'left', in: `icon-${key}` })
 }
@@ -2075,12 +2077,20 @@ test('the number keys pick a tab and ? toggles the help page', async ($, on) => 
   expect((await texts(ui)).join('|')).not.toContain('❓ HELP')
 })
 
-test('desktop menu buttons show no number key', async ($, on) => {
+test('desktop tab names are plain text, the selected one in its colour, as on the terminal', async ($, on) => {
   world(on)
   const ui = await mountPane($, 'desktop')
-  const buttons = (await ui.findAll({ type: 'Button' })).filter(b => String(b.props?.key ?? '').startsWith('menu-'))
-  // A hotkey would show as a badge on the button, squeezing the name out.
-  expect(buttons.map(b => b.props?.hotkey)).toEqual([undefined, undefined, undefined, undefined, undefined])
+  expect((await ui.findAll({ type: 'Button' })).some(b => String(b.props?.key ?? '').startsWith('menu-'))).toBe(false)
+  const names = ['SPELL', 'PARTY', 'MAP', 'SKILL', 'JOBS']
+  const labels = (await ui.findAll({ type: 'Text' })).filter(t => names.includes(String(t.text)))
+  expect(labels.map(t => [t.text, t.props?.color, t.props?.bold])).toEqual([
+    ['SPELL', 'magenta', true],
+    ['PARTY', undefined, false],
+    ['MAP', undefined, false],
+    ['SKILL', undefined, false],
+    ['JOBS', undefined, false],
+  ])
+  expect(labels.slice(1).every(t => t.props?.dimColor === true)).toBe(true)
 })
 
 for (const [surface, gap] of [['terminal', 0], ['desktop', 1]] as const) {
@@ -2687,4 +2697,26 @@ test('a scroll steps a whole item at a time, however tall', () => {
   expect(scrolledOffset(0, 2, 25, 10, stops)).toBe(9)
   // Without stops, a row a step.
   expect(scrolledOffset(3, 1, 25, 10)).toBe(4)
+})
+
+test('on desktop a click anywhere on a tab picks it, its drawing too, and then the keys switch tabs', async ($, on) => {
+  world(on)
+  const ui = await mountPane($, 'desktop')
+  // On the drawn icon, over the name, then on the bar's row: a Client laid over the whole tab takes them all.
+  for (const [x, y, tab, title] of [
+    [5, 0, 'map', '🧭 WORLD MAP'],
+    [5, 2, 'jobs', '⚙ JOBS'],
+    [2, 3, 'pets', '🐾 PARTY'],
+  ] as const) {
+    await ui.pointer({ type: 'down', x, y, button: 'left', in: `icon-${tab}` })
+    await ui.pointer({ type: 'up', x, y, button: 'left', in: `icon-${tab}` })
+    expect((await texts(ui)).join('|')).toContain(title)
+  }
+  // The click left that tab the keys: a number and the arrows switch.
+  await ui.key({ key: '4', in: 'icon-pets' })
+  expect((await texts(ui)).join('|')).toContain('📜 SKILLS')
+  await ui.key({ key: 'left', in: 'icon-pets' })
+  expect((await texts(ui)).join('|')).toContain('🧭 WORLD MAP')
+  // The overlay draws nothing of its own: the drawn icons still show.
+  expect((await ui.findAll({ type: 'Svg' })).some(svg => svg.props.alt === 'Map')).toBe(true)
 })

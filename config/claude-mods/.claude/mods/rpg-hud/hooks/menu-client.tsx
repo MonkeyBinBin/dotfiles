@@ -22,6 +22,9 @@ export type MenuIconProps = {
   // The card's hover group: the frame, the label and these pixels light together while the pointer is anywhere
   // on the card, the surface's own hover, so nothing stays lit when the pointer leaves.
   scope: string
+  // Off the terminal, where a Client holds no drawing, it is laid over the tab's drawn icon and name instead: it
+  // draws nothing, `height` rows tall, and only takes the clicks and keys anywhere on the tab.
+  overlay?: { height: number }
 }
 
 type IconState = {
@@ -76,6 +79,10 @@ const MenuIcon: ClientModule<MenuIconProps, IconState> = (props, surface) => {
     if (e.key === 'right') pick(props.ids[(activeIndex + 1) % count])
     if (e.key === 'left') pick(props.ids[(activeIndex + count - 1) % count])
   })
+
+  if (props.overlay !== undefined) {
+    return <Box width={props.width} height={props.overlay.height} hover={{ scope: props.scope }} />
+  }
 
   // The pixels centred in the frame: bright on the selected tab; dim on the others, bright while their tab
   // is hovered. The name under them likewise.

@@ -16,7 +16,7 @@ export const HELP_COMMANDS: readonly { usage: string; what: string }[] = [
 
 // What the HUD does on a click or the wheel, which no command says.
 export const HELP_TIPS: readonly string[] = [
-  'Click a tab to open it; on the terminal 1–5 or ← → then switch tabs. ctrl+x tab, then Tab and Enter reach every button',
+  'Click a tab; then 1–5 or ← → switch tabs. ctrl+x tab, then Tab and Enter reach every button',
   '⚔ fix on a boss fills the prompt with its fix',
   '✗ and ◷ in the spell book keep the fizzled or slow casts',
   'A skill card on the skill tab fills the prompt with its /name',
