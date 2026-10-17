@@ -29,7 +29,7 @@ import { FRAME_MS, FRAME_TICKS, HERO_CELLS, HURT_MS, OVERWORLD_TICKS, PET_TICKS,
 import type { Mood } from './anim'
 import { HERO_CLASS_FRAMES } from './hero-cells'
 import type { HeroClassId } from './hero-cells'
-import { cellsToPixels, gridToPixels, spriteSvg } from './svg'
+import { COLUMN_PX, TAB_LINE_HEIGHT, cellsToPixels, gridToPixels, spriteSvg, tabLineSvg, tintOf } from './svg'
 import { fightBoss, fightText, gitEventOf, isEnraged, runsGit } from './boss'
 import { ASSIST_MS, BOSS_ROWS, FX_MS, MAX_ALLIES, bossCells, liveFx, shownBoss } from './encounter'
 import type { BagProps, BagRow } from './bag-client'
@@ -60,7 +60,7 @@ import { AURA_COLUMNS, auraFrames, auraTier } from './aura'
 import { REST_MS } from './rest'
 import { EMPTY_LOOT, KEPT_CLAIMED, KEPT_UNCLAIMED, claimLoot, forge, lootText } from './loot'
 import type { Loot, TurnLoot } from './loot'
-import { WINDOW_CHROME_COLUMNS, WINDOW_CHROME_ROWS, clampOffset, pageItems, renderWindow, totalRows } from './window'
+import { WINDOW_CHROME_COLUMNS, WINDOW_CHROME_ROWS, clampOffset, frameSide, itemStops, pageItems, renderWindow, scrolledOffset, totalRows } from './window'
 import type { Item } from './window'
 
 const calls = atom({ plugin: 'rpg-hud', key: 'calls' } as const, [] as ToolCall[])
@@ -187,20 +187,22 @@ const PROGRESS_KEY = 'progress'
 const CARDS_KEY = 'editCards'
 const CARD_TOOLS = new Set(['Edit', 'Write'])
 
-// A menu card: its frame's top and bottom, the pixel icon and the label button between.
-const SLOT_ROWS = 1 + ICON_ROWS + 1 + 1
-// CSS pixels per icon pixel on a drawn card: the 9×8 icon at 36×32, three rows tall.
+// A terminal menu tab: the selected one's frame top, then the pixel icon and the name under it. Its frame's
+// bottom is the window's top, open under the tab.
+const TAB_ROWS = 1 + ICON_ROWS + 1
+// CSS pixels per icon pixel on a drawn tab: the 9×8 icon at 36×32, about two rows tall.
 const DRAWN_ICON_PX = 4
-const DRAWN_ICON_ROWS = 3
-// Off the terminal a card is compact: its frame, the drawn icon and the label.
-const DRAWN_SLOT_ROWS = 1 + DRAWN_ICON_ROWS + 1 + 1
+const DRAWN_ICON_ROWS = 2
+// Off the terminal a tab is its drawn icon, its name, and the selected one's bar under it.
+const DRAWN_SLOT_ROWS = DRAWN_ICON_ROWS + 1 + 1
+
 // The narrowest card that holds the 9-column icon, and the longest label, inside its frame. From 65 columns the
 // cards widen to 13 and leave the icon a column either side; narrower, it fills its frame edge to edge.
 const MIN_SLOT_COLUMNS = 11
 // The columns a menu icon's picture spans: the 24×18 art at four rows tall keeps about its 4:3 at eleven.
 const PICTURE_COLUMNS = 11
-// Off the terminal the card holds the 36×32 drawing, under five columns, and a five-letter label button: a
-// card of eight columns does, so a side panel some 44 columns wide still shows the icon menu.
+// Off the terminal the tab holds the 36×32 drawing, under five columns, and a five-letter label button: a
+// tab of eight columns does, so a side panel some 44 columns wide still shows the tab bar.
 const DRAWN_ICON_COLUMNS = 5
 const DRAWN_MIN_SLOT_COLUMNS = 8
 // The window keeps at least this many rows before the menu shrinks to one line.
@@ -669,7 +671,9 @@ const menuIconPngs = async ($: EngineInterface): Promise<Map<Tab, [lit: string, 
   if (menuIcons === undefined) {
     const read = async (id: Tab, suffix: string) =>
       (await $.fs.read(`${$.plugin.root}/assets/icons/${id}${suffix}.png`, { as: 'bytes' })).base64
-    menuIcons = await Promise.all(MENU.map(async slot => [slot.id, [await read(slot.id, ''), await read(slot.id, '-dim')]] as const))
+    menuIcons = await Promise.all(
+      MENU.map(async (slot): Promise<[Tab, [string, string]]> => [slot.id, [await read(slot.id, ''), await read(slot.id, '-dim')]]),
+    )
       .then(entries => new Map<Tab, [string, string]>(entries))
       .catch(() => null)
   }
@@ -833,8 +837,8 @@ type PageContext = {
   inner: number
   now: number
   Raster: ElementTable<'terminal'>['Raster'] | undefined
-  // The terminal's Client, for what a page draws as one clickable region; absent elsewhere.
-  Client: ElementTable<'terminal'>['Client'] | undefined
+  // Whether the page draws on the terminal, where a button can hold a row's columns.
+  isTerminal: boolean
   callList: ToolCall[]
   petList: Pet[]
   progress: Progress
@@ -1032,20 +1036,18 @@ const fillPrompt = ($: EngineInterface, text: string, fallback: string) =>
 // Fills the prompt with a skill's command, or says how to cast it when the prompt cannot take it.
 const castFromPage = ($: EngineInterface, name: string) => fillPrompt($, castText(name), `Type /${name} to cast it`)
 
-const skillsPage = async ($: EngineInterface, { ui, inner, now, progress: progressNow, Client }: PageContext): Promise<Page> => {
+const skillsPage = async ($: EngineInterface, { ui, inner, now, progress: progressNow, isTerminal }: PageContext): Promise<Page> => {
   const gear = await read($, loadout)
   const rows = skillRows({
     loadout: gear,
     progress: progressNow,
     casts: await read($, skillCasts),
     now,
-    width: inner,
     isSealedOpen: await read($, isSealedOpen),
-    isPicture: Client !== undefined,
   })
   return {
     subtitle: skillsSubtitle(gear, progressNow),
-    items: skillItems(ui, rows, inner, Client, name => castFromPage($, name), () => void update($, isSealedOpen, open => !open)),
+    items: skillItems(ui, rows, inner, isTerminal, name => castFromPage($, name), () => void update($, isSealedOpen, open => !open)),
   }
 }
 
@@ -1111,15 +1113,15 @@ async function recap($: EngineInterface) {
 
 // Moves a window `by` rows within its items: `view` is the window as last drawn, its key, rows in all and room.
 // A window that shows all it has is left alone, so a scroll key there writes nothing.
-const scrollWindow = async ($: EngineInterface, view: { key: string; total: number; rows: number }, by: number) => {
+const scrollWindow = async ($: EngineInterface, view: { key: string; total: number; rows: number; stops?: number[] }, by: number) => {
   if (view.total <= view.rows) return
-  await update($, offsets, all => ({ ...all, [view.key]: clampOffset((all[view.key] ?? 0) + by, view.total, view.rows) }))
+  await update($, offsets, all => ({ ...all, [view.key]: scrolledOffset(all[view.key] ?? 0, by, view.total, view.rows, view.stops) }))
 }
 
 export const register: Register = on => {
   // The last drawn log window; scrolling clamps against it.
   // `key` names the window being scrolled: a tab, or `map:bag` / `map:diff` inside the map tab.
-  let layout = { rows: 1, total: 0, key: 'spells' }
+  let layout: { rows: number; total: number; key: string; stops?: number[] } = { rows: 1, total: 0, key: 'spells' }
   // Agent calls asked to run in a worktree of their own, by tool_use_id, until their spawn.
   const isolated = new Set<string>()
   // The skill a typed slash command just cast, until the prompt it may also submit: counted once, not twice.
@@ -1550,12 +1552,7 @@ export const register: Register = on => {
   on('ui.message', async ($, e, next) => {
     if (e.requestId !== PANE) return next(e)
     follow.isHeld = true
-    const data = (e.data ?? {}) as { select?: unknown; help?: unknown; scroll?: unknown; cast?: unknown }
-    // A click on a skill card, a Client keyed `skill-card:<name>`, casts it.
-    if (e.element?.startsWith('skill-card:') === true && typeof data.cast === 'string') {
-      castFromPage($, data.cast)
-      return {}
-    }
+    const data = (e.data ?? {}) as { select?: unknown; help?: unknown; scroll?: unknown }
     // Each card's icon Client is keyed `icon-<tab>`.
     const isMenu = e.element?.startsWith('icon-') === true
     if (isMenu && typeof data.scroll === 'number') {
@@ -1638,7 +1635,7 @@ export const register: Register = on => {
     const width = e.props.bodyColumns
     const now = await $.clock.now()
     const ui = $.ui.resolve(e)
-    const { Box, Button } = ui
+    const { Box, Button, Text } = ui
     const Raster = e.surface === 'terminal' ? $.ui.resolve(e).Raster : undefined
     const Svg = e.surface === 'terminal' ? undefined : $.ui.resolve(e).Svg
     anim.tab = active
@@ -1796,26 +1793,26 @@ export const register: Register = on => {
     const cardGap = isTerminal ? 0 : CARD_GAP
     const card = cardWidth(width - cardGap * (MENU.length - 1), MENU.length, isTerminal ? ICON_COLUMNS : DRAWN_ICON_COLUMNS)
     const roomRows = e.props.scroll.bodyRows - STATUS_ROWS - WINDOW_CHROME_ROWS - sectionGap * 2
-    const slotRows = isTerminal ? SLOT_ROWS : DRAWN_SLOT_ROWS
+    const slotRows = isTerminal ? TAB_ROWS : DRAWN_SLOT_ROWS
     const isIconMenu = card >= (isTerminal ? MIN_SLOT_COLUMNS : DRAWN_MIN_SLOT_COLUMNS) && roomRows - slotRows >= MIN_WINDOW_ROWS
     const menuRows = isIconMenu ? slotRows : 1
-    const rows = Math.max(MIN_WINDOW_ROWS, roomRows - menuRows)
+    // The tabs sit on the window with no gap between, so their gap is the window's.
+    const rows = Math.max(MIN_WINDOW_ROWS, roomRows - menuRows + (isIconMenu ? sectionGap : 0))
 
-    // Each slot's label is a button carrying its number as a hotkey, so once the pane has the keys (a click,
-    // ctrl+x tab) the number picks the tab; Tab and Enter reach it as well.
+    // No label shows a number key: a desktop's button would badge it. On the terminal the number keys are the tab
+    // Client's, once a click has given it the keys.
     const pickTab = (id: Tab) => {
       void update($, tab, () => id)
       void update($, isHelpOpen, () => false)
     }
-    // On the terminal plain buttons, which draw their hotkey before the label: `1: SPELL`; elsewhere the
-    // surface's own buttons, the active one primary in the one-line menu; on a card the frame marks it.
+    // On the terminal plain buttons, the name alone; elsewhere the surface's own buttons, the active one primary
+    // in the one-line menu; on a card the frame marks it.
     const labelButton = (slot: (typeof MENU)[number], index: number) => {
       const isActive = slot.id === active
       return (
         <Button
           key={`menu-${slot.id}`}
-          label={isTerminal ? slot.label.toUpperCase() : slot.label}
-          hotkey={slotKey(index)}
+          label={slot.label.toUpperCase()}
           {...(isTerminal ? { plain: true as const } : isIconMenu ? {} : { variant: isActive ? ('primary' as const) : ('secondary' as const) })}
           dimColor={!isActive}
           {...(isActive ? {} : { hover: { scope: `card-${slot.id}`, color: slot.color } })}
@@ -1824,73 +1821,119 @@ export const register: Register = on => {
       )
     }
 
-    // A card a slot: a rounded frame, the icon (a Client, so a click on it picks the tab) and the label button,
-    // centred in a row as wide as the card.
-    // The frame, the icon's pixels and the label share the card's hover group, the surface's own hover, so the
-    // whole card lights in the slot's colour at once and goes dark when the pointer leaves; the selected card's
-    // frame is bright gold. (Heavy lines have no rounded corners.) Too narrow or short for icons,
-    // and elsewhere, one row of the buttons alone.
+    // On the terminal the menu is a row of folder tabs over the window: each tab its icon over its name, drawn by a
+    // Client so a click anywhere on it picks the tab; the selected one framed in its colour, its frame open into
+    // the window below, whose top line the window draws around it; the others bare and dim, lit in their colour
+    // while hovered. A terminal found to draw pictures shows the icons' full pixel art instead, its price the
+    // Client's click and hover: the name under it is a button.
+    // Elsewhere a tab bar of the surface's own: the selected tab on a backdrop of its colour's deep shade, its icon
+    // in colour and a bar of its colour under it, right on the window's frame of that colour; the others bare, their
+    // icons grey and names dim, the name lit in the tab's colour while hovered. The drawn icon takes no click: the
+    // name is the button. Too narrow or short for icons, one row of the buttons alone.
     let menu
-    if (isIconMenu) {
-      const Client = e.surface === 'terminal' ? $.ui.resolve(e).Client : undefined
-      // A terminal found to draw pictures shows the icons' full pixel art; the price is the icon's own click
-      // and hover, which only a Client takes: the label button and the number keys still pick the tab.
-      const iconPngs = Client !== undefined && canDrawImage === true ? await menuIconPngs($) : undefined
+    // The selected tab's span along the window's top, for the window to leave open.
+    let openTab: { left: number; width: number } | undefined
+    if (isIconMenu && isTerminal) {
+      const Client = $.ui.resolve(e).Client
+      const iconPngs = canDrawImage === true ? await menuIconPngs($) : undefined
       const Image = iconPngs === undefined ? undefined : ($.ui.resolve(e) as ElementTable<'terminal'>).Image
       const ids = MENU.map(slot => slot.id)
-      // Inside the frame's two columns.
+      // Inside the selected tab's frame.
       const inside = Math.max(0, card - 2)
+      const faceRows = ICON_ROWS + 1
+      // The tabs spread from edge to edge, the spare columns shared between them.
+      const spare = Math.max(0, width - card * MENU.length)
+      const lefts = MENU.map((_, index) => index * card + Math.floor((spare * index) / Math.max(1, MENU.length - 1)))
+      const activeIndex = Math.max(0, MENU.findIndex(slot => slot.id === active))
+      openTab = { left: lefts[activeIndex]!, width: card }
+      const face = (slot: (typeof MENU)[number], index: number, isActive: boolean) => {
+        if (Image && iconPngs) {
+          return (
+            <Box key={`icon-box-${slot.id}`} flexDirection="column" width={inside} height={faceRows} alignItems="center">
+              <Image
+                key={`icon-${slot.id}`}
+                source={{ png: iconPngs.get(slot.id)![isActive ? 0 : 1] }}
+                columns={Math.min(PICTURE_COLUMNS, inside)}
+                rows={ICON_ROWS}
+                alt={slot.label}
+              />
+              {labelButton(slot, index)}
+            </Box>
+          )
+        }
+        const iconProps = {
+          id: slot.id,
+          ids,
+          active,
+          isHelpOpen: helpOpen,
+          icon: iconText(slot, true),
+          dimIcon: iconText(slot, false),
+          label: slot.label.toUpperCase(),
+          color: slot.color,
+          width: inside,
+          scope: `card-${slot.id}`,
+        } satisfies MenuIconProps
+        return <Client key={`icon-${slot.id}`} module="./menu-client.tsx" props={iconProps} width={inside} height={faceRows} />
+      }
+      const side = (slot: (typeof MENU)[number]) => frameSide(ui, slot.color, faceRows)
+      menu = (
+        <Box flexDirection="row" width={width} height={menuRows}>
+          {MENU.map((slot, index) => {
+            const isActive = slot.id === active
+            const gap = lefts[index]! - (index === 0 ? 0 : lefts[index - 1]! + card)
+            return (
+              <Box key={`card-${slot.id}`} flexDirection="column" width={card} height={menuRows} marginLeft={gap}>
+                {isActive ? (
+                  <>
+                    <Text color={slot.color}>{`╭${'─'.repeat(inside)}╮`}</Text>
+                    <Box flexDirection="row" height={faceRows}>
+                      {side(slot)}
+                      {face(slot, index, true)}
+                      {side(slot)}
+                    </Box>
+                  </>
+                ) : (
+                  <>
+                    <Box height={1} />
+                    <Box flexDirection="row" height={faceRows} paddingX={1}>
+                      {face(slot, index, false)}
+                    </Box>
+                  </>
+                )}
+              </Box>
+            )
+          })}
+        </Box>
+      )
+    } else if (isIconMenu) {
       menu = (
         <Box flexDirection="row" width={width} height={menuRows} justifyContent="space-between" columnGap={cardGap}>
           {MENU.map((slot, index) => {
             const isActive = slot.id === active
-            const iconProps = {
-              id: slot.id,
-              ids,
-              active,
-              isHelpOpen: helpOpen,
-              icon: iconText(slot, true),
-              dimIcon: iconText(slot, false),
-              width: inside,
-              scope: `card-${slot.id}`,
-            } satisfies MenuIconProps
+            const { art, palette } = drawnIcon(slot, isActive)
+            const icon = spriteSvg([gridToPixels(art, palette)], DRAWN_ICON_PX, 0)
             return (
               <Box
                 key={`card-${slot.id}`}
                 flexDirection="column"
                 alignItems="center"
+                justifyContent="flex-end"
                 width={card}
                 height={menuRows}
-                borderStyle="round"
-                borderColor={isActive ? (isTerminal ? 'yellow' : slot.color) : 'gray'}
-                borderDimColor={!isActive}
-                {...(isActive ? {} : { hover: { scope: `card-${slot.id}`, borderColor: slot.color, borderDimColor: false } })}
+                {...(isActive ? { backgroundColor: tintOf(slot.color, 0.22) } : {})}
               >
-                {Image && iconPngs ? (
-                  <Box key={`icon-box-${slot.id}`} width={inside} height={ICON_ROWS} justifyContent="center">
-                    <Image
-                      key={`icon-${slot.id}`}
-                      source={{ png: iconPngs.get(slot.id)![isActive ? 0 : 1] }}
-                      columns={Math.min(PICTURE_COLUMNS, inside)}
-                      rows={ICON_ROWS}
-                      alt={slot.label}
-                    />
+                {Svg && (
+                  <Box key={`icon-${slot.id}`} height={DRAWN_ICON_ROWS} alignItems="center" justifyContent="center">
+                    <Svg source={icon.source} alt={slot.label} width={icon.width} height={icon.height} />
                   </Box>
-                ) : Client ? (
-                  <Client key={`icon-${slot.id}`} module="./menu-client.tsx" props={iconProps} width={inside} height={ICON_ROWS} />
-                ) : (
-                  Svg && (
-                    <Box key={`icon-${slot.id}`} height={DRAWN_ICON_ROWS} alignItems="center" justifyContent="center">
-                      {(() => {
-                        const { art, palette } = drawnIcon(slot, isActive)
-                        const icon = spriteSvg([gridToPixels(art, palette)], DRAWN_ICON_PX, 0)
-                        return <Svg source={icon.source} alt={slot.label} width={icon.width} height={icon.height} />
-                      })()}
-                    </Box>
-                  )
                 )}
-                <Box flexDirection="row" width={inside} height={1} justifyContent="center">
+                <Box flexDirection="row" width={card} height={1} justifyContent="center">
                   {labelButton(slot, index)}
+                </Box>
+                <Box key={`line-${slot.id}`} width={card} height={1} alignItems="flex-end">
+                  {isActive && Svg && (
+                    <Svg source={tabLineSvg(card, slot.color)} alt={`${slot.label} selected`} width={card * COLUMN_PX} height={TAB_LINE_HEIGHT} />
+                  )}
                 </Box>
               </Box>
             )
@@ -1898,8 +1941,8 @@ export const register: Register = on => {
         </Box>
       )
     } else {
-      // The terminal's `1: SPELL` labels close up as the pane narrows, so the last ones stay on screen.
-      const labelColumns = MENU.reduce((sum, slot) => sum + slot.label.length + 3, 0)
+      // The terminal's labels close up as the pane narrows, so the last ones stay on screen.
+      const labelColumns = MENU.reduce((sum, slot) => sum + slot.label.length, 0)
       const labelGap = isTerminal ? Math.max(0, Math.min(2, Math.floor((width - labelColumns) / (MENU.length - 1)))) : 2
       menu = (
         <Box key="menu-labels" flexDirection="row" columnGap={labelGap} height={1} width={width}>
@@ -1913,9 +1956,10 @@ export const register: Register = on => {
     const tabKey = (active === 'map' && view.view !== 'map' ? `map:${view.view}` : active) as PageKey
     const windowKey: PageKey = helpOpen ? 'help' : tabKey
     const offset = (await read($, offsets))[windowKey] ?? 0
-    const page = await pageFor($, windowKey, { ui, view, inner, now, Raster, Client: e.surface === 'terminal' ? $.ui.resolve(e).Client : undefined, callList, petList, progress: progressNow, offset, rows })
+    const page = await pageFor($, windowKey, { ui, view, inner, now, Raster, isTerminal: e.surface === 'terminal', callList, petList, progress: progressNow, offset, rows })
     const items = page.items ?? []
-    layout = { rows, total: page.list?.rows.length ?? totalRows(items), key: windowKey }
+    // A list scrolls a row a step; items an item a step, where the stops between them are.
+    layout = { rows, total: page.list?.rows.length ?? totalRows(items), key: windowKey, ...(page.list === undefined ? { stops: itemStops(items) } : {}) }
     const body = page.list === undefined ? undefined : pickBody($, e, page.list, offset, rows, inner)
 
     if (active === 'pets') {
@@ -1941,11 +1985,13 @@ export const register: Register = on => {
       startAnim($)
     }
 
+    // The tabs sit right on the window, the selected one's frame meeting its frame.
     return (
       <Box flexDirection="column" width={width} rowGap={sectionGap}>
         {status}
-        {menu}
-        {renderWindow(ui, {
+        <Box flexDirection="column" width={width} rowGap={isIconMenu ? 0 : sectionGap}>
+          {menu}
+          {renderWindow(ui, {
           title: page.title ?? entry.title,
           subtitle: page.subtitle,
           color: entry.color,
@@ -1960,7 +2006,9 @@ export const register: Register = on => {
             down: () => void scrollWindow($, layout, 1),
           },
           ...(Svg === undefined ? {} : { Svg }),
-        })}
+          ...(openTab === undefined ? {} : { tab: openTab }),
+          })}
+        </Box>
       </Box>
     )
   })

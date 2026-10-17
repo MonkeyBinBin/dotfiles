@@ -1,12 +1,7 @@
 import type { ElementTable } from 'claude-code'
 
 import type { Loadout, Progress, SkillSlot } from '../types'
-import type { SkillCardProps } from './skill-card-client'
-import { ART_ROWS, cardArt } from './skill-icons'
-import type { ArtTier } from './skill-icons'
 import type { Item } from './window'
-
-type CardClient = ElementTable<'terminal'>['Client']
 
 // Uses to reach each mastery star.
 const MASTERY = [1, 3, 10] as const
@@ -17,11 +12,11 @@ export const masteryStars = (uses: number): string => MASTERY.map(at => (uses >=
 
 // Mastery tiers, highest first: a skill climbs as it is cast.
 export type Tier = 'master' | 'adept' | 'novice' | 'untried'
-const TIERS: readonly { tier: Tier; at: number; color: string; icon: string }[] = [
-  { tier: 'master', at: MASTERY[2], color: 'yellow', icon: '◆' },
-  { tier: 'adept', at: MASTERY[1], color: 'cyan', icon: '◈' },
-  { tier: 'novice', at: MASTERY[0], color: 'green', icon: '◇' },
-  { tier: 'untried', at: 0, color: 'gray', icon: '·' },
+const TIERS: readonly { tier: Tier; at: number; color: string; gem: string }[] = [
+  { tier: 'master', at: MASTERY[2], color: 'yellow', gem: '◆' },
+  { tier: 'adept', at: MASTERY[1], color: 'cyan', gem: '◈' },
+  { tier: 'novice', at: MASTERY[0], color: 'green', gem: '◇' },
+  { tier: 'untried', at: 0, color: 'gray', gem: '·' },
 ]
 
 export const tierOf = (uses: number): Tier => TIERS.find(t => uses >= t.at)?.tier ?? 'untried'
@@ -40,21 +35,22 @@ const SOURCES: Record<string, string> = {
   'built-in': 'built-in',
 }
 
-// Where a skill comes from, under its name on the card: its plugin, or whose settings hold it. Two skills of one
+// Where a skill comes from, in its row's last column: its plugin, or whose settings hold it. Two skills of one
 // name tell apart by it.
 export const sourceOf = (slot: SkillSlot): string => slot.plugin ?? SOURCES[slot.source] ?? slot.source
 
 export const skillsSubtitle = (loadout: Loadout, progress: Progress): string => {
   const learned = loadout.skills.filter(slot => (progress.skillUses[slot.name] ?? 0) > 0).length
-  return `${learned}/${loadout.skills.length} learned · a card casts`
+  return `${learned}/${loadout.skills.length} learned · a row casts`
 }
 
-// One skill card.
+// One skill on the list.
 export type SkillNode = { name: string; source: string; uses: number; isGlowing: boolean }
 
 // One row of the skills page.
 export type SkillRow =
-  | { kind: 'cards'; nodes: SkillNode[]; cardWidth: number; isSealed: boolean }
+  | { kind: 'header' }
+  | { kind: 'skill'; node: SkillNode; isSealed: boolean }
   | { kind: 'sealed'; count: number; isOpen: boolean }
   | { kind: 'gap' }
   | { kind: 'gear-title'; count: number }
@@ -66,57 +62,20 @@ export type SkillsData = {
   progress: Progress
   casts: Record<string, number>
   now: number
-  // The window's inner width, the room a row of cards deals into.
-  width: number
   // Whether the skills never cast, beyond the person's own, are shown.
   isSealedOpen: boolean
-  // Whether the cards are pictures (a terminal's Client draws them) or text.
-  isPicture: boolean
 }
 
-// A text card: its frame and a column of padding each side around the name and its tier's mark, as wide as the
-// longest name or source shown within these bounds. A picture card: its frame around the art and the name under
-// it, as wide as the longest name, its source cut to fit beside its stars. Every card is as wide as the others.
-const CARD_CHROME = 4
-const MARK = 2
-const TEXT_CARD_WIDTH = { min: 14, max: 22 }
-const PICTURE_CHROME = 2
-const PICTURE_CARD_WIDTH = { min: 12, max: 16 }
-// The picture card's rows: its frame, the art, its name, then its stars and source.
-const PICTURE_CARD_ROWS = 2 + ART_ROWS + 2
-const TEXT_CARD_ROWS = 5
-const CARD_GAP = 1
-
-// A plugin's skill without its plugin's name, which the card's source line carries: `superpowers:brainstorming`
-// reads `brainstorming`.
+// A plugin's skill without its plugin's name, which the source column carries: `superpowers:brainstorming` reads
+// `brainstorming`.
 export const shortName = (name: string): string => name.slice(name.lastIndexOf(':') + 1)
-
-export const cardWidthFor = (nodes: readonly SkillNode[], width: number, isPicture: boolean): number => {
-  const names = nodes.map(node => shortName(node.name).length)
-  const longest = Math.max(0, ...(isPicture ? names : [...names, ...nodes.map(node => node.source.length)]))
-  const [bounds, chrome] = isPicture ? [PICTURE_CARD_WIDTH, PICTURE_CHROME] : [TEXT_CARD_WIDTH, CARD_CHROME]
-  const wanted = Math.min(bounds.max, Math.max(bounds.min, longest + chrome))
-  return Math.max(CARD_CHROME + MARK + 1, Math.min(wanted, width))
-}
-
-// Cards dealt into rows no wider than `width`, each row holding one at least.
-export const packCards = (nodes: readonly SkillNode[], width: number, cardWidth: number): SkillNode[][] => {
-  const perRow = Math.max(1, Math.floor((width + CARD_GAP) / (cardWidth + CARD_GAP)))
-  const rows: SkillNode[][] = []
-  for (let at = 0; at < nodes.length; at += perRow) rows.push(nodes.slice(at, at + perRow))
-  return rows
-}
-
-// The casts that earn a skill its next star; a master has none to go.
-export const nextStar = (uses: number): number | undefined => MASTERY.find(at => uses < at)
 
 const byUse = (a: SkillNode, b: SkillNode) => b.uses - a.uses || shortName(a.name).localeCompare(shortName(b.name))
 
-// The collection: one grid of cards, the most cast first, each coloured by its tier. The skills cast, and the
-// person's own, are in it; the rest are sealed below, dealt when opened.
-// Then the MCP servers as equipment.
+// The list: a header, then a row a skill, the most cast first, each marked by its tier. The skills cast, and the
+// person's own, are on it; the rest are sealed below, listed when opened. Then the MCP servers as equipment.
 export function skillRows(data: SkillsData): SkillRow[] {
-  const { loadout, progress, casts, now, width, isSealedOpen, isPicture } = data
+  const { loadout, progress, casts, now, isSealedOpen } = data
   const rows: SkillRow[] = []
   if (loadout.skills.length === 0) rows.push({ kind: 'note', text: 'Reading the skill tomes…' })
   const nodes = loadout.skills.map(slot => {
@@ -131,19 +90,14 @@ export function skillRows(data: SkillsData): SkillRow[] {
   })
   const owned = nodes.filter(({ slot, node }) => node.uses > 0 || isOwnSkill(slot)).map(({ node }) => node)
   const sealed = nodes.filter(({ slot, node }) => node.uses === 0 && !isOwnSkill(slot)).map(({ node }) => node)
-  const cardWidth = cardWidthFor(isSealedOpen ? [...owned, ...sealed] : owned, width, isPicture)
-  const deal = (list: SkillNode[], isSealed: boolean) => {
-    for (const packed of packCards([...list].sort(byUse), width, cardWidth)) {
-      rows.push({ kind: 'cards', nodes: packed, cardWidth, isSealed })
-    }
-  }
   if (loadout.skills.length > 0 && !owned.some(node => node.uses > 0)) {
-    rows.push({ kind: 'note', text: 'Cast a skill to learn it: its card turns green, blue, then gold at ★★★.' })
+    rows.push({ kind: 'note', text: 'Cast a skill to learn it: it climbs to ★★★ at ten casts.' })
   }
-  deal(owned, false)
+  if (owned.length > 0 || (isSealedOpen && sealed.length > 0)) rows.push({ kind: 'header' })
+  for (const node of [...owned].sort(byUse)) rows.push({ kind: 'skill', node, isSealed: false })
   if (sealed.length > 0) {
     rows.push({ kind: 'gap' }, { kind: 'sealed', count: sealed.length, isOpen: isSealedOpen })
-    if (isSealedOpen) deal(sealed, true)
+    if (isSealedOpen) for (const node of [...sealed].sort(byUse)) rows.push({ kind: 'skill', node, isSealed: true })
   }
   rows.push({ kind: 'gap' }, { kind: 'gear-title', count: loadout.gear.length })
   if (loadout.gear.length === 0) rows.push({ kind: 'note', text: 'No gear equipped.' })
@@ -161,110 +115,158 @@ const styleOf = (tier: Tier) => TIERS.find(t => t.tier === tier)!
 const fit = (text: string, width: number): string =>
   text.length > width ? `${text.slice(0, Math.max(0, width - 1))}…` : text
 
-// A bar of `width` toward the next star, and `4/10` after it; a master's is full, and says so.
-const progressBar = (uses: number, width: number): { filled: number; empty: number; label: string } => {
+// The casts that earn a skill its next star; a master has none to go.
+export const nextStar = (uses: number): number | undefined => MASTERY.find(at => uses < at)
+
+// The table's columns, left to right: the tier's gem, the name taking what is left, the stars, a bar toward the
+// next star and the count it reads, the source. A narrow window drops the source, then the bar, so the name keeps
+// its room.
+const GEM = 2
+const STARS = 4
+const BAR = 7
+const COUNT = 6
+const SOURCE = 14
+// The narrowest the name column goes before a column is dropped for it.
+const MIN_NAME = 16
+
+export type SkillColumns = { name: number; hasBar: boolean; hasSource: boolean }
+
+export const skillColumns = (width: number): SkillColumns => {
+  const fixed = GEM + STARS + COUNT
+  const hasSource = width - fixed - BAR - SOURCE >= MIN_NAME
+  const hasBar = width - fixed - BAR - (hasSource ? SOURCE : 0) >= MIN_NAME
+  return { name: Math.max(4, width - fixed - (hasBar ? BAR : 0) - (hasSource ? SOURCE : 0)), hasBar, hasSource }
+}
+
+// `4/10` toward the next star, `MAX` for a master.
+const countText = (uses: number): string => {
   const next = nextStar(uses)
-  const label = next === undefined ? 'MAX' : `${uses}/${next}`
-  const room = Math.max(1, width - label.length - 1)
-  const filled = next === undefined ? room : Math.floor((room * uses) / next)
-  return { filled, empty: room - filled, label }
+  return next === undefined ? 'MAX' : `${uses}/${next}`
 }
 
-// One skill card: a frame in its tier's colour around its mark and name, its source, and its stars with a bar
-// toward the next. On the terminal a Client draws it, so the whole card is one target a click casts; elsewhere,
-// where a Client is not drawn, the name is a button.
-function skillCard(ui: ElementTable, node: SkillNode, cardWidth: number, isSealed: boolean, Client: CardClient | undefined, cast: () => void) {
-  const { Box, Button, Text } = ui
-  const { color, icon } = styleOf(tierOf(node.uses))
-  const isLearned = node.uses > 0
-  const inner = cardWidth - CARD_CHROME
-  const bar = progressBar(node.uses, inner - 4)
-  const label = fit(shortName(node.name), inner - MARK)
-  const source = fit(node.source, inner - MARK)
-  const mark = node.isGlowing ? '✦' : icon
-  if (Client !== undefined) {
-    // The art fills the row inside the frame; the lines under it centre in it.
-    const artWidth = cardWidth - PICTURE_CHROME
-    const tier: ArtTier = isSealed ? 'sealed' : tierOf(node.uses)
-    const props: SkillCardProps = {
-      name: node.name,
-      width: cardWidth,
-      height: PICTURE_CARD_ROWS,
-      scope: `skill-card-${node.name}`.slice(0, 64),
-      color,
-      isLearned,
-      isGlowing: node.isGlowing,
-      art: cardArt(node.name, tier, artWidth, node.isGlowing),
-      label: fit(shortName(node.name), artWidth),
-      stars: masteryStars(node.uses),
-      // Beside the stars and a space; the person's own skills, which no other of theirs can share a name with, show
-      // none, so a plugin's skill of the same name is told apart by its source.
-      source: node.source === 'personal' ? '' : fit(node.source, artWidth - 4),
-    }
-    return (
-      <Client key={`skill-card:${node.name}`} module="./skill-card-client.tsx" props={props} width={cardWidth} height={PICTURE_CARD_ROWS} />
-    )
-  }
-  const isMax = bar.label === 'MAX'
-  return (
-    <Box
-      key={`card-${node.name}`}
-      flexDirection="column"
-      width={cardWidth}
-      height={TEXT_CARD_ROWS}
-      paddingX={1}
-      borderStyle="round"
-      borderColor={node.isGlowing ? 'yellow' : color}
-      borderDimColor={!isLearned}
-    >
-      <Box flexDirection="row">
-        <Text color={node.isGlowing ? 'yellow' : color} bold={node.isGlowing} dimColor={isSealed}>
-          {mark}{' '}
-        </Text>
-        <Button key={`cast-${node.name}`} label={label} plain dimColor={!isLearned} onPress={cast} />
-      </Box>
-      <Text dimColor wrap="truncate">
-        {'  '}
-        {source}
-      </Text>
-      <Text wrap="truncate">
-        <Text color="yellow" dimColor={!isLearned}>
-          {masteryStars(node.uses)}{' '}
-        </Text>
-        <Text color={color}>{'▰'.repeat(bar.filled)}</Text>
-        <Text dimColor>{'▱'.repeat(bar.empty)}</Text>
-        <Text dimColor={!isMax} {...(isMax ? { color: 'yellow', bold: true } : {})}>
-          {' '}
-          {bar.label}
-        </Text>
-      </Text>
-    </Box>
-  )
+// The bar's filled cells toward the next star, of `cells`.
+const barFill = (uses: number, cells: number): number => {
+  const next = nextStar(uses)
+  return next === undefined ? cells : Math.floor((cells * uses) / next)
 }
 
-// The skills page: the skills as cards framed in their tier's colour, each with its name (which
-// fills the prompt), its source, its stars and a bar toward the next; the sealed skills behind a toggle; then the
-// MCP servers.
+const padEnd = (text: string, width: number) => text + ' '.repeat(Math.max(0, width - [...text].length))
+const padStart = (text: string, width: number) => ' '.repeat(Math.max(0, width - [...text].length)) + text
+
+// The skills page: a table of the skills, a row each, every column on the same columns down the list; a row is one
+// button, a click anywhere on it fills the prompt (off the terminal, where a button cannot hold the columns' boxes,
+// the name is the button). Then the sealed skills behind a toggle, and the MCP servers.
 export function skillItems(
   ui: ElementTable,
   rows: readonly SkillRow[],
   width: number,
-  Client: CardClient | undefined,
+  isTerminal: boolean,
   cast: (name: string) => void,
   toggleSealed: () => void,
 ): Item[] {
   const { Box, Button, Text } = ui
-  const item = (index: number, node: Item['node'], rows = 1): Item => ({ key: `skill-row-${index}`, rows, node })
+  const columns = skillColumns(width)
+  const item = (index: number, node: Item['node']): Item => ({ key: `skill-row-${index}`, rows: 1, node })
   return rows.map((row, index) => {
     switch (row.kind) {
-      case 'cards':
+      case 'header': {
+        const title = (text: string, size: number, isRight = false) => (isRight ? padStart(text, size) : padEnd(text, size))
         return item(
           index,
-          <Box flexDirection="row" gap={CARD_GAP} height={Client === undefined ? TEXT_CARD_ROWS : PICTURE_CARD_ROWS}>
-            {row.nodes.map(node => skillCard(ui, node, row.cardWidth, row.isSealed, Client, () => cast(node.name)))}
-          </Box>,
-          Client === undefined ? TEXT_CARD_ROWS : PICTURE_CARD_ROWS,
+          <Text dimColor wrap="truncate">
+            {title('', GEM)}
+            {title('SKILL', columns.name)}
+            {title('★', STARS)}
+            {columns.hasBar ? title(' NEXT', BAR) : ''}
+            {title('', COUNT, true)}
+            {columns.hasSource ? title('SOURCE', SOURCE, true) : ''}
+          </Text>,
         )
+      }
+      case 'skill': {
+        const { node, isSealed } = row
+        const { color, gem } = styleOf(tierOf(node.uses))
+        const isLearned = node.uses > 0
+        const name = fit(shortName(node.name), columns.name - 1)
+        const filled = barFill(node.uses, BAR - 1)
+        const count = countText(node.uses)
+        const isMax = count === 'MAX'
+        const parts = {
+          gem: (
+            <Text key="gem" color={node.isGlowing ? 'yellow' : color} bold={node.isGlowing} dimColor={isSealed}>
+              {padEnd(node.isGlowing ? '✦' : gem, GEM)}
+            </Text>
+          ),
+          stars: (
+            <Text key="stars" color="yellow" dimColor={!isLearned}>
+              {padEnd(masteryStars(node.uses), STARS)}
+            </Text>
+          ),
+          filled: (
+            <Text key="filled" color={color}>
+              {' ' + '▰'.repeat(filled)}
+            </Text>
+          ),
+          empty: (
+            <Text key="empty" dimColor>
+              {'▱'.repeat(BAR - 1 - filled)}
+            </Text>
+          ),
+          count: (
+            <Text key="count" dimColor={!isMax} {...(isMax ? { color: 'yellow', bold: true } : {})}>
+              {padStart(count, COUNT)}
+            </Text>
+          ),
+          source: (
+            <Text key="source" dimColor>
+              {padStart(fit(node.source, SOURCE - 2), SOURCE)}
+            </Text>
+          ),
+        }
+        if (isTerminal) {
+          return item(
+            index,
+            <Button key={`cast-${node.name}`} label={shortName(node.name)} plain onPress={() => cast(node.name)}>
+              {[
+                parts.gem,
+                <Text key="name" bold={isLearned} dimColor={!isLearned || isSealed}>
+                  {padEnd(name, columns.name)}
+                </Text>,
+                parts.stars,
+                ...(columns.hasBar ? [parts.filled, parts.empty] : []),
+                parts.count,
+                ...(columns.hasSource ? [parts.source] : []),
+              ]}
+            </Button>,
+          )
+        }
+        return item(
+          index,
+          <Box flexDirection="row" height={1} width={width}>
+            <Box width={GEM}>{parts.gem}</Box>
+            <Box width={columns.name}>
+              <Button key={`cast-${node.name}`} label={name} plain dimColor={!isLearned || isSealed} onPress={() => cast(node.name)} />
+            </Box>
+            <Box width={STARS}>{parts.stars}</Box>
+            {columns.hasBar && (
+              <Box width={BAR}>
+                <Text>
+                  {parts.filled}
+                  {parts.empty}
+                </Text>
+              </Box>
+            )}
+            <Box width={COUNT} justifyContent="flex-end">
+              {parts.count}
+            </Box>
+            {columns.hasSource && (
+              <Box width={SOURCE} justifyContent="flex-end">
+                {parts.source}
+              </Box>
+            )}
+          </Box>,
+        )
+      }
       case 'sealed':
         return item(
           index,

@@ -3,8 +3,8 @@ import type { ClientModule } from 'claude-code'
 import type { TextCell } from './menu'
 import { SCROLL_DOWN_KEY, SCROLL_UP_KEY } from './window'
 
-// One menu card's icon: the plugin draws the card's frame and label button around it, and this Client takes
-// the clicks on the icon and the keys once a click has given it the focus.
+// One menu tab's face, its icon over its name: the plugin draws the selected tab's frame around it, and this Client
+// takes the clicks anywhere on it and the keys once a click has given it the focus.
 export type MenuIconProps = {
   id: string
   // Every slot's id in order, for the number and arrow keys.
@@ -14,6 +14,9 @@ export type MenuIconProps = {
   isHelpOpen?: boolean
   icon: TextCell[][]
   dimIcon: TextCell[][]
+  // The name under the icon, and the tab's colour it lights in.
+  label: string
+  color: string
   // The columns inside the card's frame, which the icon is centred in.
   width: number
   // The card's hover group: the frame, the label and these pixels light together while the pointer is anywhere
@@ -74,8 +77,8 @@ const MenuIcon: ClientModule<MenuIconProps, IconState> = (props, surface) => {
     if (e.key === 'left') pick(props.ids[(activeIndex + count - 1) % count])
   })
 
-  // The pixels centred in the frame: bright on the selected card; dim on the others, bright while their card
-  // is hovered.
+  // The pixels centred in the frame: bright on the selected tab; dim on the others, bright while their tab
+  // is hovered. The name under them likewise.
   return (
     <Box flexDirection="column" width={props.width}>
       {props.dimIcon.map((dimCells, y) => {
@@ -108,6 +111,11 @@ const MenuIcon: ClientModule<MenuIconProps, IconState> = (props, surface) => {
           </Box>
         )
       })}
+      <Box key="label" flexDirection="row" height={1} width={props.width} justifyContent="center">
+        <Text bold={isActive} {...(isActive ? { color: props.color } : { dimColor: true, hover: { scope: props.scope, color: props.color, dimColor: false } })}>
+          {props.label}
+        </Text>
+      </Box>
     </Box>
   )
 }

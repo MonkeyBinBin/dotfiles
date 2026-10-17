@@ -137,3 +137,20 @@ export const barSvg = (value: number, max: number, columns: number, color: strin
     `<rect width="${(share * width).toFixed(2)}" height="${BAR_HEIGHT}" fill="${fillOf(color)}"/></g></svg>`
   )
 }
+
+// A colour darkened toward black: `share` of its light kept, for a tinted backdrop behind a tab.
+export const tintOf = (color: string, share: number): string => {
+  const rgb = parseInt(fillOf(color).slice(1), 16)
+  const channel = (shift: number) => Math.round(((rgb >> shift) & 0xff) * share)
+  return hex((channel(16) << 16) | (channel(8) << 8) | channel(0))
+}
+
+// A tab's underline `columns` cells wide: a rounded bar in `color`, the selected tab's mark.
+export const TAB_LINE_HEIGHT = 3
+export const tabLineSvg = (columns: number, color: string): string => {
+  const width = Math.max(1, columns) * COLUMN_PX
+  return (
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${TAB_LINE_HEIGHT}" viewBox="0 0 ${width} ${TAB_LINE_HEIGHT}" preserveAspectRatio="none">` +
+    `<rect width="${width}" height="${TAB_LINE_HEIGHT}" rx="${TAB_LINE_HEIGHT / 2}" fill="${fillOf(color)}"/></svg>`
+  )
+}
