@@ -261,7 +261,7 @@ dotfiles**——否則 cmux 更新格式時 repo 內的手寫版本會悄悄失�
 
 設定：複製 `~/.config/claude/telegram.env.example` 為 `telegram.env` 並填入 `TELEGRAM_BOT_TOKEN`、
 `TELEGRAM_CHAT_ID`（此檔含 secret，不納入版控）；可選用 `CC_NOTIFY_IDLE_WINDOW`（預設 25s）、
-`CC_NOTIFY_MIN_SECONDS`（預設 30s，整個工作短於此不通知）與 `CC_NOTIFY_DEBUG=1`（hook 輸入寫入
+`CC_NOTIFY_MIN_SECONDS`（預設 10s，整個工作短於此不通知）與 `CC_NOTIFY_DEBUG=1`（hook 輸入寫入
 `/tmp/claude-cc-debug.log`）。未設定 `telegram.env` 時腳本靜默略過。
 
 #### Claude Code Output Styles

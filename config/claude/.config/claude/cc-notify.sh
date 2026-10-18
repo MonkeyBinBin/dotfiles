@@ -26,7 +26,7 @@
 #
 # Config (env or ~/.config/claude/telegram.env):
 #   CC_NOTIFY_IDLE_WINDOW   seconds of idle before sending           (default 25)
-#   CC_NOTIFY_MIN_SECONDS   minimum job duration to bother            (default 30)
+#   CC_NOTIFY_MIN_SECONDS   minimum job duration to bother            (default 10)
 #   CC_NOTIFY_DEBUG         1 = append raw hook input to /tmp/claude-cc-debug.log
 #
 # State (all keyed by session_id, isolated per session):
@@ -45,7 +45,7 @@ action="$1"
 # Config (defaults; overridable via telegram.env or environment).
 [ -f "$HOME/.config/claude/telegram.env" ] && . "$HOME/.config/claude/telegram.env"
 WINDOW="${CC_NOTIFY_IDLE_WINDOW:-25}"
-MIN="${CC_NOTIFY_MIN_SECONDS:-30}"
+MIN="${CC_NOTIFY_MIN_SECONDS:-10}"
 
 if [ "$action" = "__fire" ]; then
   sid="$2"
