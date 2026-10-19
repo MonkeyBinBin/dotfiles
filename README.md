@@ -17,6 +17,7 @@
 | `hammerspoon` | Hammerspoon macOS 自動化                       | `~/.hammerspoon/`                                 |
 | `ripgrep`     | ripgrep 搜尋工具設定                           | `~/.ripgreprc`                                    |
 | `git`         | 全域 git ignore（XDG 路徑，免設定 git config） | `~/.config/git/ignore`                            |
+| `nvim`        | Neovim 設定（LazyVim + 香蕉黃 gruvbox、VS Code 風格按鍵） | `~/.config/nvim/` → 目錄 symlink |
 
 > `config/shared/skills/` 為共享 skills 的單一來源，**不是 stow 套件**。`stow-wrap.sh` 部署 AI CLI 套件時會自動將其 symlink 到每個工具的 `~/.<tool>/skills/`。
 
@@ -37,7 +38,7 @@ brew install stow
 brew install eza bat htop fd fzf ripgrep zoxide jq direnv
 
 # 開發工具（按需安裝）
-brew install tmux pyenv
+brew install tmux pyenv neovim tree-sitter-cli
 ```
 
 ### 2. 安裝 nvm（Node Version Manager）
@@ -108,7 +109,7 @@ done
 
 # 部署所有套件
 chmod +x scripts/stow-wrap.sh
-for pkg in zsh tmux ghostty cmux herdr claude claude-mods codex hammerspoon ripgrep git; do
+for pkg in zsh tmux ghostty cmux herdr claude claude-mods codex hammerspoon ripgrep git nvim; do
   ./scripts/stow-wrap.sh "$pkg"
 done
 ```
@@ -179,6 +180,8 @@ stow 預設會做 directory folding：若目標目錄在 `$HOME` 尚不存在，
 實際案例：曾有一個 `bin` 套件（放 `cmux-notify`）對應 `~/.local/bin/`，但 `~/.local/` 同時是 uv、Claude Code installer 等工具的安裝位置。`~/.local` 被折疊成 `~/.local -> dotfiles/config/bin/.local` 後，這些工具安裝的內容累積到 1.5 GB 全部落在 repo 內。該套件已隨 `cmux-notify` 一併移除，但教訓保留於此。
 
 判斷準則：**只要套件的目標路徑或其上層目錄可能被 dotfiles 以外的程式寫入，就要加進 `NO_FOLDING_PKGS`。**
+
+例外：`nvim` 刻意保留 folding，`~/.config/nvim` 整個指向 repo。寫入其中的只有 Neovim 自身產物——`lazy-lock.json`、`lazyvim.json`（應納入版控）與 `spell/`（`.spl` 已 gitignore）；外掛與 LSP 安裝在 `~/.local/share/nvim`，不受影響。
 
 > 同理，`.gitignore` 不要使用 `*.local` 這類樣式 —— gitignore 的 `*` 可匹配零字元，會連名為 `.local` 的目錄整棵樹一起忽略，使上述污染在 `git status` 完全隱形。
 

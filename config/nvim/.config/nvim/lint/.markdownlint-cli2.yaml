@@ -1,0 +1,11 @@
+# Base markdownlint rules for all Markdown buffers; a project's own
+# .markdownlint* config is still discovered and layered on top.
+config:
+  # Prompts and CJK prose use long lines; wrapping is left to the editor
+  MD013: false
+  # Column alignment can't be kept with CJK widths
+  MD060: false
+  # Prompt / CLAUDE.md files often start with a level-2 heading
+  MD041: false
+  # README badges and <details> are fine
+  MD033: false

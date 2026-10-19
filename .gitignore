@@ -18,5 +18,8 @@
 # 機器專屬設定（不納入版控）
 **/90-local.zsh
 
+# Neovim：zg 產生的二進位 spell 檔（.add 單字表保留版控）
+**/nvim/spell/*.spl
+
 # Claude Code mods：.claude-plugin/types/ 由 engine 載入時自動產生
 **/.claude-plugin/types/
