@@ -98,7 +98,7 @@ start_tmux() {
             full)
                 # Main IDE window with editor + shell on the right
                 tmux new-session -d -s "$SESSION_NAME" -n ide
-                tmux send-keys -t "$SESSION_NAME":ide "${EDITOR:-nvim}" C-m
+                tmux send-keys -t "$SESSION_NAME":ide "${EDITOR:-vim}" C-m
                 tmux split-window -h -p 30 -t "$SESSION_NAME":ide
                 tmux send-keys -t "$SESSION_NAME":ide.1 "${SHELL:-bash}" C-m
 

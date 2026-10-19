@@ -33,3 +33,6 @@ fi
 if [[ -f "$HOME/.cargo/env" ]]; then
   . "$HOME/.cargo/env"
 fi
+
+# ── 預設編輯器（git、Claude Code Ctrl+G、fzf、start-tmux 共用）──
+export EDITOR="vim"
