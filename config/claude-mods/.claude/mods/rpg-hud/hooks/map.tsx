@@ -9,7 +9,7 @@ import type { LaneRow } from './lanes'
 import { OVERWORLD_MIN_COLUMNS, OVERWORLD_ROWS, colorsToPixels, drawOverworld, regionName } from './overworld'
 import type { Phase, Weather } from './overworld'
 import { COLUMN_PX, spriteSvg } from './svg'
-import { composeColors, oneLine } from './util'
+import { composeColors, oneLine, oneLineCells } from './util'
 import type { Item } from './window'
 
 const LANE_COLORS = ['cyan', 'magenta', 'yellow', 'green', 'blue', 'red']
@@ -53,6 +53,7 @@ export const trailStops = (rows: readonly GraphRow[], dirty: number): Stop[] => 
 }
 
 // A row's lanes, each glyph in its lane's colour; the HEAD commit is the player.
+// The journey's rows are `mono`: a desktop draws Text proportional, and the lanes only line up cell for cell.
 const Lanes = (ui: ElementTable, lanes: LaneRow, width: number, isHead: boolean) => {
   const { Text } = ui
   const glyphs = lanes.cells.map((cell, index) => {
@@ -77,6 +78,13 @@ const Lanes = (ui: ElementTable, lanes: LaneRow, width: number, isHead: boolean)
 
 const row = (key: string, node: Item['node']): Item => ({ key, rows: 1, node })
 
+// How a journey row fits its subject: the terminal cuts by its own cell widths, so it keeps the plain cut. A desktop
+// cuts in cells (a CJK subject counted per character spills past the age) and clips the rest rather than wrap.
+type Fit = { cut: (text: string, max: number) => string; clip: { flexShrink?: number; minWidth?: number; overflow?: 'hidden' } }
+
+const fitFor = (isTerminal: boolean): Fit =>
+  isTerminal ? { cut: oneLine, clip: {} } : { cut: oneLineCells, clip: { flexShrink: 1, minWidth: 0, overflow: 'hidden' } }
+
 // Branches checked out in another outpost (worktree), to the outpost's name.
 export type Camps = Readonly<Record<string, string>>
 
@@ -99,7 +107,7 @@ const campRow = (ui: ElementTable, dirty: number, lead: string, openBag: () => v
     'camp',
     <Box height={1}>
       <Box flexGrow={1}>
-        <Text wrap="truncate">
+        <Text wrap="truncate" mono>
           <Text color="yellow">{lead}</Text>
           <Text color="red">⛺</Text>
           <Text bold color="red"> camp </Text>
@@ -114,6 +122,7 @@ const campRow = (ui: ElementTable, dirty: number, lead: string, openBag: () => v
 function trailItems(ui: ElementTable, rows: readonly GraphRow[], dirty: number, width: number, actions: MapActions): Item[] {
   const { openBag, camps } = actions
   const { Box, Text } = ui
+  const fit = fitFor(actions.Raster !== undefined)
   const subjectWidth = (extra: number) => Math.max(4, width - TRAIL_COLUMNS - HASH_COLUMNS - AGE_COLUMNS - extra)
   return trailStops(rows, dirty).map((stop, index) => {
     switch (stop.kind) {
@@ -122,7 +131,7 @@ function trailItems(ui: ElementTable, rows: readonly GraphRow[], dirty: number, 
       case 'town':
         return row(
           'town',
-          <Text wrap="truncate">
+          <Text wrap="truncate" mono>
             <Text color="cyan">╞═</Text>
             <Text>🏰</Text>
             <Text bold color="cyan"> {stop.remotes.join(', ')} </Text>
@@ -135,7 +144,7 @@ function trailItems(ui: ElementTable, rows: readonly GraphRow[], dirty: number, 
       case 'end':
         return row(
           'end',
-          <Text color="gray" dimColor>
+          <Text color="gray" dimColor mono>
             {stop.isCut ? `╵ ⋯ the road goes on beyond ${GRAPH_LIMIT} steps` : '╵ ⚐ where it all began'}
           </Text>,
         )
@@ -157,21 +166,21 @@ function trailItems(ui: ElementTable, rows: readonly GraphRow[], dirty: number, 
         return row(
           `s-${commit.hash}`,
           <Box height={1}>
-            <Box flexGrow={1}>
-              <Text wrap="truncate">
+            <Box flexGrow={1} {...fit.clip}>
+              <Text wrap="truncate" mono>
                 <Text color={place === 'road' ? 'gray' : 'yellow'}>{trail} </Text>
                 {marker}
                 <Text> </Text>
                 <Text color="yellow" dimColor>{commit.hash.slice(0, 7)} </Text>
                 <Text bold={place === 'here'} dimColor={place === 'road'}>
-                  {oneLine(commit.subject, subjectWidth((loot ? LOOT_COLUMNS : 0) + flags.join('  ').length + flags.length * 2))}
+                  {fit.cut(commit.subject, subjectWidth((loot ? LOOT_COLUMNS : 0) + flags.join('  ').length + flags.length * 2))}
                 </Text>
                 {Flags(ui, flags)}
               </Text>
             </Box>
             {loot && <Text> 🎒</Text>}
             <Box width={AGE_COLUMNS} justifyContent="flex-end">
-              <Text dimColor>{commit.age}</Text>
+              <Text dimColor mono>{commit.age}</Text>
             </Box>
           </Box>,
         )
@@ -180,7 +189,7 @@ function trailItems(ui: ElementTable, rows: readonly GraphRow[], dirty: number, 
   })
 }
 
-function branchItems(ui: ElementTable, rows: readonly GraphRow[], width: number, camps: Camps): Item[] {
+function branchItems(ui: ElementTable, rows: readonly GraphRow[], width: number, camps: Camps, fit: Fit): Item[] {
   const { Box, Text } = ui
   const lanes = layoutLanes(rows)
   // Every subject starts in the same column, past the widest row of lanes.
@@ -194,18 +203,18 @@ function branchItems(ui: ElementTable, rows: readonly GraphRow[], width: number,
     return row(
       `g-${line.hash}`,
       <Box height={1}>
-        <Box flexGrow={1}>
-          <Text wrap="truncate">
+        <Box flexGrow={1} {...fit.clip}>
+          <Text wrap="truncate" mono>
             {Lanes(ui, lanes[index] as LaneRow, graphWidth, line.isHead)}
             <Text color="yellow" dimColor>{line.hash.slice(0, 7)} </Text>
             {refs !== '' && <Text color="green">{refs}</Text>}
             {Flags(ui, flags)}
             {refs !== '' && <Text> </Text>}
-            <Text bold={line.isHead}>{oneLine(line.subject, subjectWidth)}</Text>
+            <Text bold={line.isHead}>{fit.cut(line.subject, subjectWidth)}</Text>
           </Text>
         </Box>
         <Box width={AGE_COLUMNS} justifyContent="flex-end">
-          <Text dimColor>{line.age}</Text>
+          <Text dimColor mono>{line.age}</Text>
         </Box>
       </Box>,
     )
@@ -274,7 +283,7 @@ function overworldItems(ui: ElementTable, map: GitMap, rows: readonly GraphRow[]
     row(
       'region',
       <Box height={1} justifyContent="center">
-        <Text wrap="truncate">
+        <Text wrap="truncate" mono>
           <Text color="yellow" dimColor>{'═'.repeat(flourish)}</Text>
           <Text color="yellow"> {actions.weather === 'storm' ? '☂' : actions.weather === 'thunder' ? 'ϟ' : PHASE_MARKS[actions.phase ?? 'day']} </Text>
           <Text bold color="yellow">{name}</Text>
@@ -394,7 +403,7 @@ export function mapItems(ui: ElementTable, map: GitMap, touched: readonly Touche
     row('journey', <Text bold color="yellow">📜 Journey <Text dimColor>{rows.length >= GRAPH_LIMIT ? `last ${GRAPH_LIMIT} steps` : `${rows.length} steps`}</Text></Text>),
     ...(isLinear(rows)
       ? trailItems(ui, rows, map.dirty, width, actions)
-      : [...(map.dirty > 0 ? [campRow(ui, map.dirty, '', openBag)] : []), ...branchItems(ui, rows, width, actions.camps)]),
+      : [...(map.dirty > 0 ? [campRow(ui, map.dirty, '', openBag)] : []), ...branchItems(ui, rows, width, actions.camps, fitFor(actions.Raster !== undefined))]),
     row('gap', <Text> </Text>),
     ...exploredItems(ui, touched, width),
   ]

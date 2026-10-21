@@ -25,7 +25,7 @@ import { HELP_COMMANDS, helpText } from './help'
 import { filterSpells, spellRarity, timeColor } from './spellbook'
 import { masteryStars, nextStar, shortName, skillColumns, skillRows, tierOf } from './skills'
 import { KEPT_JOBS, MARCH_COLUMNS, MARCH_TICKS, endJob, jobState, marchCells, jobOrder, parseJobEnds, reconcileJobs, trimJobs } from './jobs'
-import { barFill, oneLine } from './util'
+import { barFill, cellWidth, oneLine, oneLineCells } from './util'
 import { cardWidth } from './menu-client'
 import { pageItems, scrolledOffset, tabbedTop } from './window'
 import { CLASSES, CLASS_IDS, rankOf, rollClass } from './classes'
@@ -474,6 +474,49 @@ test('a narrow map leaves the overworld out and keeps the road', async ($, on) =
   expect(shown).not.toContain(' of main')
   expect((await ui.findAll({ type: 'Svg' })).map(svg => String(svg.props?.alt))).not.toContain('overworld map')
   expect(shown).toContain('feat: map')
+})
+
+test('on desktop the journey is monospaced so its lanes line up', async ($, on) => {
+  mapWorld(on, [
+    logLine('c000003', 'b000002 a000009', 'HEAD -> main', '2 hours ago', 'merge: side'),
+    logLine('a000009', 'a000001', 'side', '3 hours ago', 'feat: side'),
+    logLine('b000002', 'a000001', '', '4 hours ago', 'feat: main'),
+    logLine('a000001', '', 'origin/main', '5 hours ago', 'init'),
+  ])
+  await $.turn.complete({ answer: '', durationMs: 5, isAborted: false, turnId: 't' } as never)
+  const ui = await mountPane($, 'desktop', 50)
+  await showTab($, ui, 'map', 'desktop')
+  const rows = (await ui.findAll({ type: 'Text' })).filter(text => /[│●@].*(merge: side|feat: side|feat: main|init)/.test(text.text ?? ''))
+  expect(rows.length).toBe(4)
+  for (const one of rows) expect(one.props?.mono).toBe(true)
+})
+
+test('a CJK subject is cut in cells: wide characters count two', () => {
+  expect(cellWidth('fix: 截斷')).toBe(9)
+  const cut = oneLineCells('fix(embedding): 撤回 TEI 的 truncate，截斷 log 移到確定送出之後', 20)
+  expect(cellWidth(cut)).toBeLessThanOrEqual(20)
+  expect(cut).toContain('…')
+  expect(oneLineCells('feat: map', 20)).toBe('feat: map')
+})
+
+test('on desktop a long CJK subject stays on its row in the lanes', async ($, on) => {
+  const long = 'fix(embedding): 撤回 TEI 的 truncate，截斷 log 移到確定送出之後再寫入'
+  mapWorld(on, [
+    logLine('c000003', 'b000002 a000009', 'HEAD -> main', '2 hours ago', 'merge: side'),
+    logLine('a000009', 'a000001', 'side', '3 hours ago', long),
+    logLine('b000002', 'a000001', '', '4 hours ago', 'feat: main'),
+    logLine('a000001', '', 'origin/main', '5 hours ago', 'init'),
+  ])
+  await $.turn.complete({ answer: '', durationMs: 5, isAborted: false, turnId: 't' } as never)
+  const ui = await mountPane($, 'desktop', 50)
+  await showTab($, ui, 'map', 'desktop')
+  const lane = (await ui.findAll({ type: 'Text' })).find(text => /a000009/.test(text.text ?? '') && /[│●]/.test(text.text ?? ''))
+  expect(lane).toBeDefined()
+  expect(lane?.text).toContain('…')
+  // The window's chrome and the age column take their share; the lane row fits what is left.
+  expect(cellWidth(lane?.text ?? '')).toBeLessThanOrEqual(50)
+  const boxes = await ui.findAll({ type: 'Box' })
+  expect(boxes.some(box => box.props?.overflow === 'hidden' && box.props?.minWidth === 0)).toBe(true)
 })
 
 test('the overworld walks the first-parent road, fogs what it cannot fit and keeps the same land', () => {

@@ -21,7 +21,45 @@ export const oneLine = (text: string, max: number): string => {
   return `${flat.slice(0, head)}…${flat.slice(flat.length - (max - 1 - head))}`
 }
 
-export const formatMs = (ms?: number): string => {
+// East Asian wide and fullwidth characters, and the emoji planes: two cells each in a monospaced face.
+const isWide = (cp: number): boolean =>
+  (cp >= 0x1100 && cp <= 0x115f) ||
+  (cp >= 0x2e80 && cp <= 0xa4cf && cp !== 0x303f) ||
+  (cp >= 0xac00 && cp <= 0xd7a3) ||
+  (cp >= 0xf900 && cp <= 0xfaff) ||
+  (cp >= 0xfe30 && cp <= 0xfe4f) ||
+  (cp >= 0xff00 && cp <= 0xff60) ||
+  (cp >= 0xffe0 && cp <= 0xffe6) ||
+  (cp >= 0x1f300 && cp <= 0x1faff) ||
+  (cp >= 0x20000 && cp <= 0x3fffd)
+
+export const cellWidth = (text: string): number => [...text].reduce((sum, ch) => sum + (isWide(ch.codePointAt(0) ?? 0) ? 2 : 1), 0)
+
+// oneLine counted in cells, so a CJK subject cut to `max` still fits `max` columns.
+export const oneLineCells = (text: string, max: number): string => {
+  const flat = text.replace(/\s+/g, ' ').trim()
+  if (max <= 0) return ''
+  if (cellWidth(flat) <= max) return flat
+  if (max === 1) return '…'
+  const chars = [...flat]
+  const take = (from: readonly string[], room: number) => {
+    const kept: string[] = []
+    let used = 0
+    for (const ch of from) {
+      const w = cellWidth(ch)
+      if (used + w > room) break
+      kept.push(ch)
+      used += w
+    }
+    return kept
+  }
+  const head = take(chars, Math.ceil((max - 1) / 2))
+  const room = max - 1 - cellWidth(head.join(''))
+  const tail = take(chars.slice(head.length).reverse(), room).reverse()
+  return `${head.join('')}…${tail.join('')}`
+}
+
+export const formatMs =(ms?: number): string => {
   if (ms === undefined) return '…'
   return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`
 }
