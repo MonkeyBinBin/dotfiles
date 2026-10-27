@@ -1,5 +1,5 @@
 // Big pixel numbers on the right of the slime's track: a 3x5 font in half
-// blocks, one colour per fact, its label in small text on the row below.
+// blocks, one colour per fact shaded top to bottom, its label in small text on the row below.
 
 // '#' is a lit pixel. Every glyph is five pixels tall.
 const FONT: Record<string, readonly string[]> = {
@@ -58,8 +58,26 @@ const GLYPH_TOP = 0
 const DEPTH = 1
 const SHADE = 0.45
 
+// The face's vertical gradient: the top row mixed this far toward white, the bottom row scaled by this.
+const GLOSS = 0.5
+const BASE = 0.85
+
 const shade = (rgb: number): number =>
   [16, 8, 0].reduce((out, shift) => out | (Math.round(((rgb >> shift) & 0xff) * SHADE) << shift), 0)
+
+const mix = (from: number, to: number, t: number): number =>
+  [16, 8, 0].reduce((out, shift) => {
+    const a = (from >> shift) & 0xff
+    const b = (to >> shift) & 0xff
+    return out | (Math.round(a + (b - a) * t) << shift)
+  }, 0)
+
+// Light on top, the fact's own colour a shade deeper at the bottom.
+export const gradientAt = (rgb: number, y: number, rows: number): number => {
+  const top = mix(rgb, 0xffffff, GLOSS)
+  const bottom = mix(0, rgb, BASE)
+  return mix(top, bottom, rows <= 1 ? 0 : y / (rows - 1))
+}
 
 // `dropFirst` facts go before any other when the band is narrow, in their order; the rest drop from the last.
 export type HudFact = { key: string; icon: string; value: string; label: string; color: string; rgb: number; dropFirst?: boolean }
@@ -111,7 +129,7 @@ export const layoutHud = (facts: readonly HudFact[], trackWidth: number): HudLay
       for (let y = 0; y < rows.length; y += 1) {
         const row = rows[y] ?? ''
         for (let dx = 0; dx < row.length; dx += 1) {
-          const pixel = { x: glyphX + dx, y: y + GLYPH_TOP, rgb: fact.rgb }
+          const pixel = { x: glyphX + dx, y: y + GLYPH_TOP, rgb: gradientAt(fact.rgb, y, rows.length) }
           if (row[dx] === '#') face.set(`${pixel.x},${pixel.y}`, pixel)
         }
       }

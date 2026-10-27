@@ -1,7 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 
 import { SLIME_WIDTH } from './slime-sprite'
-import { SLIME_AREA_MIN, layoutHud } from './hud'
+import { SLIME_AREA_MIN, gradientAt, layoutHud } from './hud'
 import { allocateCells, gaugeLine, layoutGauge, legendLines, percentColor, rowWidth, wrapLegend } from './context-bar'
 import { TUBE_ROWS, TUBE_TICKS, groundPixels, soilAt, tubeColumns, tubePixels } from './mana-tube'
 import { hexOf, iconOf, liquidOf } from './liquids'
@@ -162,9 +162,9 @@ test('paints the big numbers into the track', () => {
   const cells = composeTrack(60, { x: 0, dir: 1, pose: 'sit', snore: 0 }, hud.pixels)
   const lit = hud.pixels[0]
   expect(lit).toBeDefined()
-  // The cell holding that pixel is drawn in the fact's colour.
+  // The cell holding that pixel is drawn in the fact's colour at that row of its gradient.
   const cell = cellAt(cells, 60, Math.floor((lit?.y ?? 0) / 2), lit?.x ?? 0)
-  expect(cell.slice(1)).toContain(0x56c8dc)
+  expect(cell.slice(1)).toContain(gradientAt(0x56c8dc, lit?.y ?? 0, 5))
 })
 
 test('the HUD ends flush with the band, lined up with the context window', () => {
@@ -184,15 +184,28 @@ test('the big numbers stand on the same ground row as the slime', () => {
 
 test('the big numbers have a darker extrusion down and right of their face', () => {
   const hud = layoutHud([{ key: 'turns', icon: '↻', value: '1', label: 'turn', color: 'cyan', rgb: 0x56c8dc }], 60)
+  const faceRgbs = new Set([0, 1, 2, 3, 4].map(y => gradientAt(0x56c8dc, y, 5)))
   const at = new Map(hud.pixels.map(pixel => [`${pixel.x},${pixel.y}`, pixel.rgb]))
-  const face = hud.pixels.filter(pixel => pixel.rgb === 0x56c8dc)
-  const side = hud.pixels.filter(pixel => pixel.rgb !== 0x56c8dc)
+  const face = hud.pixels.filter(pixel => faceRgbs.has(pixel.rgb))
+  const side = hud.pixels.filter(pixel => !faceRgbs.has(pixel.rgb))
   expect(face.length).toBeGreaterThan(0)
   expect(side.length).toBeGreaterThan(0)
   for (const pixel of side) {
-    expect(at.get(`${pixel.x - 1},${pixel.y - 1}`)).toBe(0x56c8dc)
+    expect(faceRgbs.has(at.get(`${pixel.x - 1},${pixel.y - 1}`) ?? -1)).toBe(true)
     expect(pixel.rgb).toBeLessThan(0x56c8dc)
   }
+})
+
+test('the big numbers fade from a light top to their own colour at the bottom', () => {
+  const hud = layoutHud([{ key: 'turns', icon: '↻', value: '1', label: 'turn', color: 'cyan', rgb: 0x56c8dc }], 60)
+  const green = (rgb: number) => (rgb >> 8) & 0xff
+  const rowRgb = (y: number) => hud.pixels.find(pixel => pixel.y === y && pixel.rgb === gradientAt(0x56c8dc, y, 5))?.rgb
+  const top = rowRgb(0)
+  const bottom = rowRgb(4)
+  expect(top).toBeDefined()
+  expect(bottom).toBeDefined()
+  expect(green(top!)).toBeGreaterThan(green(0x56c8dc))
+  expect(green(bottom!)).toBeLessThan(green(0x56c8dc))
 })
 
 test('a grass and soil floor runs under the whole track', () => {
