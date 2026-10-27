@@ -65,6 +65,8 @@ import type { Item } from './window'
 
 const calls = atom({ plugin: 'rpg-hud', key: 'calls' } as const, [] as ToolCall[])
 const castCount = atom({ plugin: 'rpg-hud', key: 'castCount' } as const, 0)
+// The highest level toasted so far: parallel calls end reading the same count, so each level is announced once.
+const announcedLevel = atom({ plugin: 'rpg-hud', key: 'announcedLevel' } as const, 1)
 // Rows scrolled down each menu window; the status panel and the menu never scroll.
 const offsets = atom({ plugin: 'rpg-hud', key: 'offsets' } as const, {} as Record<string, number>)
 const flashUntil = atom({ plugin: 'rpg-hud', key: 'flashUntil' } as const, 0)
@@ -153,6 +155,7 @@ async function resetSession($: EngineInterface) {
   await Promise.all([
     update($, calls, () => []),
     update($, castCount, () => 0),
+    update($, announcedLevel, () => 1),
     update($, offsets, () => ({})),
     update($, flashUntil, () => 0),
     update($, combo, () => ({ current: 0, best: 0 })),
@@ -1526,8 +1529,17 @@ export const register: Register = on => {
 
     const total = await read($, castCount)
     await update($, turnLoot, loot => ({ ...loot, xp: loot.xp + 1 }))
-    if (total % CALLS_PER_LEVEL === 0) {
-      const level = 1 + total / CALLS_PER_LEVEL
+    // Calls run in parallel start before any ends, so the count can pass a multiple of ten or be read at one twice:
+    // the level up goes to whichever call first sees the new level.
+    const reached = 1 + Math.floor(total / CALLS_PER_LEVEL)
+    const won = { level: 0 }
+    await update($, announcedLevel, shown => {
+      if (reached <= shown) return shown
+      won.level = reached
+      return reached
+    })
+    if (won.level > 0) {
+      const level = won.level
       await update($, turnLoot, loot => ({ ...loot, level }))
       $.ui.toast(`✦ Level up! Lv.${level} ${rankOf(classOf(await read($, heroClass)), level)}`)
       await update($, flashUntil, () => endedAt + FLASH_MS)

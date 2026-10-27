@@ -1553,6 +1553,21 @@ test('the level keeps rising past the 200 calls the spell book keeps, and levels
   expect(shown).toContain('215 casts')
 })
 
+test('parallel calls crossing a level toast it once, and one jumping past ten still levels up', async ($, on) => {
+  const { toasts } = world(on)
+  const levelUps = () => toasts.filter(text => text.startsWith('✦ Level up!'))
+  const parallel = (tag: string) =>
+    Promise.all([$.tool.call({ tool: 'Read', file_path: `/x/${tag}a.md` }), $.tool.call({ tool: 'Read', file_path: `/x/${tag}b.md` })])
+  for (let n = 1; n <= 8; n += 1) await $.tool.call({ tool: 'Read', file_path: `/x/f${n}.md` })
+  await parallel('p')
+  expect(levelUps()).toHaveLength(1)
+  expect(levelUps()[0]).toContain('Lv.2')
+  for (let n = 11; n <= 19; n += 1) await $.tool.call({ tool: 'Read', file_path: `/x/f${n}.md` })
+  await parallel('q')
+  expect(levelUps()).toHaveLength(2)
+  expect(levelUps()[1]).toContain('Lv.3')
+})
+
 test('a bag file opens its diff on desktop too', async ($, on) => {
   mapWorld(on, [logLine('abc1234', '', 'HEAD -> main, origin/main', '2 hours ago', 'feat: map')])
   await $.turn.complete({ answer: '', durationMs: 5, isAborted: false, turnId: 't' } as never)
