@@ -42,10 +42,10 @@ export const groupIcon = (calls: ReadonlyArray<{ isErrored: boolean; isInterrupt
   return GROUP
 }
 
-// Cast bar: a Raster under a running row, repainted by blit; a short flash once the call lands.
+// A landing: on the terminal its label (and a crit's burst) beside the row for a moment; on desktop a cast bar.
 export const CAST_COLUMNS = 20
 const TICK_MS = 80
-// One sweep of the bar, in ticks; the bar then pulses for PULSE_TICKS before charging again.
+// One sweep of the desktop bar, in ticks; the bar then pulses for PULSE_TICKS before charging again.
 const CHARGE_TICKS = CAST_COLUMNS
 const PULSE_TICKS = 4
 // Long enough to read the damage the landing deals.
@@ -54,15 +54,6 @@ export const FLASH_TICKS = 12
 const MAX_MISSES = 25
 
 const DEFAULT = 0x01000000
-const TRACK = 0x3a3a3a
-const WHITE = 0xffffff
-const RED = 0xff3b3b
-const DIM_RED = 0x5a1010
-const GRAY = 0x808080
-const TRACK_GLYPH = 0x2500 // ─
-const FILL_GLYPH = 0x2501 // ━
-const HEAD_GLYPH = 0x2588 // █
-const SHADES = [0x2593, 0x2592, 0x2591] // ▓ ▒ ░
 
 export type Landing = 'hit' | 'miss' | 'fled'
 
@@ -70,33 +61,6 @@ const pack = (cells: ReadonlyArray<readonly [number, number, number]>): string =
   const words = new Uint32Array(cells.length * 3)
   cells.forEach(([glyph, fg, bg], i) => words.set([glyph, fg, bg], i * 3))
   return btoa(String.fromCharCode(...new Uint8Array(words.buffer)))
-}
-
-const scale = (color: number, k: number): number => {
-  const ch = (shift: number) => Math.round(((color >> shift) & 0xff) * k) << shift
-  return ch(16) | ch(8) | ch(0)
-}
-
-export const castCells = (color: number, tick: number): ReadonlyArray<readonly [number, number, number]> => {
-  const t = tick % (CHARGE_TICKS + PULSE_TICKS)
-  return Array.from({ length: CAST_COLUMNS }, (_, i) => {
-    // Full bar pulsing between bright and the skill's color.
-    if (t >= CHARGE_TICKS) return [FILL_GLYPH, t % 2 === 0 ? WHITE : color, DEFAULT] as const
-    if (i < t) return [FILL_GLYPH, scale(color, 0.55 + 0.45 * (i / t)), DEFAULT] as const
-    if (i === t) return [HEAD_GLYPH, WHITE, DEFAULT] as const
-    return [TRACK_GLYPH, TRACK, DEFAULT] as const
-  })
-}
-
-export const flashCells = (landing: Landing, color: number, tick: number): ReadonlyArray<readonly [number, number, number]> => {
-  const fade = SHADES[Math.min(tick - 2, SHADES.length - 1)] ?? HEAD_GLYPH
-  const cell = (): readonly [number, number, number] => {
-    if (landing === 'miss') return tick % 2 === 0 ? [HEAD_GLYPH, RED, DEFAULT] : [HEAD_GLYPH, DIM_RED, DEFAULT]
-    if (landing === 'fled') return [tick < 2 ? FILL_GLYPH : fade, GRAY, DEFAULT]
-    if (tick === 0) return [HEAD_GLYPH, WHITE, DEFAULT]
-    return [tick === 1 ? HEAD_GLYPH : fade, color, DEFAULT]
-  }
-  return Array.from({ length: CAST_COLUMNS }, cell)
 }
 
 export const landingOf = (row: { isErrored: boolean; isInterrupted: boolean }): Landing =>
@@ -143,6 +107,9 @@ export const comboColor = (count: number): string => (count >= 20 ? 'error' : co
 
 type TextElement = ReturnType<EngineInterface['ui']['resolve']>['Text']
 
+// A miss says so under its result for good (the ToolResult hook), so its landing shows no label of its own.
+const labelsLanding = (landing: Landing): boolean => landing !== 'miss'
+
 const landingLabel = (Text: TextElement, said: LandingText) => (
   <Text {...(said.color === undefined ? {} : { color: said.color })} dimColor={said.dimColor === true} bold>
     {said.text}
@@ -153,8 +120,50 @@ const landingLabel = (Text: TextElement, said: LandingText) => (
 // Terminal rows open with a blank spacer row, so there the gutter starts one row down to meet the title.
 const gutterTop = (surface: string) => (surface === 'terminal' ? 1 : 0)
 
-// Rows seen running, by tool_use_id: charging while running, then flashing once, then done.
-type Cast = { color: number; tick: number; misses: number; landing?: Landing; damage?: number }
+// A critical hit bursts in pixel art beside its flash, where the terminal draws pictures: each skill its own element,
+// pixelfx effects (https://github.com/patch-gg/pixelfx, MIT) baked by tools/bake-fx.mjs at one frame per tick.
+export const BURST_DAMAGE = CRIT_DAMAGE
+const BURSTS: ReadonlyArray<readonly [RegExp, string]> = [
+  [/^(Bash|BashOutput|KillShell|TaskOutput|TaskStop|Monitor)$/, 'meteor'],
+  [/^Read$|^NotebookRead$/, 'mana-burst'],
+  [/^Grep$|^Glob$|^LS$|^ToolSearch$/, 'thunderclap'],
+  [/^Edit$|^MultiEdit$|^Write$|^NotebookEdit$/, 'ground-slam'],
+  [/^Web(Fetch|Search)$|^Skill$/, 'smite'],
+  [/^(Agent|Task|SendMessage)$/, 'dark-explosion'],
+  [/^mcp__/, 'frost-nova'],
+]
+const DEFAULT_BURST = 'crit-hit'
+export const burstOf = (tool: string): string => BURSTS.find(([pattern]) => pattern.test(tool))?.[1] ?? DEFAULT_BURST
+
+// A baked burst: every frame as PNG base64 and the cells it fills.
+export type Burst = { frames: string[]; columns: number; rows: number }
+// Read once each: absent until read, null once a read failed (not tried again).
+const bursts = new Map<string, Burst | null>()
+// A terminal that draws the alt instead of the picture refuses its blit; later crits then go without.
+let canDrawBurst = true
+
+const loadBurst = async ($: EngineInterface, name: string): Promise<Burst | undefined> => {
+  if (!bursts.has(name)) {
+    const dir = `${$.plugin.root}/assets/fx/${name}`
+    const burst = await $.fs
+      .read(`${dir}/meta.json`)
+      .then(async text => {
+        const meta = JSON.parse(text) as { frames: number; cells: [number, number] }
+        const frames = await Promise.all(
+          Array.from({ length: meta.frames }, async (_, n) => (await $.fs.read(`${dir}/${n}.png`, { as: 'bytes' })).base64),
+        )
+        return { frames, columns: meta.cells[0], rows: meta.cells[1] }
+      })
+      .catch(() => null)
+    bursts.set(name, burst)
+  }
+  return bursts.get(name) ?? undefined
+}
+
+const burstFrame = (burst: Burst, tick: number): string => burst.frames[Math.min(tick, burst.frames.length - 1)]!
+
+// Rows seen running, by tool_use_id: quiet while running, then their landing shown once, then done.
+type Cast = { tick: number; landing?: Landing; damage?: number; burst?: Burst }
 const casts = new Map<string, Cast>()
 const landed = new Set<string>()
 // When each running call was first seen, by tool_use_id: the channelling line counts from it.
@@ -175,10 +184,10 @@ let ticker: ReturnType<EngineInterface['clock']['every']> | undefined
 // A tick still awaiting its blits makes the next one skip.
 let isPainting = false
 
-const frame = (cast: Cast): string =>
-  pack(cast.landing === undefined ? castCells(cast.color, cast.tick) : flashCells(cast.landing, cast.color, cast.tick))
+// A landing shows for its ticks, or as long as the burst beside it plays.
+const flashTicks = (cast: Cast): number => Math.max(FLASH_TICKS, cast.burst?.frames.length ?? 0)
 
-// One ticker paints every bar.
+// One ticker plays every burst and times every landing.
 async function paint($: EngineInterface) {
   if (isPainting) return
   isPainting = true
@@ -187,19 +196,26 @@ async function paint($: EngineInterface) {
     // Blits between frames fold into one, so every bar's goes out at once rather than a frame apiece.
     const blits: Array<Promise<void>> = []
     for (const [id, cast] of casts) {
+      // A running call waits quietly; only a landing counts its ticks.
+      if (cast.landing === undefined) continue
       cast.tick += 1
-      if (cast.landing !== undefined && cast.tick >= FLASH_TICKS) {
+      if (cast.tick >= flashTicks(cast)) {
         casts.delete(id)
         landed.add(id)
         hasLanded = true
         continue
       }
+      const burst = cast.burst
+      if (burst === undefined) continue
       blits.push($.ui
-        .blit({ requestId: id, key: 'cast', cells: frame(cast) })
+        .blit({ requestId: id, key: 'burst', source: { png: burstFrame(burst, cast.tick) } })
         .catch(() => ({ deny: 'blit failed' }))
         .then(shown => {
-          cast.misses = shown.deny === undefined ? 0 : cast.misses + 1
-          if (cast.misses >= MAX_MISSES) casts.delete(id)
+          if (shown.deny === undefined) return
+          cast.burst = undefined
+          // Refused on its first frames, while just drawn, the picture is the terminal's to refuse, not a row
+          // scrolled away: later crits go without.
+          if (cast.tick <= 2) canDrawBurst = false
         }))
     }
     // Each channelling line ticks its seconds over; one whose call has landed (or that keeps being refused) stops.
@@ -223,12 +239,12 @@ async function paint($: EngineInterface) {
         }))
     }
     await Promise.all(blits)
-    // A finished flash leaves its row: redraw so the bar goes.
+    // A finished landing leaves its row: redraw so the label goes.
     if (hasLanded) $.ui.invalidate('ui.render')
   } finally {
     // A throw must not leave every later tick skipping.
     isPainting = false
-    if (casts.size === 0 && channels.size === 0) {
+    if (![...casts.values()].some(cast => cast.landing !== undefined) && channels.size === 0) {
       ticker?.cancel()
       ticker = undefined
     }
@@ -298,7 +314,7 @@ export const register: Register = on => {
                 {drawnCast.landing === undefined ? (
                   <Text dimColor>{' casting…'}</Text>
                 ) : (
-                  landingLabel(Text, landingText(drawnCast.landing, drawnCast.damage))
+                  labelsLanding(drawnCast.landing) && landingLabel(Text, landingText(drawnCast.landing, drawnCast.damage))
                 )}
               </Box>
             )}
@@ -309,22 +325,25 @@ export const register: Register = on => {
 
     let cast = casts.get(id)
     if (e.props.isRunning && cast === undefined && !landed.has(id)) {
-      cast = { color: skillColor(e.props.tool), tick: 0, misses: 0 }
+      cast = { tick: 0 }
       casts.set(id, cast)
     } else if (!e.props.isRunning && cast !== undefined && cast.landing === undefined) {
       cast.landing = landingOf(e.props)
       cast.damage = damageOf(e.props.output)
       cast.tick = 0
+      if (cast.landing === 'hit' && cast.damage >= BURST_DAMAGE && canDrawBurst) cast.burst = await loadBurst($, burstOf(e.props.tool))
     }
-    if (cast !== undefined) ensureTicker($)
+    if (cast?.landing !== undefined) ensureTicker($)
 
-    const { Box, Text, Raster } = $.ui.resolve(e)
-    const bar = cast === undefined ? null : (
+    const { Box, Text, Image } = $.ui.resolve(e)
+    const bar = cast?.landing === undefined || !labelsLanding(cast.landing) ? null : (
       <Box flexDirection="row" marginLeft={2}>
-        <Raster key="cast" columns={CAST_COLUMNS} rows={1} cells={frame(cast)} />
-        {cast.landing === undefined
-          ? <Text dimColor>{' casting…'}</Text>
-          : landingLabel(Text, landingText(cast.landing, cast.damage))}
+        {landingLabel(Text, landingText(cast.landing, cast.damage))}
+        {cast.burst && (
+          <Box marginLeft={1}>
+            <Image key="burst" source={{ png: burstFrame(cast.burst, cast.tick) }} columns={cast.burst.columns} rows={cast.burst.rows} alt=" " />
+          </Box>
+        )}
       </Box>
     )
     return (
@@ -377,6 +396,9 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'ToolGroup' }, async ($, e, next) => {
+    // The live group unfolds into ToolUse rows, so each call is seen running and shows its landing (and a crit's
+    // burst); once the run is over it folds back into one count line.
+    if (e.props.isActive && !e.props.isExpanded) return next({ ...e, props: { ...e.props, isExpanded: true } })
     const drawn = await next(e)
     if (e.props.isExpanded) return drawn
     const combo = comboLabel(e.props.calls.length)

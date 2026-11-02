@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { CAST_COLUMNS, castCells, CHANNEL_COLUMNS, channelText, comboColor, comboLabel, CRIT_DAMAGE, damageOf, FLASH_TICKS, flashCells, formatDamage, groupIcon, landingOf, landingText, rowIcon, skillIcon } from './register'
+import { BURST_DAMAGE, burstOf, CHANNEL_COLUMNS, channelText, comboColor, comboLabel, CRIT_DAMAGE, damageOf, FLASH_TICKS, formatDamage, groupIcon, landingOf, landingText, rowIcon, skillIcon } from './register'
 
 const ROW = { tool: 'Bash', isErrored: false, isInterrupted: false }
 
@@ -62,23 +62,13 @@ for (const surface of ['terminal', 'desktop'] as const) {
   })
 }
 
-test('charges the cast bar one cell per tick, then pulses full', () => {
-  const at = (tick: number) => castCells(0xff0000, tick).map(([glyph]) => String.fromCharCode(glyph)).join('')
-  expect(at(0)).toBe(`█${'─'.repeat(CAST_COLUMNS - 1)}`)
-  expect(at(3)).toBe(`━━━█${'─'.repeat(CAST_COLUMNS - 4)}`)
-  expect(at(CAST_COLUMNS)).toBe('━'.repeat(CAST_COLUMNS))
-})
-
-test('lands as a hit, a red miss or a grey flight', () => {
+test('lands as a hit, a miss or a flight', () => {
   expect(landingOf(ROW)).toBe('hit')
   expect(landingOf({ ...ROW, isErrored: true })).toBe('miss')
   expect(landingOf({ ...ROW, isErrored: true, isInterrupted: true })).toBe('fled')
-  expect(flashCells('hit', 0x00ff00, 0)[0]?.[1]).toBe(0xffffff)
-  expect(flashCells('miss', 0x00ff00, 0)[0]?.[1]).toBe(0xff3b3b)
-  expect(flashCells('fled', 0x00ff00, 0)[0]?.[1]).toBe(0x808080)
 })
 
-test('casts under a running row, flashes as it lands, then clears', async ($, on) => {
+test('draws nothing under a running row, shows the landing once it lands, then clears', async ($, on) => {
   const clock = mock.clock(on)
   on('ui.render', { component: 'ToolUse' }, async ($$, e) => {
     const { Text } = $$.ui.resolve(e)
@@ -88,19 +78,77 @@ test('casts under a running row, flashes as it lands, then clears', async ($, on
   const ui = await $.ui.mount({ plugin: 'rpg-battle', surface: 'terminal', component: 'ToolUse', props: row })
   const texts = async () => (await ui.findAll({ type: 'Text' })).map(found => found.text).join('|')
 
-  expect(await ui.findAll({ type: 'Raster' })).toHaveLength(1)
-  expect(await texts()).toContain('casting')
+  expect(await ui.findAll({ type: 'Raster' })).toHaveLength(0)
+  expect(await texts()).not.toContain('casting')
   await clock.advance(400)
-  expect(await ui.findAll({ type: 'Raster' })).toHaveLength(1)
+  expect(await texts()).not.toContain('HIT!')
 
   await ui.redraw({ ...row, isRunning: false })
   expect(await texts()).toContain('HIT!')
   await clock.advance(80 * (FLASH_TICKS + 1))
-  expect(await ui.findAll({ type: 'Raster' })).toHaveLength(0)
   expect(await texts()).not.toContain('HIT!')
 })
 
-test('draws no cast bar for a row that was never seen running', async ($, on) => {
+// A 1x1 PNG standing in for the baked burst frames.
+const PIXEL = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
+
+test('each skill bursts in its own element', () => {
+  expect(burstOf('Bash')).toBe('meteor')
+  expect(burstOf('Read')).toBe('mana-burst')
+  expect(burstOf('Grep')).toBe('thunderclap')
+  expect(burstOf('Edit')).toBe('ground-slam')
+  expect(burstOf('mcp__github__search')).toBe('frost-nova')
+  expect(burstOf('SomethingNew')).toBe('crit-hit')
+})
+
+test('a critical hit bursts beside its flash for as long as the burst plays, a plain hit does not', async ($, on) => {
+  const clock = mock.clock(on)
+  const BURST_FRAMES = FLASH_TICKS + 8
+  const asked: string[] = []
+  on('ui.render', { component: 'ToolUse' }, async ($$, e) => {
+    const { Text } = $$.ui.resolve(e)
+    return <Text>Read(big.ts)</Text>
+  })
+  // A terminal that draws pictures takes every frame.
+  on('ui.blit', async () => ({ value: {} }))
+  on('fs.read', async ($$, e) => {
+    asked.push(e.path)
+    return { value: e.as === 'bytes' ? { base64: PIXEL } : JSON.stringify({ frames: BURST_FRAMES, cells: [19, 7] }) }
+  })
+  const land = async (id: string, output: string) => {
+    const row = { tool_use_id: id, tool: 'Read', input: { file_path: 'big.ts' }, isRunning: true, isErrored: false, isInterrupted: false }
+    const ui = await $.ui.mount({ plugin: 'rpg-battle', surface: 'terminal', component: 'ToolUse', props: row })
+    await ui.redraw({ ...row, isRunning: false, output })
+    return ui
+  }
+
+  const plain = await land('p1', 'x'.repeat(BURST_DAMAGE - 1))
+  expect(await plain.findAll({ type: 'Image' })).toHaveLength(0)
+
+  const crit = await land('k1', 'x'.repeat(BURST_DAMAGE))
+  const burst = await crit.findAll({ type: 'Image' })
+  expect(burst).toHaveLength(1)
+  expect(burst[0]?.props).toMatchObject({ columns: 19, rows: 7 })
+  expect(asked.some(path => path.endsWith('/assets/fx/mana-burst/meta.json'))).toBe(true)
+  // Past the plain flash the burst still plays; once its frames are through, it goes with the flash.
+  await clock.advance(80 * (FLASH_TICKS + 1))
+  expect(await crit.findAll({ type: 'Image' })).toHaveLength(1)
+  await clock.advance(80 * (BURST_FRAMES - FLASH_TICKS + 1))
+  expect(await crit.findAll({ type: 'Image' })).toHaveLength(0)
+})
+
+test('a miss lands without a label of its own: its result already says MISS', async ($, on) => {
+  on('ui.render', { component: 'ToolUse' }, async ($$, e) => {
+    const { Text } = $$.ui.resolve(e)
+    return <Text>Bash(false)</Text>
+  })
+  const row = { tool_use_id: 'm1', tool: 'Bash', input: { command: 'false' }, isRunning: true, isErrored: false, isInterrupted: false }
+  const ui = await $.ui.mount({ plugin: 'rpg-battle', surface: 'terminal', component: 'ToolUse', props: row })
+  await ui.redraw({ ...row, isRunning: false, isErrored: true })
+  expect((await ui.findAll({ type: 'Text' })).map(found => found.text).join('|')).not.toContain('MISS')
+})
+
+test('shows no landing for a row that was never seen running', async ($, on) => {
   on('ui.render', { component: 'ToolUse' }, async ($$, e) => {
     const { Text } = $$.ui.resolve(e)
     return <Text>Read(a.ts)</Text>
@@ -109,7 +157,7 @@ test('draws no cast bar for a row that was never seen running', async ($, on) =>
     plugin: 'rpg-battle', surface: 'terminal', component: 'ToolUse',
     props: { tool_use_id: 'r1', tool: 'Read', input: { file_path: 'a.ts' }, isRunning: false, isErrored: false, isInterrupted: false },
   })
-  expect(await ui.findAll({ type: 'Raster' })).toHaveLength(0)
+  expect((await ui.findAll({ type: 'Text' })).map(found => found.text).join('|')).not.toContain('HIT!')
 })
 
 test('on desktop the cast bar charges as a drawing, flashes as it lands, then clears', async ($, on) => {
