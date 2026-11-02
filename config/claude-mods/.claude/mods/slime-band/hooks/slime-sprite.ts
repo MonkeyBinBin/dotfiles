@@ -12,8 +12,26 @@ export const SLIME_WIDTH = 12
 export const SLIME_ROWS = 3
 
 export const SLIME_FRAMES = {
-  // A slime: it hops (squash, then stretch) instead of running.
+  // A slime: it hops instead of running. A crouch winds it up,
   run1: [
+    '............',
+    '............',
+    '............',
+    '..GGGGGGGG..',
+    '.GLLGKGGKGG.',
+    'gggggggggggg',
+  ],
+  // then it is in the air, stretched tall and a pixel off the ground,
+  run2: [
+    '....GGGG....',
+    '...GLGGGG...',
+    '..GLGKGGKGG.',
+    '...GGGGGG...',
+    '....gggg....',
+    '............',
+  ],
+  // squashes flat as it lands,
+  run3: [
     '............',
     '............',
     '...GGGGGG...',
@@ -21,19 +39,29 @@ export const SLIME_FRAMES = {
     'GGGGGKGGKGGG',
     '.gggggggggg.',
   ],
-  run2: [
+  // and stands round again before the next crouch.
+  run4: [
+    '............',
     '....GGGG....',
-    '...GLGGGG...',
-    '..GLGKGGKGG.',
-    '..GGGGGGGGG.',
-    '...GGGGGG...',
-    '....gggg....',
+    '..GLLGGGGG..',
+    '.GLGGKGGKGG.',
+    '.GGGGGGGGGG.',
+    '..gggggggg..',
   ],
   sit: [
     '............',
     '....GGGG....',
     '..GLLGGGGG..',
     '.GLGGKGGKGG.',
+    '.GGGPGGGGPG.',
+    '..gggggggg..',
+  ],
+  // Sitting with its eyes shut for a tick.
+  blink: [
+    '............',
+    '....GGGG....',
+    '..GLLGGGGG..',
+    '.GLGGgGGgGG.',
     '.GGGPGGGGPG.',
     '..gggggggg..',
   ],

@@ -1,14 +1,14 @@
 import { expect, mock, test } from 'claude-code/testing'
 
 import { SLIME_WIDTH } from './slime-sprite'
-import { SLIME_AREA_MIN, gradientAt, layoutHud } from './hud'
+import { DROP_ROWS, SLIME_AREA_MIN, dropIn, glintAt, glintLine, gradientAt, layoutHud, rollValue } from './hud'
 import { allocateCells, gaugeLine, layoutGauge, legendLines, percentColor, rowWidth, wrapLegend } from './context-bar'
 import { TUBE_ROWS, TUBE_TICKS, groundPixels, soilAt, tubeColumns, tubePixels } from './mana-tube'
 import { hexOf, iconOf, liquidOf } from './liquids'
 import type { ContextInfo } from '../types'
 import { HOP_MS, sceneSize, sceneSvg, walkAt } from './desktop'
 import { BANNER_MS, bannerFor } from './banner'
-import { CAST_TICKS, LISTEN_MS, NAP_AFTER_MS, TRACK_ROWS, composeTrack, floorAt, formatTokens, infoLine, infoSegments, slimePose, stepSlime } from './register'
+import { CAST_TICKS, LISTEN_MS, NAP_AFTER_MS, TRACK_ROWS, burstOf, composeTrack, floorAt, formatTokens, hopAt, infoLine, infoSegments, slimePose, stepSlime } from './register'
 
 const BAND_PROPS = {
   hasSurvey: false,
@@ -662,4 +662,139 @@ test('on desktop the slime listens while the person types, then casts what they 
   const cast = await scene()
   expect(cast.source).toContain('attributeName="opacity"')
   expect(cast.alt).not.toContain('listening')
+})
+
+test('a hop crouches, leaps a pixel off the ground over its shadow, lands in a puff of dust, then stands', () => {
+  const cycle = Array.from({ length: 10 }, (_, tick) => hopAt(tick).pose)
+  expect(cycle).toEqual(['run1', 'run1', 'run2', 'run2', 'run2', 'run2', 'run3', 'run3', 'run4', 'run4'])
+  expect(slimePose(true, 0, 12)).toBe('run2')
+  const at = { x: 10, dir: 1 as const, snore: 0 }
+  // In the air the bottom pixel row under it is empty, and the grass under its middle darker than elsewhere.
+  const air = composeTrack(40, { ...at, pose: 'run2' })
+  const stand = composeTrack(40, { ...at, pose: 'run4' })
+  expect(cellAt(air, 40, 2, 15)?.[2]).toBe(0x01000000)
+  const grass = (cells: string, col: number) => cellAt(cells, 40, 3, col)[1]!
+  expect(grass(air, 15)).toBeLessThan(grass(stand, 15))
+  expect(grass(air, 25)).toBe(grass(stand, 25))
+  // Landing, a pixel of dust either side on the ground row, then a row up and a column out.
+  const DUST = 0xd8c8a8
+  const land = composeTrack(40, { ...at, pose: 'run3', dust: 0 })
+  expect(cellAt(land, 40, 2, 9)).toEqual([0x2584, DUST, 0x01000000])
+  expect(cellAt(land, 40, 2, 10 + SLIME_WIDTH)).toEqual([0x2584, DUST, 0x01000000])
+  const puff = composeTrack(40, { ...at, pose: 'run3', dust: 1 })
+  expect(cellAt(puff, 40, 2, 8)?.[1]).toBe(DUST)
+  expect(cellAt(puff, 40, 2, 9)?.[0]).toBe(0x20)
+})
+
+test('sitting, the slime blinks for one tick every so often', () => {
+  const poses = Array.from({ length: 80 }, (_, tick) => slimePose(false, 1000, tick))
+  expect(poses.filter(pose => pose === 'blink')).toHaveLength(2)
+  expect(poses.filter(pose => pose === 'sit')).toHaveLength(78)
+  expect(slimePose(false, 1000, 39, true)).toBe('blink')
+  expect(slimePose(false, NAP_AFTER_MS, 39)).toBe('sleep')
+})
+
+test('napping, a z rises beside its head, then a Z a row up and a column further out', () => {
+  const at = { x: 10, dir: 1 as const, pose: 'sleep' as const }
+  const one = composeTrack(40, { ...at, snore: 1 })
+  expect(cellAt(one, 40, 1, 20)?.[0]).toBe(0x7a)
+  expect(topRowHas(one, 40, 0x5a)).toBe(false)
+  const two = composeTrack(40, { ...at, snore: 2 })
+  expect(cellAt(two, 40, 1, 20)?.[0]).toBe(0x7a)
+  expect(cellAt(two, 40, 0, 21)?.[0]).toBe(0x5a)
+  // Facing left, they rise out the other side.
+  expect(cellAt(composeTrack(40, { ...at, dir: -1, snore: 2 }), 40, 0, 10)?.[0]).toBe(0x5a)
+})
+
+test('low on mana, a two-pixel drop of sweat slides down behind its head, and the slime pales', () => {
+  const SWEAT = 0x7ad0ff
+  const at = { x: 10, dir: 1 as const, pose: 'sit' as const, snore: 0 }
+  expect(cellAt(composeTrack(40, { ...at, sweat: 0 }), 40, 1, 9)).toEqual([0x2580, SWEAT, SWEAT])
+  const slid = composeTrack(40, { ...at, sweat: 1 })
+  expect(cellAt(slid, 40, 1, 9)).toEqual([0x2584, SWEAT, 0x01000000])
+  expect(cellAt(slid, 40, 2, 9)).toEqual([0x2580, SWEAT, 0x01000000])
+  const body = (cells: string) => cellAt(cells, 40, 2, 15)[1]!
+  expect(body(composeTrack(40, { ...at, pale: true }))).not.toBe(body(composeTrack(40, at)))
+})
+
+test('a banner\'s letters drop in a row a tick, then a diagonal glint sweeps them and rests', () => {
+  const hud = layoutHud([{ key: 'banner', icon: '✦', value: 'LEVEL UP!', label: 'the hero grows stronger', color: 'magenta', rgb: 0xc88cff }], 80)
+  expect(dropIn(hud.pixels, 0)).toHaveLength(0)
+  const falling = dropIn(hud.pixels, DROP_ROWS - 2)
+  expect(Math.max(...falling.map(pixel => pixel.y))).toBe(3)
+  expect(dropIn(hud.pixels, DROP_ROWS)).toEqual(hud.pixels)
+  // Only pixels near the line x + y = at brighten; the rest keep their gradient.
+  const line = Math.min(...hud.pixels.map(pixel => pixel.x + pixel.y)) + 6
+  const glinted = glintAt(hud.pixels, line)
+  const changed = glinted.filter((pixel, at) => pixel.rgb !== hud.pixels[at]!.rgb)
+  expect(changed.length).toBeGreaterThan(0)
+  for (const pixel of changed) expect(Math.abs(pixel.x + pixel.y - line)).toBeLessThanOrEqual(2)
+  // The line moves on each tick across the word, then rests a while before the next sweep.
+  const lines = Array.from({ length: 60 }, (_, tick) => glintLine(hud.pixels, tick))
+  expect(lines[1]!).toBeGreaterThan(lines[0]!)
+  expect(lines.some(at => at === undefined)).toBe(true)
+  expect(glintLine([], 3)).toBeUndefined()
+})
+
+test('a changed number rolls each digit up from the old value to the new one', () => {
+  expect(rollValue('9', '14', 0)).toBe('09')
+  expect(rollValue('9', '14', 1)).toBe('14')
+  expect(rollValue('32.1k', '33.4k', 0)).toBe('32.1k')
+  expect(rollValue('32.1k', '33.4k', 0.5)).toMatch(/^\d\d\.\dk$/)
+  expect(rollValue('8s', '12s', 1)).toBe('12s')
+  // Its shape is the new value's throughout, so the layout holds still.
+  for (const t of [0, 0.25, 0.5, 0.75]) expect(rollValue('950', '1.2k', t)).toHaveLength(4)
+})
+
+test('on the terminal the labels take the big numbers\' own hex colours', async ($, on) => {
+  mock.clock(on)
+  on('session.turns', async () => ({ value: 3 }))
+  on('ui.render', { component: 'AbovePrompt' }, async ($$, e) => {
+    const { Text } = $$.ui.resolve(e)
+    return <Text> </Text>
+  })
+  const ui = await $.ui.mount({ plugin: 'slime-band', surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
+  const colors = (await ui.findAll({ type: 'Text' })).map(text => text.props.color).filter(color => color !== undefined)
+  expect(colors).toContain('#56c8dc')
+  expect(colors).not.toContain('cyan')
+})
+
+const PIXEL = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
+
+test('the big moments burst beside their banner while the frames play, then the burst goes', async ($, on) => {
+  expect(burstOf({ word: 'LEVEL UP!', icon: '✦', label: '', color: 'magenta', until: 0 })).toBe('level-up')
+  expect(burstOf({ word: 'SAVED!', icon: '💾', label: '', color: 'cyan', until: 0 })).toBeUndefined()
+  const start = Date.UTC(2026, 9, 2, 12)
+  const clock = mock.clock(on, { now: start })
+  const FRAMES = 4
+  const asked: string[] = []
+  const pictures: string[] = []
+  on('session.turns', async () => ({ value: 3 }))
+  on('state.get', async (_$, e, next) =>
+    (e as { plugin: string; key: string }).plugin === 'rpg-hud' && (e as { key: string }).key === 'flashUntil'
+      ? ({ value: { value: start + BANNER_MS, version: 1 } } as never)
+      : next(e))
+  on('fs.read', async ($$, e) => {
+    asked.push(e.path)
+    return { value: e.as === 'bytes' ? { base64: PIXEL } : JSON.stringify({ frames: FRAMES, cells: [9, 4], fps: 12.5 }) }
+  })
+  on('ui.blit', async (_$, e) => {
+    if ('source' in e) pictures.push(e.key)
+    return { value: {} }
+  })
+  on('ui.render', { component: 'AbovePrompt' }, async ($$, e) => {
+    const { Text } = $$.ui.resolve(e)
+    return <Text> </Text>
+  })
+  const ui = await $.ui.mount({ plugin: 'slime-band', surface: 'terminal', component: 'AbovePrompt', props: { ...BAND_PROPS, bodyColumns: 80 } })
+  const burst = await ui.findAll({ type: 'Image' })
+  expect(burst).toHaveLength(1)
+  expect(burst[0]?.props).toMatchObject({ columns: 9, rows: 4 })
+  expect(asked.some(path => path.endsWith('/assets/fx/level-up/meta.json'))).toBe(true)
+  await clock.advance(80 * (FRAMES - 1))
+  expect(pictures.filter(key => key === 'burst').length).toBeGreaterThan(0)
+  // Played out, it leaves the band while the banner still shows, and does not play again.
+  await clock.advance(80 * 3)
+  expect(await ui.findAll({ type: 'Image' })).toHaveLength(0)
+  expect((await ui.findAll({ type: 'Text' })).map(row => row.text ?? '').join('|')).toContain('the hero grows stronger')
 })

@@ -7,10 +7,10 @@ import { TUBE_ROWS, TUBE_TICKS, groundPixels, groundSvg } from './mana-tube'
 import type { ContextGauge } from './context-bar'
 import { SLIME_FRAMES, SLIME_PALETTE, SLIME_ROWS, SLIME_WIDTH } from './slime-sprite'
 import type { SlimePose } from './slime-sprite'
-import { formatTokens, layoutHud } from './hud'
+import { dropIn, formatTokens, glintAt, glintLine, layoutHud, mixToward, rollValue } from './hud'
 import type { HudFact, HudPixel } from './hud'
 import { CAST_MS, sceneSize, sceneSvg, sceneWidth, walkAt } from './desktop'
-import { SHIMMER_TICKS, bannerFor, readMoments } from './banner'
+import { bannerFor, readMoments } from './banner'
 import type { Banner } from './banner'
 import type { SceneSlime } from './desktop'
 
@@ -28,8 +28,14 @@ const contextInfo = atom({ plugin: 'slime-band', key: 'context' } as const, EMPT
 const FRAME_MS = 80
 // The desktop tube: CSS pixels per tube pixel, a band column's CSS width, and how long each ripple step holds.
 const TUBE_FRAME_MS = FRAME_MS * TUBE_TICKS
-// Ticks each hop frame (squash, stretch) stays up.
-const RUN_TICKS = 3
+// The hop, and the ticks each of its frames stays up: a crouch, the leap (a shadow on the grass under it), the
+// landing (a puff of dust either side), standing round again.
+const HOP: ReadonlyArray<readonly [SlimePose, number]> = [['run1', 2], ['run2', 4], ['run3', 2], ['run4', 2]]
+const HOP_TICKS = HOP.reduce((sum, [, ticks]) => sum + ticks, 0)
+// Sitting, it shuts its eyes for a tick this often.
+const BLINK_EVERY = 40
+// Ticks a changed number rolls from its old value to the new one.
+export const ROLL_TICKS = 8
 // How long the slime sits after a turn before it naps.
 export const NAP_AFTER_MS = 20_000
 // How long the slime naps at the inn once the conversation is compacted, the mana poured back.
@@ -47,6 +53,14 @@ const SWEAT_COLOR = 0x7ad0ff
 const NOTE_COLOR = 0xffb4dc
 const FLASH = 0xffffff
 const SPARKS = [0xfff07a, 0xffffff, 0xffd23c]
+const DUST = 0xd8c8a8
+// The shadow: how far the grass under the slime darkens, and the sprite columns at either end it leaves out.
+const SHADOW = 0.45
+const SHADOW_FROM = 3
+// How far a slime low on mana pales toward white.
+const PALE = 0.35
+// Each step of the sweat drop's slide holds for this many blinks of the danger.
+const SWEAT_STEPS = 3
 // While the person types, the slime stops to listen, and keeps listening this long after the last key.
 export const LISTEN_MS = 3000
 // A sent prompt: the slime crouches, leaps with a flash, and a ring of sparks flies off it. Ticks in all.
@@ -71,9 +85,19 @@ export const floorAt = (col: number, y: number): number | undefined => {
 
 // Waiting on the person (a permission prompt, a question) it sits up, never hopping or napping.
 export const slimePose = (isWorking: boolean, idleMs: number, tick: number, isWaiting = false): SlimePose => {
-  if (isWaiting) return 'sit'
-  if (isWorking) return Math.floor(tick / RUN_TICKS) % 2 === 0 ? 'run1' : 'run2'
-  return idleMs >= NAP_AFTER_MS ? 'sleep' : 'sit'
+  if (isWorking && !isWaiting) return hopAt(tick).pose
+  if (!isWaiting && idleMs >= NAP_AFTER_MS) return 'sleep'
+  return tick % BLINK_EVERY === BLINK_EVERY - 1 ? 'blink' : 'sit'
+}
+
+// Where `tick` falls in the hop: its frame, and how many ticks into that frame.
+export const hopAt = (tick: number): { pose: SlimePose; step: number } => {
+  let left = ((tick % HOP_TICKS) + HOP_TICKS) % HOP_TICKS
+  for (const [pose, ticks] of HOP) {
+    if (left < ticks) return { pose, step: left }
+    left -= ticks
+  }
+  return { pose: 'run1', step: 0 }
 }
 
 // One step along the track, turning round at either end.
@@ -103,10 +127,16 @@ export const composeTrack = (
     x: number
     dir: 1 | -1
     pose: SlimePose
+    // Napping: 0 quiet, 1 a 'z', 2 a 'Z' risen up and out past it.
     snore: number
     alert?: boolean
-    sweat?: boolean
+    // Low on mana, a drop of sweat sliding down behind its head, this many pixels from its start.
+    sweat?: number
     embers?: boolean
+    // Low on mana, the slime pales.
+    pale?: boolean
+    // Ticks into a landing: the puff of dust either side, rising and spreading.
+    dust?: number
     // Listening to the person type: a note above its head, 0 on its right, 1 on its left.
     note?: number
     // Ticks into a cast: the slime flashes white, then sparks fly from it.
@@ -129,17 +159,40 @@ export const composeTrack = (
       if (x >= 0 && x < trackWidth && y >= 0 && y < GRASS_Y) sparks.set(y * trackWidth + x, SPARKS[reach % SPARKS.length]!)
     }
   }
+  // Pixels drawn beside the slime: its puff of dust as it lands, a drop of sweat.
+  const extras = new Map<number, number>()
+  const put = (x: number, y: number, rgb: number) => {
+    if (x >= 0 && x < trackWidth && y >= 0 && y < GRASS_Y) extras.set(y * trackWidth + x, rgb)
+  }
+  if (slime.dust !== undefined) {
+    const out = slime.dust > 0 ? 1 : 0
+    put(slime.x - 1 - out, GRASS_Y - 1 - out, DUST)
+    put(slime.x + SLIME_WIDTH + out, GRASS_Y - 1 - out, DUST)
+  }
+  if (slime.sweat !== undefined) {
+    const col = slime.dir === 1 ? slime.x - 1 : slime.x + SLIME_WIDTH
+    put(col, 2 + slime.sweat, SWEAT_COLOR)
+    put(col, 3 + slime.sweat, SWEAT_COLOR)
+  }
+  // In the air, its shadow darkens the grass under its middle.
+  const isAirborne = slime.pose === 'run2'
   const rows = TRACK_ROWS + Math.ceil((ground?.length ?? 0) / 2)
   const colorAt = (col: number, y: number): number | undefined => {
     if (y >= groundTop) return ground?.[y - groundTop]?.[col]
     if (slime.embers === true && y === GRASS_Y + 1 && isCrack(col)) return EMBER
-    const floor = floorAt(col, y)
-    if (floor !== undefined) return floor
     const spriteCol = col - slime.x
+    const floor = floorAt(col, y)
+    if (floor !== undefined) {
+      return isAirborne && y === GRASS_Y && spriteCol >= SHADOW_FROM && spriteCol < SLIME_WIDTH - SHADOW_FROM
+        ? mixToward(floor, 0, SHADOW)
+        : floor
+    }
     if (spriteCol >= 0 && spriteCol < SLIME_WIDTH) {
       const sprite = pixelAt(slime.pose, y, spriteCol, slime.dir)
-      if (sprite !== undefined) return isFlash ? FLASH : sprite
+      if (sprite !== undefined) return isFlash ? FLASH : slime.pale === true ? mixToward(sprite, 0xffffff, PALE) : sprite
     }
+    const extra = extras.get(y * trackWidth + col)
+    if (extra !== undefined) return extra
     const spark = sparks.get(y * trackWidth + col)
     if (spark !== undefined) return spark
     return lit.get(y * trackWidth + col)
@@ -160,21 +213,16 @@ export const composeTrack = (
       }
     }
   }
-  // While napping, a 'z' then a 'Z' drift up beside its head.
+  // While napping, a 'z' beside its head, then a 'Z' a row up and a column further out.
   if (slime.pose === 'sleep' && slime.snore > 0) {
-    const col = Math.min(trackWidth - 1, slime.x + (slime.dir === 1 ? SLIME_WIDTH - 2 : 1))
-    const glyph = slime.snore === 1 ? 0x7a : 0x5a
-    words.set([glyph, SNORE_COLOR, DEFAULT_COLOR], (0 * trackWidth + col) * 3)
+    const at = (offset: number) => Math.max(0, Math.min(trackWidth - 1, slime.dir === 1 ? slime.x + offset : slime.x + SLIME_WIDTH - 1 - offset))
+    words.set([0x7a, SNORE_COLOR, DEFAULT_COLOR], (1 * trackWidth + at(SLIME_WIDTH - 2)) * 3)
+    if (slime.snore === 2) words.set([0x5a, SNORE_COLOR, DEFAULT_COLOR], (0 * trackWidth + at(SLIME_WIDTH - 1)) * 3)
   }
   // Listening, a note bobs above its head, now on one side, now the other.
   if (slime.note !== undefined) {
     const col = Math.max(0, Math.min(trackWidth - 1, slime.x + (slime.note === 0 ? SLIME_WIDTH - 3 : 2)))
     words.set([0x266a, NOTE_COLOR, DEFAULT_COLOR], (0 * trackWidth + col) * 3)
-  }
-  // Low on mana, a drop of sweat beads behind its head.
-  if (slime.sweat === true) {
-    const col = Math.max(0, Math.min(trackWidth - 1, slime.dir === 1 ? slime.x - 1 : slime.x + SLIME_WIDTH))
-    words.set([0x2c, SWEAT_COLOR, DEFAULT_COLOR], (1 * trackWidth + col) * 3)
   }
   // Waiting on the person, a '!' blinks just ahead of its face.
   if (slime.alert === true) {
@@ -210,8 +258,14 @@ const slime = {
   // The columns left of the HUD, where the slime hops.
   areaWidth: 0,
   hud: [] as HudPixel[],
-  // While a banner shows: its letters in each colour of its shimmer, taking turns on the terminal.
-  shimmer: [] as HudPixel[][],
+  // The facts behind the big numbers, and the tick their last change began rolling with the values it rolls from.
+  facts: [] as HudFact[],
+  roll: undefined as { from: Map<string, string>; tick: number } | undefined,
+  // While a banner shows: which one, the tick it arrived (its letters drop in, then a glint sweeps them) and its burst.
+  banner: undefined as { key: string; tick: number } | undefined,
+  burst: undefined as { key: string; burst: Burst; tick: number } | undefined,
+  // The banner whose burst has played, so a redraw within it does not play it again.
+  burstPlayed: '',
   // Draws the band again once the banner's moment passes.
   bannerTimer: undefined as Timer | undefined,
   requestId: '',
@@ -245,6 +299,69 @@ const redraw = ($: EngineInterface) => {
   if (slime.surface !== undefined && slime.surface !== 'terminal') $.ui.invalidate('ui.render')
 }
 
+// The big numbers this tick: a changed one rolling to its new value, a banner's letters dropping in then glinting.
+const hudFrame = (): HudPixel[] => {
+  const banner = slime.banner
+  if (banner !== undefined) {
+    const ticks = slime.tick - banner.tick
+    const pixels = dropIn(slime.hud, ticks)
+    const line = glintLine(slime.hud, ticks)
+    return line === undefined ? pixels : glintAt(pixels, line)
+  }
+  const roll = slime.roll
+  if (roll === undefined) return slime.hud
+  const t = (slime.tick - roll.tick) / ROLL_TICKS
+  if (t >= 1) {
+    slime.roll = undefined
+    return slime.hud
+  }
+  // A rolling number glows toward white, fading back to its colour as it settles.
+  const facts = slime.facts.map(fact => {
+    const from = roll.from.get(fact.key)
+    return from === undefined ? fact : { ...fact, value: rollValue(from, fact.value, t), rgb: mixToward(fact.rgb, 0xffffff, ROLL_GLOW * (1 - t)) }
+  })
+  return layoutHud(facts, slime.trackWidth).pixels
+}
+
+// A rolling number's glow toward white as it starts.
+const ROLL_GLOW = 0.6
+
+// A big moment's burst: a pixelfx effect baked into frames under assets/fx/<name>/ (see assets/fx/NOTICE.md).
+type Burst = { frames: string[]; columns: number; rows: number }
+const BURSTS: Readonly<Record<string, string>> = {
+  'LEVEL UP!': 'level-up',
+  'VICTORY!': 'confetti',
+  'QUEST CLEAR': 'collect-burst',
+  'DELIVERED!': 'loot-beam',
+}
+export const burstOf = (banner: Banner): string | undefined => BURSTS[banner.word]
+// Read once each: absent until read, null once a read failed (not tried again).
+const bursts = new Map<string, Burst | null>()
+// A terminal that draws the alt instead of the picture refuses its blit; later banners then go without.
+let canDrawBurst = true
+
+const loadBurst = async ($: EngineInterface, name: string): Promise<Burst | undefined> => {
+  if (!bursts.has(name)) {
+    const dir = `${$.plugin.root}/assets/fx/${name}`
+    const burst = await $.fs
+      .read(`${dir}/meta.json`)
+      .then(async text => {
+        const meta = JSON.parse(text) as { frames: number; cells: [number, number] }
+        const frames = await Promise.all(
+          Array.from({ length: meta.frames }, async (_, n) => (await $.fs.read(`${dir}/${n}.png`, { as: 'bytes' })).base64),
+        )
+        return { frames, columns: meta.cells[0], rows: meta.cells[1] }
+      })
+      .catch(() => null)
+    bursts.set(name, burst)
+  }
+  return bursts.get(name) ?? undefined
+}
+
+// The burst stands on the grass just left of the banner's letters; the slime keeps clear of it, with this much
+// room to hop at least, or the burst goes.
+const BURST_ROOM = SLIME_WIDTH + 4
+
 async function paint($: EngineInterface) {
   if (slime.trackWidth === 0) return
   const now = await $.clock.now()
@@ -270,9 +387,11 @@ async function paint($: EngineInterface) {
     slime.dir = moved.dir
   }
   const snore = pose === 'sleep' ? Math.floor(slime.tick / SNORE_TICKS) % 3 : 0
-  const hud = slime.shimmer.length > 0 ? (slime.shimmer[Math.floor(slime.tick / SHIMMER_TICKS) % slime.shimmer.length] ?? slime.hud) : slime.hud
-  // Near the rune the slime sweats and the cracks glow, by turns.
-  const danger = slime.isManaCritical && Math.floor(slime.tick / ALERT_TICKS) % 2 === 1
+  const hud = hudFrame()
+  // Near the rune the slime sweats and the cracks glow, by turns; each time it shows, the drop has slid a pixel.
+  const blinks = Math.floor(slime.tick / ALERT_TICKS)
+  const danger = slime.isManaCritical && blinks % 2 === 1
+  const landing = casting === undefined && pose === 'run3' ? hopAt(slime.tick).step : undefined
   const ground = slime.mana === undefined ? undefined : groundPixels(slime.mana, slime.trackWidth, slime.tick, slime.isWorking)
   const cells = composeTrack(
     slime.trackWidth,
@@ -282,20 +401,48 @@ async function paint($: EngineInterface) {
       pose,
       snore,
       alert,
-      sweat: danger,
+      ...(danger ? { sweat: Math.floor(blinks / 2) % SWEAT_STEPS } : {}),
       embers: danger,
+      pale: slime.isManaCritical,
+      ...(landing === undefined ? {} : { dust: landing }),
       ...(isListening ? { note: Math.floor(slime.tick / ALERT_TICKS) % 2 } : {}),
       ...(casting === undefined ? {} : { cast: casting }),
     },
     hud,
     ground,
   )
-  if (cells === slime.shown) return
+  const burst = slime.burst
+  const burstAt = burst === undefined ? undefined : slime.tick - burst.tick
+  // Played out, the burst leaves the band: a redraw takes its picture away and gives the slime its room back.
+  if (burst !== undefined && burstAt !== undefined && burstAt >= burst.burst.frames.length) {
+    slime.burst = undefined
+    $.ui.invalidate('ui.render')
+  }
+  const burstBlit =
+    burst === undefined || burstAt === undefined || burstAt >= burst.burst.frames.length
+      ? undefined
+      : $.ui
+          .blit({ requestId: slime.requestId, key: 'burst', source: { png: burst.burst.frames[burstAt]! } })
+          .catch(() => ({ deny: 'blit failed' }))
+          .then(shown => {
+            if (shown.deny === undefined || slime.burst !== burst) return
+            slime.burst = undefined
+            // Refused on its first frames the picture is the terminal's to refuse: later banners go without.
+            if (burstAt <= 2) canDrawBurst = false
+            $.ui.invalidate('ui.render')
+          })
+  if (cells === slime.shown) {
+    await burstBlit
+    return
+  }
 
   // A refusal and a failed blit both mean the track is not on screen.
-  const done = await $.ui
-    .blit({ requestId: slime.requestId, key: 'track', cells, columns: slime.trackWidth, rows: trackRows() })
-    .catch(() => ({ deny: 'blit failed' }))
+  const [done] = await Promise.all([
+    $.ui
+      .blit({ requestId: slime.requestId, key: 'track', cells, columns: slime.trackWidth, rows: trackRows() })
+      .catch(() => ({ deny: 'blit failed' })),
+    burstBlit,
+  ])
   if (done.deny !== undefined) {
     slime.ticker?.cancel()
     slime.ticker = undefined
@@ -342,9 +489,6 @@ const FACT_COLORS = {
   green: 0x5ad27a,
   red: 0xff5f5f,
 } as const
-
-// The banner's shimmer: its colour, then a flash of white.
-const SHIMMER = 0xffffff
 
 const LABEL_HEX: Record<string, string> = Object.fromEntries(
   Object.entries(FACT_COLORS).map(([name, rgb]) => [name, `#${rgb.toString(16).padStart(6, '0')}`]),
@@ -640,7 +784,7 @@ export const register: Register = on => {
       )
     }
 
-    const { Box, Text, Raster } = $.ui.resolve(e)
+    const { Box, Text, Raster, Image } = $.ui.resolve(e)
     if (e.props.isWorking && !slime.isWorking) {
       slime.isWorking = true
     }
@@ -657,15 +801,39 @@ export const register: Register = on => {
       hud = layoutHud(band.facts, trackWidth)
     }
     slime.trackWidth = trackWidth
-    slime.areaWidth = hud.areaWidth
     slime.hud = hud.pixels
-    slime.shimmer = band.banner === undefined ? [] : [hud.pixels, layoutHud([bannerFact(band.banner, SHIMMER)], trackWidth).pixels]
-    slime.x = Math.min(slime.x, Math.max(0, hud.areaWidth - SLIME_WIDTH))
+    if (band.banner === undefined) {
+      slime.banner = undefined
+      slime.burst = undefined
+      // A fact whose value changed since the last drawing rolls to its new one.
+      const before = new Map(slime.facts.map(fact => [fact.key, fact.value]))
+      const changed = new Map(band.facts.flatMap(fact => {
+        const from = before.get(fact.key)
+        return from === undefined || from === fact.value ? [] : [[fact.key, from] as const]
+      }))
+      if (changed.size > 0) slime.roll = { from: changed, tick: slime.tick }
+      slime.facts = band.facts
+    } else {
+      const key = `${band.banner.word}@${band.banner.until}`
+      if (slime.banner?.key !== key) slime.banner = { key, tick: slime.tick }
+      // A big moment's burst plays once, beside the letters, while there is room for it and the slime.
+      const name = burstOf(band.banner)
+      if (name !== undefined && slime.burstPlayed !== key && canDrawBurst) {
+        slime.burstPlayed = key
+        const burst = await loadBurst($, name)
+        if (burst !== undefined && hud.areaWidth - burst.columns - 1 >= BURST_ROOM) slime.burst = { key, burst, tick: slime.tick }
+      }
+      if (slime.burst !== undefined && slime.burst.key !== key) slime.burst = undefined
+    }
+    const burst = slime.burst
+    const burstLeft = burst === undefined ? 0 : hud.areaWidth - burst.burst.columns - 1
+    slime.areaWidth = burst === undefined ? hud.areaWidth : burstLeft - 1
+    slime.x = Math.min(slime.x, Math.max(0, slime.areaWidth - SLIME_WIDTH))
     slime.requestId = e.requestId
     slime.ticker ??= $.clock.every(FRAME_MS, () => void paint($))
     const pose = slimePose(slime.isWorking, (await $.clock.now()) - slime.idleSince, slime.tick, slime.waitingFor !== undefined)
     const ground = slime.mana === undefined ? undefined : groundPixels(slime.mana, trackWidth, slime.tick, slime.isWorking)
-    slime.shown = composeTrack(trackWidth, { x: slime.x, dir: slime.dir, pose, snore: 0 }, hud.pixels, ground)
+    slime.shown = composeTrack(trackWidth, { x: slime.x, dir: slime.dir, pose, snore: 0 }, hudFrame(), ground)
 
     // Each label sits centred over its big number.
     let cursor = 0
@@ -677,7 +845,7 @@ export const register: Register = on => {
       return (
         <Text key={label.text}>
           {pad}
-          <Text color={label.color}>{label.text}</Text>
+          <Text color={LABEL_HEX[label.color] ?? label.color}>{label.text}</Text>
         </Text>
       )
     })
@@ -686,6 +854,18 @@ export const register: Register = on => {
       <Box flexDirection="column">
         <Text wrap="truncate">{labelPieces}</Text>
         <Raster key="track" columns={trackWidth} rows={trackRows()} cells={slime.shown} />
+        {burst && (
+          // Over the label row and the slime's rows, standing on the grass.
+          <Box position="absolute" top={Math.max(0, TRACK_ROWS - burst.burst.rows)} left={burstLeft}>
+            <Image
+              key="burst"
+              source={{ png: burst.burst.frames[Math.min(slime.tick - burst.tick, burst.burst.frames.length - 1)]! }}
+              columns={burst.burst.columns}
+              rows={burst.burst.rows}
+              alt=" "
+            />
+          </Box>
+        )}
         {gauge && renderGauge({ Box, Text }, gauge)}
         {engine}
       </Box>

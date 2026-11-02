@@ -5,8 +5,6 @@ import type { EngineInterface } from 'claude-code'
 // the background back from its quest. The band shows the facts again once it passes.
 
 export const BANNER_MS = 2500
-// Ticks each colour of a banner's shimmer holds on the terminal.
-export const SHIMMER_TICKS = 4
 
 export type BannerColor = 'yellow' | 'red' | 'green' | 'magenta' | 'cyan' | 'blue'
 

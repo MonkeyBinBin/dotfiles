@@ -146,3 +146,53 @@ export const layoutHud = (facts: readonly HudFact[], trackWidth: number): HudLay
   }
   return { areaWidth: trackWidth - hudWidth - BLOCK_GAP, pixels, labels }
 }
+
+export const mixToward = mix
+
+// A banner's glint: a diagonal streak of light sweeping its letters left to right, then a rest before the next.
+// Pixels within GLINT_REACH of the line x + y = at go toward white, most on the line itself.
+const GLINT_REACH = 2
+const GLINT_STEP = 2
+const GLINT_REST = 10
+const GLINT_PEAK = 0.8
+
+export const glintAt = (pixels: readonly HudPixel[], at: number): HudPixel[] =>
+  pixels.map(pixel => {
+    const off = Math.abs(pixel.x + pixel.y - at)
+    return off > GLINT_REACH ? pixel : { ...pixel, rgb: mix(pixel.rgb, 0xffffff, GLINT_PEAK * (1 - off / (GLINT_REACH + 1))) }
+  })
+
+// The streak's line `ticks` into the banner, or undefined while it rests between sweeps.
+export const glintLine = (pixels: readonly HudPixel[], ticks: number): number | undefined => {
+  if (pixels.length === 0) return undefined
+  const sums = pixels.map(pixel => pixel.x + pixel.y)
+  const from = Math.min(...sums) - GLINT_REACH
+  const steps = Math.ceil((Math.max(...sums) + GLINT_REACH - from) / GLINT_STEP)
+  const phase = ticks % (steps + 1 + GLINT_REST)
+  return phase > steps ? undefined : from + phase * GLINT_STEP
+}
+
+// A banner's letters fall into place a pixel row per tick as it arrives.
+export const DROP_ROWS = GLYPH_TOP + 6
+export const dropIn = (pixels: readonly HudPixel[], ticks: number): HudPixel[] => {
+  const lift = Math.max(0, DROP_ROWS - ticks)
+  return lift === 0 ? [...pixels] : pixels.flatMap(pixel => (pixel.y - lift < 0 ? [] : [{ ...pixel, y: pixel.y - lift }]))
+}
+
+// A value rolling from `from` to `to`, `t` of the way (0 to 1): `to`'s shape throughout, so the layout holds still,
+// each digit counting up from the one at its place in `from` (right-aligned; 0 where there was none).
+export const rollValue = (from: string, to: string, t: number): string => {
+  if (t >= 1) return to
+  const old = [...from]
+  const next = [...to]
+  return next
+    .map((ch, at) => {
+      const digit = Number.parseInt(ch, 10)
+      if (Number.isNaN(digit)) return ch
+      const before = Number.parseInt(old[old.length - next.length + at] ?? '', 10)
+      const start = Number.isNaN(before) ? 0 : before
+      const steps = (digit - start + 10) % 10
+      return `${(start + Math.round(steps * Math.max(0, t))) % 10}`
+    })
+    .join('')
+}
