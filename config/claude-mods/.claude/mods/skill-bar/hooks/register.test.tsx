@@ -1,8 +1,21 @@
 import { expect, test } from 'claude-code/testing'
 
-import { PANEL, SKILL_COLORS, colorFor, mix, toHex } from './colors'
-import { FAVORITES, commandText, hotbarSlot, slotsFor } from './register'
-import { COOLDOWN_TICKS, SLOT_ROWS, cooldownText, hotbarLines, labelOf, runeOf, slotWidth } from './hotbar-client'
+import { PANEL, SKILL_COLORS, WHITE, colorFor, colorsFor, mix, toHex } from './colors'
+import { FAVORITES, commandText, hotbarSlot, hotbarSlots, slotsFor } from './register'
+import {
+  BURST,
+  COOLDOWN_TICKS,
+  COOLING,
+  INK,
+  READY_TICKS,
+  SLOT_ROWS,
+  cooldownParts,
+  hotbarLines,
+  labelOf,
+  runeOf,
+  runesOf,
+  slotWidth,
+} from './hotbar-client'
 
 // The slots' names as the hotbar Client was handed them.
 const slotNames = async (ui: { find: (query: { type: 'Client' }) => Promise<{ props?: unknown } | undefined> }) =>
@@ -10,17 +23,27 @@ const slotNames = async (ui: { find: (query: { type: 'Client' }) => Promise<{ pr
     slot => slot.name,
   )
 
+// The hotbar Client's Text rows with their colours.
+const hotbarRows = async (ui: { findAll: (query: { type: 'Text'; in: string }) => Promise<readonly { text?: string; props: { backgroundColor?: unknown } }[]> }) =>
+  await ui.findAll({ type: 'Text', in: 'hotbar' })
+
 // What the hotbar Client drew, row by row of Text.
 const hotbarText = async (ui: { findAll: (query: { type: 'Text'; in: string }) => Promise<readonly { text?: string }[]> }) =>
   (await ui.findAll({ type: 'Text', in: 'hotbar' })).map(row => row.text ?? '').join('|')
 
 const HINT_PROPS = { isDraft: false, isWorking: false, hint: '? for shortcuts' } as const
 
-test('up to eight slots each get their own colour, then it wraps', () => {
-  const eight = Array.from({ length: 8 }, (_, slot) => colorFor(slot))
-  expect(new Set(eight).size).toBe(8)
-  expect(colorFor(8)).toBe(colorFor(0))
-  expect(SKILL_COLORS).toContain(colorFor(3))
+test('a skill keeps its colour wherever it sits, and neighbours never match', () => {
+  expect(colorFor('commit')).toBe(colorFor('commit'))
+  expect(SKILL_COLORS).toContain(colorFor('issue-start'))
+  // The same name keeps its colour in another bar, unless its left neighbour already wears it.
+  expect(colorsFor(['commit'])[0]).toBe(colorFor('commit'))
+  expect(colorsFor(['zzz', 'commit'])[1]).toBe(colorFor('commit') === colorFor('zzz') ? colorsFor(['zzz', 'commit'])[1] : colorFor('commit'))
+  const names = Array.from({ length: 40 }, (_, at) => `skill-${at}`)
+  const colors = colorsFor(names)
+  colors.slice(1).forEach((color, at) => expect(color).not.toBe(colors[at]))
+  // The shared rpg red.
+  expect(SKILL_COLORS).toContain(0xff5f5f)
   expect(toHex(0x05aa9f)).toBe('#05aa9f')
 })
 
@@ -113,10 +136,23 @@ test("reads rpg-hud's skill counts for the favourite slots", async ($, on) => {
   await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'skill-bar', surface: 'terminal', component: 'PromptHint', props: HINT_PROPS })
   expect(await slotNames(ui)).toEqual(['simplify', 'commit'])
-  // No use counts or stars on the slots.
+  // Each favourite shows its use count dimmed; with no project slots there is nothing to divide.
   const bar = await hotbarText(ui)
-  expect(bar).not.toContain('×')
+  expect(bar).toContain('×5')
+  expect(bar).toContain('×3')
+  expect(bar).not.toContain('│')
   expect(bar).not.toContain('★')
+})
+
+test('a divider sets the favourites apart from the project skills', () => {
+  const slots = hotbarSlots(['issue-start', 'commit', 'simplify'], 1, { commit: 12, simplify: 2 })
+  expect(slots.map(slot => [slot.isFavorite ?? false, slot.isFirstFavorite ?? false, slot.uses])).toEqual([
+    [false, false, undefined],
+    [true, true, 12],
+    [true, false, 2],
+  ])
+  // The divider and the count widen the slot.
+  expect(slotWidth(slots[1]!)).toBe(slotWidth({ label: 'commit' }) + 2 + ' ×12'.length)
 })
 
 // --- The hotbar ---
@@ -195,22 +231,29 @@ test('slot labels and widths', () => {
   expect(runeOf('…')).toBe('?')
 })
 
-test("each cell is a dark tint of its slot's colour, deeper under the pointer", () => {
-  expect(mix(0xffffff, 0x000000, 0.5)).toBe(0x808080)
-  const slot = hotbarSlot('commit', 0)
-  expect(slot.rune).toBe('C')
-  expect(slot.color).toBe(toHex(colorFor(0)))
-  expect(slot.tint).toBe(toHex(mix(colorFor(0), PANEL, 0.18)))
-  expect(slot.glow).not.toBe(slot.tint)
+test('no two slots share a rune', () => {
+  expect(runesOf(['commit', 'code-review', 'cc', 'simplify'])).toEqual(['C', 'O', '1', 'S'])
+  expect(runesOf(['…'])).toEqual(['1'])
 })
 
-test('a cast slot cools down from dark to lit, left to right', () => {
+test("each cell is a dark tint of its slot's colour, deeper under the pointer", () => {
+  expect(mix(0xffffff, 0x000000, 0.5)).toBe(0x808080)
+  const color = colorFor('commit')
+  const slot = hotbarSlot('commit', color, 'C')
+  expect(slot.rune).toBe('C')
+  expect(slot.color).toBe(toHex(color))
+  expect(slot.tint).toBe(toHex(mix(color, PANEL, 0.18)))
+  expect(slot.glow).not.toBe(slot.tint)
+  expect(slot.flash).toBe(toHex(mix(WHITE, color, 0.6)))
+})
+
+test('a cast slot sweeps back left to right, its text kept readable', () => {
   const text = ' commit '
-  expect(cooldownText(text, 0)).toBe('░▒▓▓▓▓▓▓')
-  const half = cooldownText(text, Math.floor(COOLDOWN_TICKS / 2))
-  expect(half.startsWith(' co')).toBe(true)
-  expect(half).toContain('░')
-  expect(cooldownText(text, COOLDOWN_TICKS)).toBe(text)
+  expect(cooldownParts(text, 0)).toEqual({ lit: '', edge: ' ', cool: 'commit ' })
+  const half = cooldownParts(text, Math.floor(COOLDOWN_TICKS / 2))
+  expect(half.lit + half.edge + half.cool).toBe(text)
+  expect(half.lit.startsWith(' co')).toBe(true)
+  expect(cooldownParts(text, COOLDOWN_TICKS)).toEqual({ lit: text, edge: '', cool: '' })
 })
 
 test('a click starts the cooldown and it ends on the clock', async ($, on) => {
@@ -221,9 +264,38 @@ test('a click starts the cooldown and it ends on the clock', async ($, on) => {
   await ui.pointer({ type: 'down', x: 3, y: 0, button: 'left', in: 'hotbar' })
   await ui.pointer({ type: 'up', x: 3, y: 0, button: 'left', in: 'hotbar' })
   expect(fills).toEqual(['/commit '])
-  expect(await hotbarText(ui)).toContain('▓')
-  await ui.advance(80 * (COOLDOWN_TICKS + 2))
-  expect(await hotbarText(ui)).not.toContain('▓')
+  const cooling = async () => (await hotbarRows(ui)).some(row => row.props.backgroundColor === COOLING)
+  expect(await cooling()).toBe(true)
+  // The label stays whole while it cools, and a burst of sparks flies off the cast.
+  expect((await hotbarText(ui)).replace(/\|/g, '')).toContain('commit')
+  expect(await hotbarText(ui)).toContain(BURST[0])
+  await ui.advance(80)
+  expect(await hotbarText(ui)).toContain(BURST[1])
+  await ui.advance(80 * COOLDOWN_TICKS)
+  expect(await cooling()).toBe(false)
+  // Cooled: the keycap flashes and the sparks pop for a moment, then all rests.
+  const flash = toHex(mix(WHITE, colorsFor(['commit'])[0]!, 0.6))
+  expect((await hotbarRows(ui)).some(row => row.props.backgroundColor === flash)).toBe(true)
+  expect(await hotbarText(ui)).toContain('✦')
+  await ui.advance(80 * (READY_TICKS + 1))
+  expect((await hotbarRows(ui)).some(row => row.props.backgroundColor === flash)).toBe(false)
+  await ui.pointer({ type: 'leave', x: 3, y: 0, in: 'hotbar' })
+  expect(await hotbarText(ui)).not.toMatch(/[✦✧·]/)
+})
+
+test('a pressed keycap sinks until the release', async ($, on) => {
+  const fills: string[] = []
+  hotbarWorld(on, fills)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'skill-bar', surface: 'terminal', component: 'PromptHint', props: HINT_PROPS })
+  await ui.pointer({ type: 'down', x: 3, y: 0, button: 'left', in: 'hotbar' })
+  const rune = (await hotbarRows(ui)).find(row => row.text === 'C')
+  expect(rune?.props.backgroundColor).toBe(INK)
+  expect(fills).toEqual([])
+  // Released off the bar: it comes back up uncast.
+  await ui.pointer({ type: 'up', x: 500, y: 0, button: 'left', in: 'hotbar' })
+  expect(fills).toEqual([])
+  expect((await hotbarRows(ui)).find(row => row.text === 'C')?.props.backgroundColor).not.toBe(INK)
 })
 
 

@@ -7,12 +7,17 @@ export type HotbarSlot = {
   name: string
   // What the slot shows: the name past any `plugin:` prefix.
   label: string
-  // The rune on the slot's keycap: the label's first letter or digit.
+  // The rune on the slot's keycap: the label's first letter or digit no slot before it took.
   rune: string
-  // The slot's own colour, and its cell at rest and under the pointer, as hex.
+  // The slot's own colour, its cell at rest and under the pointer, and its keycap's flash when ready again, as hex.
   color: string
   tint: string
   glow: string
+  flash: string
+  // A favourite (a most-used skill, not the project's own): a divider before the first, its use count beside it.
+  isFavorite?: boolean
+  isFirstFavorite?: boolean
+  uses?: number
 }
 
 export type HotbarProps = { slots: HotbarSlot[] }
@@ -21,13 +26,21 @@ type HotbarState = {
   tick: number
   // The slot under the pointer.
   hover?: number
+  // The slot held down under the pointer, before the release casts it.
+  pressed?: number
   // The slot just cast and the tick its cooldown began.
   cast?: { index: number; start: number }
+  // The slot just cooled and the tick it came back: its keycap flashes and its sparks pop.
+  ready?: { index: number; start: number }
 }
 
 const FRAME_MS = 80
 // How long a cast slot cools down, dark to lit, left to right.
 export const COOLDOWN_TICKS = 15
+// The burst of sparks a cast throws, one glyph a tick at the start of its cooldown.
+export const BURST = ['·', '✦', '✧'] as const
+// How long a slot's ready pop lasts once it cools.
+export const READY_TICKS = 3
 // Ticks between the hover sparks' twinkles.
 const TWINKLE_TICKS = 4
 // A slot is one row: `✦▐C▌ label ✦`, the sparks lit only under the pointer.
@@ -38,8 +51,10 @@ const MAX_LABEL = 18
 // Around the label: spark, keycap (▐ rune ▌), space, space, spark.
 const CHROME = 1 + 3 + 1 + 1 + 1
 // The rune's ink on its coloured keycap, and the cooling cell's.
-const INK = toHex(PANEL)
-const COOLING = '#2a2533'
+export const INK = toHex(PANEL)
+export const COOLING = '#2a2533'
+// Before the first favourite: the divider and a space.
+const LEAD = 2
 // The width laid out before the first layout reports the region's.
 const FALLBACK_COLUMNS = 80
 
@@ -51,13 +66,39 @@ export const labelOf = (name: string): string => {
 
 export const runeOf = (label: string): string => (label.match(/[a-z0-9]/i)?.[0] ?? '?').toUpperCase()
 
-export const slotWidth = (slot: Pick<HotbarSlot, 'label'>): number => slot.label.length + CHROME
+// A rune per label, none twice on the bar: the first letter or digit of each not taken yet, else a free digit.
+export const runesOf = (labels: readonly string[]): string[] => {
+  const taken = new Set<string>()
+  return labels.map(label => {
+    const own = [...label.toUpperCase()].filter(ch => /[A-Z0-9]/.test(ch))
+    const rune = [...own, ...'1234567890'].find(ch => !taken.has(ch)) ?? runeOf(label)
+    taken.add(rune)
+    return rune
+  })
+}
 
-// The cell's text while it cools: what has come back shows, the rest is shade, lightest at the sweep's front.
-export const cooldownText = (text: string, elapsed: number): string => {
+// The use count beside a favourite's label.
+export const usesText = (slot: Pick<HotbarSlot, 'uses'>): string => (slot.uses === undefined ? '' : ` ×${slot.uses}`)
+
+// Columns before the slot's spark: the divider ahead of the first favourite.
+export const slotLead = (slot: Pick<HotbarSlot, 'isFirstFavorite'>): number => (slot.isFirstFavorite ? LEAD : 0)
+
+export const slotWidth = (slot: Pick<HotbarSlot, 'label' | 'uses' | 'isFirstFavorite'>): number =>
+  slotLead(slot) + slot.label.length + usesText(slot).length + CHROME
+
+// The cell's text while it cools, split at the sweep: what has come back, the sweep's front char, what still cools.
+export const cooldownParts = (text: string, elapsed: number): { lit: string; edge: string; cool: string } => {
   const chars = [...text]
-  const lit = Math.min(chars.length, Math.floor((elapsed / COOLDOWN_TICKS) * chars.length))
-  return chars.map((ch, at) => (at < lit ? ch : at === lit ? '░' : at === lit + 1 ? '▒' : '▓')).join('')
+  const at = Math.min(chars.length, Math.floor((elapsed / COOLDOWN_TICKS) * chars.length))
+  return { lit: chars.slice(0, at).join(''), edge: chars[at] ?? '', cool: chars.slice(at + 1).join('') }
+}
+
+// The sparks beside a slot: a burst as it is cast, a pop as it comes back, a twinkle under the pointer.
+export const sparkOf = (state: Pick<HotbarState, 'tick' | 'hover' | 'pressed' | 'cast' | 'ready'>, index: number): string => {
+  if (state.cast?.index === index) return BURST[state.tick - state.cast.start] ?? ' '
+  if (state.ready?.index === index) return '✦'
+  if (state.hover === index && state.pressed === undefined) return Math.floor(state.tick / TWINKLE_TICKS) % 2 === 0 ? '✦' : '✧'
+  return ' '
 }
 
 // The slots in lines that fit `columns`: each line as many as fit, a slot wider than the whole bar alone on one.
@@ -85,18 +126,22 @@ const Hotbar: ClientModule<HotbarProps, HotbarState> = (props, surface) => {
     let idle = 0
     surface.every(FRAME_MS, () => {
       const now = surface.state
-      // Only a cooldown or a hovered slot's sparks move; at rest nothing redraws.
-      if (now === undefined || (now.cast === undefined && now.hover === undefined)) return
+      // Only a cooldown, a ready pop or a hovered slot's sparks move; at rest nothing redraws.
+      if (now === undefined || (now.cast === undefined && now.ready === undefined && now.hover === undefined)) return
       // Sparks alone change once a twinkle: skip the frames between, then step the clock a whole twinkle.
-      if (now.cast === undefined) {
+      if (now.cast === undefined && now.ready === undefined) {
         idle += 1
         if (idle < TWINKLE_TICKS) return
         idle = 0
         surface.setState({ ...now, tick: now.tick + TWINKLE_TICKS })
         return
       }
-      const isCool = now.cast !== undefined && now.tick + 1 - now.cast.start >= COOLDOWN_TICKS
-      surface.setState({ ...now, tick: now.tick + 1, ...(isCool ? { cast: undefined } : {}) })
+      const tick = now.tick + 1
+      // A cooled slot pops as ready for a few ticks, then rests.
+      const isCool = now.cast !== undefined && tick - now.cast.start >= COOLDOWN_TICKS
+      const ready = isCool && now.cast !== undefined ? { index: now.cast.index, start: tick } : now.ready
+      const isRested = ready !== undefined && tick - ready.start >= READY_TICKS
+      surface.setState({ ...now, tick, cast: isCool ? undefined : now.cast, ready: isRested ? undefined : ready })
     })
     surface.setState({ tick: 0 })
   }
@@ -107,41 +152,78 @@ const Hotbar: ClientModule<HotbarProps, HotbarState> = (props, surface) => {
   const cast = (index: number) => {
     const slot = props.slots[index]
     if (slot === undefined) return
-    surface.setState({ ...state, cast: { index, start: state.tick } })
+    surface.setState({ ...state, pressed: undefined, ready: state.ready?.index === index ? undefined : state.ready, cast: { index, start: state.tick } })
     surface.post({ cast: slot.name })
   }
 
+  // The divider ahead of the first favourite is not part of its hit area.
   const slotAt = (x: number, y: number): number | undefined =>
-    lines[Math.floor(y / SLOT_ROWS)]?.find(one => x >= one.x && x < one.x + (widths[one.index] ?? 0))?.index
+    lines[Math.floor(y / SLOT_ROWS)]?.find(one => {
+      const slot = props.slots[one.index]
+      const from = one.x + (slot === undefined ? 0 : slotLead(slot))
+      return x >= from && x < one.x + (widths[one.index] ?? 0)
+    })?.index
 
   surface.onPointer(e => {
     const index = e.type === 'leave' ? undefined : slotAt(e.x, e.y)
     if (e.type === 'up' && e.button === 'left' && index !== undefined) return cast(index)
+    // A press sinks the keycap until the release; a release off the bar lets it back up.
+    if (e.type === 'down' && e.button === 'left') return surface.setState({ ...state, hover: index, pressed: index })
+    if (e.type === 'up' && state.pressed !== undefined) return surface.setState({ ...state, hover: index, pressed: undefined })
     if (state.hover !== index && e.type !== 'down') surface.setState({ ...state, hover: index })
   })
 
   const drawSlot = (slot: HotbarSlot, index: number) => {
     const elapsed = state.cast?.index === index ? state.tick - state.cast.start : undefined
     const isCooling = elapsed !== undefined
-    const isHover = !isCooling && state.hover === index
-    const spark = isHover ? (Math.floor(state.tick / TWINKLE_TICKS) % 2 === 0 ? '✦' : '✧') : ' '
-    const cap = isCooling ? COOLING : slot.color
-    const cell = isCooling ? COOLING : isHover ? slot.glow : slot.tint
-    const text = ` ${slot.label} `
+    const isPressed = !isCooling && state.pressed === index
+    const isReady = !isCooling && !isPressed && state.ready?.index === index
+    const isHover = !isCooling && !isPressed && state.hover === index
+    const spark = sparkOf(state, index)
+    const cap = isCooling ? COOLING : isPressed ? INK : isReady ? slot.flash : slot.color
+    const cell = isCooling || isPressed ? COOLING : isHover || isReady ? slot.glow : slot.tint
+    const label = ` ${slot.label}`
+    const uses = `${usesText(slot)} `
+
+    const body = () => {
+      // The text stays readable while it cools: the cell behind it sweeps back, its front a soft glow.
+      if (elapsed !== undefined) {
+        const parts = cooldownParts(label + uses, elapsed)
+        return [
+          <Text key="lit" color="white" backgroundColor={slot.tint}>
+            {parts.lit}
+          </Text>,
+          <Text key="edge" bold color={slot.color} backgroundColor={slot.glow}>
+            {parts.edge}
+          </Text>,
+          <Text key="cool" dimColor color={slot.color} backgroundColor={COOLING}>
+            {parts.cool}
+          </Text>,
+        ]
+      }
+      const isLit = isHover || isReady
+      return [
+        <Text key="label" bold={isLit} color={isPressed ? slot.color : isLit ? (isReady ? 'white' : slot.color) : 'white'} backgroundColor={cell}>
+          {label}
+        </Text>,
+        <Text key="uses" dimColor color={isLit ? slot.color : 'white'} backgroundColor={cell}>
+          {uses}
+        </Text>,
+      ]
+    }
 
     return (
       <Box key={slot.name} flexDirection="row" width={widths[index] ?? 0} height={1}>
+        {slot.isFirstFavorite ? <Text dimColor>{'│ '}</Text> : null}
         <Text color={slot.color}>{spark}</Text>
         <Text color={cap}>▐</Text>
-        <Text bold color={isCooling ? slot.color : INK} backgroundColor={cap}>
+        <Text bold color={isCooling || isPressed ? slot.color : INK} backgroundColor={cap}>
           {slot.rune}
         </Text>
         <Text color={cap} backgroundColor={cell}>
           ▌
         </Text>
-        <Text bold={isHover} color={isCooling || isHover ? slot.color : 'white'} dimColor={isCooling} backgroundColor={cell}>
-          {isCooling ? cooldownText(text, elapsed) : text}
-        </Text>
+        {body()}
         <Text color={slot.color}>{spark}</Text>
       </Box>
     )

@@ -2,9 +2,9 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { SkillNames } from '../types'
-import { labelOf, runeOf } from './hotbar-client'
+import { labelOf, runesOf } from './hotbar-client'
 import type { HotbarProps, HotbarSlot } from './hotbar-client'
-import { PANEL, colorFor, mix, toHex } from './colors'
+import { PANEL, WHITE, colorsFor, mix, toHex } from './colors'
 
 const skills = atom({ plugin: 'skill-bar', key: 'skills' } as const, [] as SkillNames)
 
@@ -48,17 +48,32 @@ async function readFavorites($: EngineInterface) {
 }
 
 // One hotbar slot in its own colour: the keycap in full, the cell a dark tint of it that deepens under the pointer.
-export const hotbarSlot = (name: string, slot: number): HotbarSlot => {
-  const label = labelOf(name)
-  const color = colorFor(slot)
-  return {
-    name,
-    label,
-    rune: runeOf(label),
-    color: toHex(color),
-    tint: toHex(mix(color, PANEL, 0.18)),
-    glow: toHex(mix(color, PANEL, 0.38)),
-  }
+export const hotbarSlot = (name: string, color: number, rune: string): HotbarSlot => ({
+  name,
+  label: labelOf(name),
+  rune,
+  color: toHex(color),
+  tint: toHex(mix(color, PANEL, 0.18)),
+  glow: toHex(mix(color, PANEL, 0.38)),
+  flash: toHex(mix(WHITE, color, 0.6)),
+})
+
+// The bar's slots: each skill in its own colour and with a rune of its own, the favourites after a divider and
+// with their use counts.
+export const hotbarSlots = (names: readonly string[], projectCount: number, uses: Readonly<Record<string, number>>): HotbarSlot[] => {
+  const colors = colorsFor(names)
+  const runes = runesOf(names.map(labelOf))
+  return names.map((name, at) => {
+    const slot = hotbarSlot(name, colors[at] ?? WHITE, runes[at] ?? '?')
+    if (at < projectCount) return slot
+    const count = uses[name]
+    return {
+      ...slot,
+      isFavorite: true,
+      ...(at === projectCount && projectCount > 0 ? { isFirstFavorite: true } : {}),
+      ...(count !== undefined && count > 0 ? { uses: count } : {}),
+    }
+  })
 }
 
 // Pressing a slot puts the command in the prompt box, so arguments (an issue number) can follow.
@@ -103,7 +118,7 @@ export const register: Register = on => {
     const names = slotsFor(project, favorites.uses, favorites.known)
     if (names.length === 0) return engine
 
-    const slots = names.map((name, slot) => hotbarSlot(name, slot))
+    const slots = hotbarSlots(names, project.length, favorites.uses)
     const { Box, Button } = $.ui.resolve(e)
 
     // The terminal draws an MMO skill bar: a rune keycap and a tinted cell a slot; a click casts it and it cools down.
