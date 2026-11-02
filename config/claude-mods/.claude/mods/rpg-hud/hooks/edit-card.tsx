@@ -1,6 +1,7 @@
 import type { ElementTable } from 'claude-code'
 
 import { rarityOf, splitBar } from './diff'
+import { HEX } from './palette'
 
 export type Hunk = { oldStart: number; oldLines: number; newStart: number; newLines: number; lines: string[] }
 
@@ -77,17 +78,17 @@ export function renderEditCard(ui: ElementTable, tool: string, output: EditOutpu
           </Text>
         </Box>
         <Text>
-          <Text color="green">+{added}</Text>
-          <Text color="red"> −{removed}</Text>
+          <Text color={HEX.green}>+{added}</Text>
+          <Text color={HEX.red}> −{removed}</Text>
           <Text color={rarity.color}> [{rarity.name}]</Text>
         </Text>
       </Box>
       <Text>
-        <Text color="green">{'▮'.repeat(plus)}</Text>
-        <Text color="red">{'▮'.repeat(minus)}</Text>
+        <Text color={HEX.green}>{'▮'.repeat(plus)}</Text>
+        <Text color={HEX.red}>{'▮'.repeat(minus)}</Text>
         <Text dimColor>{'·'.repeat(BAR - plus - minus)}</Text>
-        {output.staged === true && <Text color="yellow">  ✋ held for review: the file is unchanged</Text>}
-        {output.userModified === true && <Text color="cyan">  ✎ you reshaped the spell</Text>}
+        {output.staged === true && <Text color={HEX.gold}>  ✋ held for review: the file is unchanged</Text>}
+        {output.userModified === true && <Text color={HEX.cyan}>  ✎ you reshaped the spell</Text>}
       </Text>
       {patch.source.length > 0 &&
         (isCreate ? (

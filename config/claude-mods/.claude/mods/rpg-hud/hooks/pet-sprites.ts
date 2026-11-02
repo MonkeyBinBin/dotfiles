@@ -1,5 +1,5 @@
 import type { ToolCallStatus } from '../types'
-import { composeSprite } from './util'
+import { blendCells, composeSprite } from './util'
 
 export const PET_COLUMNS = 8
 // Six pixels tall: three terminal rows of half blocks.
@@ -162,3 +162,21 @@ export const petArt = (seed: string): { frames: readonly [readonly string[], rea
   const species = speciesFor(seed)
   return { frames: species.frames, palette: species.palette }
 }
+
+// A pet falling in battle: it blinks twice, drops a pixel as its colour drains, then lies grey where it stood.
+export const faintFrames = (seed: string): string[] => {
+  const species = speciesFor(seed)
+  const standing = petCells(seed, 'ok', 0)
+  const fallen = petCells(seed, 'err', 0)
+  const blank = composeSprite(species.frames[0].map(line => '.'.repeat(line.length)), species.palette)
+  const dropped = ['.'.repeat(PET_COLUMNS), ...species.frames[0].slice(0, -1)]
+  const dropping = blendCells(composeSprite(dropped, species.palette), composeSprite(dropped, faint(species)), 0.5)
+  return [standing, blank, standing, blank, standing, dropping, blendCells(standing, fallen, 0.75), fallen]
+}
+
+// A slime asleep, eyes shut, for a list with nothing in it yet.
+const SLEEPING: readonly string[] = ['........', '........', '.GGGGGG.', 'GLGGGGGG', 'GKKGGKKG', 'gggggggg']
+export const SLEEPING_COLUMNS = PET_COLUMNS
+export const SLEEPING_ROWS = PET_ROWS
+export const sleepingPixels = (): { art: readonly string[]; palette: Readonly<Record<string, number>> } => ({ art: SLEEPING, palette: SLIME.palette })
+export const sleepingCells = (): string => composeSprite(SLEEPING, SLIME.palette)

@@ -2,6 +2,7 @@ import type { ElementTable } from 'claude-code'
 
 import { CLASS_IDS } from './classes'
 import type { Item } from './window'
+import { HEX } from './palette'
 
 // Every /hud command, as the help page and `/hud help` list it.
 export const HELP_COMMANDS: readonly { usage: string; what: string }[] = [
@@ -38,7 +39,7 @@ export function helpItems(ui: ElementTable, close: () => void): Item[] {
         rows: 2,
         node: (
           <Box flexDirection="column">
-            <Text bold color="cyan" wrap="truncate">
+            <Text bold color={HEX.cyan} wrap="truncate">
               {one.usage}
             </Text>
             <Text dimColor wrap="truncate">

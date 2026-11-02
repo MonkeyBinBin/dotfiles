@@ -2,9 +2,11 @@ import type { ElementTable, RenderChildren } from 'claude-code'
 
 import type { Boss, BossFx } from '../types'
 import { FRAME_MS } from './anim'
-import { barSvg, BAR_HEIGHT, COLUMN_PX, gridToPixels, spriteSvg } from './svg'
+import { COLUMN_PX, gridToPixels, spriteSvg } from './svg'
 import { isEnraged } from './boss'
-import { barParts, composeSprite } from './util'
+import { composeSprite } from './util'
+import { gauge } from './gauge'
+import { RGB } from './palette'
 
 // The encounter: while a boss stands, the status panel turns to a duel. The stats step aside, the hero on the left
 // faces the monster on the right, twice its size where it fits, its HP between them. It walks in out of the dark,
@@ -410,6 +412,8 @@ export type FoeSideProps = {
   onFight?: () => void
   // Background pets fighting beside the hero, and the one just back with a shot.
   party?: { allies?: readonly Ally[]; assist?: number }
+  // Drawn over the arena, out of the flow: the confetti once a slain foe has crumbled.
+  overlay?: RenderChildren
 }
 
 // The duel's middle column: the foe's name and HP over a big VS, the moment of the fight cried under it. It
@@ -469,7 +473,6 @@ export function renderFoeSide(ui: ElementTable, props: FoeSideProps, rows: numbe
   const Svg = Raster === undefined && 'Svg' in ui ? ui.Svg : undefined
   const isDefeat = fx?.event === 'defeat'
   const hp = isDefeat ? 0 : boss.hp
-  const bar = barParts(hp, boss.maxHp, midColumns)
   const columns = duel.arenaColumns
   const spriteRows = BOSS_ROWS * scale
   const damage = fx?.event === 'hit' ? fx.damage : 0
@@ -510,14 +513,14 @@ export function renderFoeSide(ui: ElementTable, props: FoeSideProps, rows: numbe
     <Box key="foe" flexDirection="row" height={rows} columnGap={DUEL_GAP}>
       <Box flexDirection="column" width={midColumns} height={rows}>
         <Text bold color={accent} wrap="truncate">{boss.name}</Text>
-        {Svg !== undefined ? (
-          <Svg key="bar-encounter" source={barSvg(hp, boss.maxHp, midColumns, 'red')} alt={`${boss.name} ${hp}/${boss.maxHp}`} width={midColumns * COLUMN_PX} height={BAR_HEIGHT} />
-        ) : (
-          <Text wrap="truncate">
-            <Text color="red">{bar.filled}</Text>
-            <Text dimColor>{bar.empty}</Text>
-          </Text>
-        )}
+        {gauge(ui, {
+          key: 'bar-encounter',
+          share: boss.maxHp <= 0 ? 0 : hp / boss.maxHp,
+          width: midColumns,
+          rgb: RGB.red,
+          alt: `${boss.name} ${hp}/${boss.maxHp}`,
+          ...(Raster === undefined ? {} : { Raster }),
+        })}
         <Text color="red">HP {hp}/{boss.maxHp}</Text>
         <Box height={VS_ROWS} justifyContent="center">
           {vsDrawn}
@@ -537,7 +540,10 @@ export function renderFoeSide(ui: ElementTable, props: FoeSideProps, rows: numbe
           </Box>
         )}
       </Box>
-      <Box width={columns} height={rows}>{sprite}</Box>
+      <Box width={columns} height={rows}>
+        {sprite}
+        {props.overlay}
+      </Box>
     </Box>
   )
 }

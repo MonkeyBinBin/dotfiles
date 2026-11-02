@@ -394,7 +394,7 @@ export function mapItems(ui: ElementTable, map: GitMap, touched: readonly Touche
           </Text>
         </Box>
         {actions.outposts > 1 && (
-          <Button key="open-outposts" label={`🏕 ${actions.outposts} outposts ▸`} plain onPress={actions.openOutposts} />
+          <Button key="open-outposts" label={`⛺ ${actions.outposts} outposts ▸`} plain onPress={actions.openOutposts} />
         )}
       </Box>,
     ),

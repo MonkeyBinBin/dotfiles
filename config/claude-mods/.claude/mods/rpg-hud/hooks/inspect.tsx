@@ -3,12 +3,13 @@ import type { ElementTable } from 'claude-code'
 import type { BagItem, Inspect } from '../types'
 import { STATUS_GLYPHS, parseDiff, rarityOf } from './diff'
 import type { Item } from './window'
+import { HEX } from './palette'
 
 // The line number column and the +/− marker after it.
 const GUTTER = 5
 const MARK = 2
 
-const MARKS = { add: { glyph: '+', color: 'green' }, del: { glyph: '−', color: 'red' }, ctx: { glyph: ' ', color: 'gray' } } as const
+const MARKS = { add: { glyph: '+', color: HEX.green }, del: { glyph: '−', color: HEX.red }, ctx: { glyph: ' ', color: 'gray' } } as const
 
 export const bagSubtitle = (bag: readonly BagItem[]): string => {
   const added = bag.reduce((sum, item) => sum + item.added, 0)
@@ -41,8 +42,8 @@ export function inspectItems(
         </Text>
         {item !== undefined && (
           <Text>
-            <Text color="green">  +{item.added}</Text>
-            <Text color="red"> −{item.removed}</Text>
+            <Text color={HEX.green}>  +{item.added}</Text>
+            <Text color={HEX.red}> −{item.removed}</Text>
           </Text>
         )}
         <Text color={rarity.color} dimColor>
@@ -65,7 +66,7 @@ export function inspectItems(
       items.push(
         row(
           `l-${index}`,
-          <Text color="cyan" dimColor wrap="truncate">
+          <Text color={HEX.cyan} dimColor wrap="truncate">
             {label + '─'.repeat(Math.max(0, width - label.length))}
           </Text>,
         ),

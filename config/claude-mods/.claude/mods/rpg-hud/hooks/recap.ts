@@ -54,7 +54,7 @@ export const recapText = (data: RecapData): string => {
 
   const edited = data.touched.filter(file => file.edits > 0).length
   if (data.touched.length > 0) {
-    lines.push(`🗺 ${data.touched.length} ${data.touched.length === 1 ? 'file' : 'files'} explored · ✎ ${edited} edited`)
+    lines.push(`🧭 ${data.touched.length} ${data.touched.length === 1 ? 'file' : 'files'} explored · ✎ ${edited} edited`)
   }
 
   const purse: string[] = []

@@ -3,6 +3,9 @@ import type { ElementTable } from 'claude-code'
 import type { Job, JobStatus } from '../types'
 import { anim } from './anim'
 import { formatElapsed, oneLine, packCells } from './util'
+import { emptyItem } from './empty'
+import { HEX, STATUS_MARKS } from './palette'
+import type { Standing } from './palette'
 import type { Item } from './window'
 
 // A running job's march: chevrons sweeping along a dim track, on the terminal a Raster the animation blits.
@@ -120,20 +123,23 @@ export const jobsSubtitle = (list: readonly Job[]): string => {
   return `${running} on expedition${failed > 0 ? ` · ${failed} fallen` : ''} · ${list.length} in all`
 }
 
+// A job's standing in the marks the spell book and the party use.
+const STANDINGS: Record<JobStatus, Standing> = { run: 'run', ok: 'ok', err: 'err', kill: 'kill', done: 'ended' }
+
 export const jobState = (job: Job, now: number): { text: string; color: string } => {
   const elapsed = formatElapsed((job.endedAt ?? now) - job.startedAt)
+  const { glyph, color } = STATUS_MARKS[STANDINGS[job.status]]
   switch (job.status) {
-    // Endings marked as rpg-quest marks the notification that reports them.
     case 'run':
-      return { text: `⚔ ${elapsed}`, color: 'yellow' }
+      return { text: `${glyph} ${elapsed}`, color }
     case 'ok':
-      return { text: `✅ back · ${elapsed}`, color: 'green' }
+      return { text: `${glyph} back · ${elapsed}`, color }
     case 'err':
-      return { text: `❌ ${job.exitCode === undefined ? 'fell' : `exit ${job.exitCode}`} · ${elapsed}`, color: 'red' }
+      return { text: `${glyph} ${job.exitCode === undefined ? 'fell' : `exit ${job.exitCode}`} · ${elapsed}`, color }
     case 'kill':
-      return { text: `🛑 recalled · ${elapsed}`, color: 'gray' }
+      return { text: `${glyph} recalled · ${elapsed}`, color }
     case 'done':
-      return { text: `📨 ended · ${elapsed}`, color: 'gray' }
+      return { text: `${glyph} ended · ${elapsed}`, color }
   }
 }
 
@@ -160,7 +166,7 @@ export function jobItems(
       .map(job => [`job-${job.id}`, { shown: anim.jobs.get(`job-${job.id}`)?.shown ?? '' }]),
   )
   if (list.length === 0) {
-    return [{ key: 'empty', rows: 1, node: <Text dimColor>No background jobs. Shells and monitors sent to the background show here.</Text> }]
+    return [emptyItem(ui, 'No background jobs. Shells and monitors sent to the background show here.', Raster)]
   }
   return jobOrder(list).map(job => {
     const state = jobState(job, now)
@@ -176,7 +182,7 @@ export function jobItems(
           <Box height={1}>
             <Box flexGrow={1}>
               <Text wrap="truncate" dimColor={!isRunning}>
-                <Text color={isRunning ? 'cyan' : undefined}>{icon} </Text>
+                <Text color={isRunning ? HEX.cyan : undefined}>{icon} </Text>
                 <Text bold={isRunning}>{oneLine(title, width - state.text.length - 3 - (canStop ? STOP_ROOM : 0))}</Text>
               </Text>
             </Box>

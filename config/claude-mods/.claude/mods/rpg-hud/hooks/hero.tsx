@@ -2,8 +2,9 @@ import type { ElementTable, RenderChildren } from 'claude-code'
 
 import type { Boss, Combo, ToolCall, Vitals } from '../types'
 import { HERO_CELLS, anim } from './anim'
-import { barParts, oneLine } from './util'
-import { BAR_HEIGHT, COLUMN_PX, barSvg } from './svg'
+import { oneLine } from './util'
+import { gauge } from './gauge'
+import { HEX, RGB, ramp, rampRgb, tone } from './palette'
 import { CLASSES, rankOf } from './classes'
 import { battleFrame, duelLayout, renderFoeSide } from './encounter'
 import { restingMana } from './rest'
@@ -61,12 +62,11 @@ export const heroStats = (list: readonly ToolCall[], total: number = list.length
 export const manaLeft = (vitals: Vitals): number | undefined =>
   vitals.contextPercent === undefined ? undefined : Math.max(0, MP_MAX - Math.round(vitals.contextPercent))
 
-// Green while healthy, yellow when hurt, red when nearly out.
-export const gaugeColor = (value: number, max: number, healthy: string): string => {
-  const share = max <= 0 ? 0 : value / max
-  if (share > 0.6) return healthy
-  return share > 0.3 ? 'yellow' : 'red'
-}
+// A gauge's colour as it drains: `healthy` from 60% up, sliding through gold to red.
+export const gaugeColor = (value: number, max: number, healthy: number): string => ramp(max <= 0 ? 0 : value / max, healthy)
+
+// MP under this share pulses.
+export const LOW_MANA = 20
 
 // Whether the portrait fits beside a usable stats column, and how wide that column and its bars are.
 export const statusLayout = (width: number, hasRaster: boolean) => {
@@ -111,42 +111,51 @@ export type StatusData = {
   rest?: { elapsed: number; from?: number }
   // The combo's aura, drawn in the gap beside the portrait, and its tier for the frame's colour.
   aura?: { node: RenderChildren; tier: 1 | 2 }
+  // The terminal's Raster for the gauges, which the animation can blit (the MP's pulse).
+  gaugeRaster?: ElementTable<'terminal'>['Raster']
+  // How long ago the level up began, while its flash lasts: the XP gauge fills, flashes and empties, the level glows.
+  levelUp?: number
+  // The heart just lost, white for a moment, and how long ago a failed call cost it: a red -1 floats up beside the
+  // portrait.
+  heartFlash?: number
+  damage?: number
+  // The combo's last change while it shows: a rise lights the count, a break cries BREAK.
+  comboFx?: 'up' | 'break'
+  // A burst playing in the stats column's lower right: a level up, a revive.
+  celebration?: RenderChildren
 }
 
 const FIGHT_LABEL = '⚔ fix'
 
-
+// The level up's XP gauge: full, then white, then empty again.
+export const XP_FULL_MS = 350
+export const XP_FLASH_MS = 700
+// The -1's climb beside the portrait, a row a step.
+export const DAMAGE_MS = 600
+const DAMAGE_STEP_MS = 150
+const DAMAGE_ROW = 6
 
 type SvgElement = ElementTable<'desktop'>['Svg']
 
-const Bar = (ui: ElementTable, label: string, color: string, value: number, max: number, note: string, width: number, Svg?: SvgElement) => {
-  const { Text } = ui
-  // Block characters leave gaps between glyphs off the terminal: there the bar is a drawing.
-  if (Svg !== undefined) {
-    const { Box } = ui
-    return (
-      <Box flexDirection="row" height={1} alignItems="center">
-        <Text bold color={color}>
-          {label}{' '}
-        </Text>
-        <Svg key={`bar-${label}`} source={barSvg(value, max, width, color)} alt={`${label} ${note}`} width={width * COLUMN_PX} height={BAR_HEIGHT} />
-        <Text color={color}> {note}</Text>
-      </Box>
-    )
-  }
-  const { filled, empty } = barParts(value, max, width)
+// A gauge row: the label, the gauge and its reading, in one colour.
+const Bar = (ui: ElementTable, label: string, rgb: number, share: number, note: string, width: number, Raster?: ElementTable<'terminal'>['Raster'], cells?: string) => {
+  const { Box, Text } = ui
+  const color = `#${rgb.toString(16).padStart(6, '0')}`
   return (
-    <Text wrap="truncate">
-      <Text bold color={color}>{label} </Text>
-      <Text color={color}>{filled}</Text>
-      <Text dimColor>{empty}</Text>
+    <Box flexDirection="row" height={1} alignItems="center">
+      <Text bold color={color}>
+        {label}{' '}
+      </Text>
+      {gauge(ui, { key: `bar-${label}`, share, width, rgb, alt: `${label} ${note}`, ...(Raster === undefined ? {} : { Raster }), ...(cells === undefined ? {} : { cells }) })}
       <Text color={color}> {note}</Text>
-    </Text>
+    </Box>
   )
 }
 
-// The hero's status window: always on top, whatever the menu shows below.
-// `portrait` stands in for the Raster on surfaces that draw none.
+// The HP gauge, in the same style as MP and XP: white for a moment when a failed call has just cost a heart.
+const HpBar = (ui: ElementTable, hp: number, width: number, Raster: ElementTable<'terminal'>['Raster'] | undefined, flash?: number) =>
+  Bar(ui, 'HP', flash === undefined ? rampRgb(hp / HEARTS, RGB.green) : 0xffffff, hp / HEARTS, `${hp}/${HEARTS}`, width, Raster)
+
 export function renderStatus(ui: ElementTable, data: StatusData, Raster?: ElementTable<'terminal'>['Raster'], portrait?: RenderChildren) {
   const { Box, Text, Button } = ui
   const { list, vitals, combo, boss, width } = data
@@ -171,36 +180,40 @@ export function renderStatus(ui: ElementTable, data: StatusData, Raster?: Elemen
     : data.aura !== undefined ? (data.aura.tier === 2 ? 'magenta' : 'yellow')
     : hero.color
   const fullName = `CLAUDE THE ${hero.title}`
-  // Room for `Lv.NN` beside the name, and for the ? after it.
-  const name = statsWidth >= fullName.length + 6 + (data.onHelp === undefined ? 0 : 2) ? fullName : 'CLAUDE'
+  // Room for the ` Lv.NN ` badge beside the name, and for the ? after it.
+  const name = statsWidth >= fullName.length + 8 + (data.onHelp === undefined ? 0 : 2) ? fullName : 'CLAUDE'
   const { usd } = vitals
   // Only the terminal's Raster takes the animation's blits; a drawing animates itself.
   anim.hasHero = hasPortrait && Raster !== undefined
 
   const fightRoom = data.onFight === undefined ? 0 : FIGHT_LABEL.length + 1
-  const bossBar = barParts(boss?.hp ?? 0, boss?.maxHp ?? 0, Math.max(4, Math.min(10, statsWidth - (boss?.name.length ?? 0) - 9 - fightRoom)))
+  const bossWidth = Math.max(4, Math.min(10, statsWidth - (boss?.name.length ?? 0) - 9 - fightRoom))
   const bossRow =
     boss === null || hasFoeSide ? null : (
       <Box height={1}>
-        <Box flexGrow={1}>
-          {Svg !== undefined ? (
-            <Box flexDirection="row" height={1} alignItems="center">
-              <Text bold color="red">
-                ☠ {boss.name}{' '}
-              </Text>
-              <Svg key="bar-boss" source={barSvg(boss.hp, boss.maxHp, bossBar.filled.length + bossBar.empty.length, 'red')} alt={`${boss.name} ${boss.hp}/${boss.maxHp}`} width={(bossBar.filled.length + bossBar.empty.length) * COLUMN_PX} height={BAR_HEIGHT} />
-              <Text color="red"> {boss.hp}/{boss.maxHp}</Text>
-            </Box>
-          ) : (
-            <Text wrap="truncate">
-              <Text bold color="red">☠ {boss.name} </Text>
-              <Text color="red">{bossBar.filled}</Text>
-              <Text dimColor>{bossBar.empty}</Text>
-              <Text color="red"> {boss.hp}/{boss.maxHp}</Text>
-            </Text>
-          )}
+        <Box flexGrow={1} flexDirection="row" height={1} alignItems="center">
+          <Text bold color={HEX.red} wrap="truncate">
+            ☠ {boss.name}{' '}
+          </Text>
+          {gauge(ui, {
+            key: 'bar-boss',
+            share: boss.maxHp <= 0 ? 0 : boss.hp / boss.maxHp,
+            width: bossWidth,
+            rgb: RGB.red,
+            alt: `${boss.name} ${boss.hp}/${boss.maxHp}`,
+            ...(data.gaugeRaster === undefined ? {} : { Raster: data.gaugeRaster }),
+          })}
+          <Text color={HEX.red}> {boss.hp}/{boss.maxHp}</Text>
         </Box>
         {data.onFight !== undefined && <Button key="fight" label={FIGHT_LABEL} plain onPress={data.onFight} />}
+      </Box>
+    )
+
+  // A failed call's -1 climbs the gap beside the portrait, a row a step.
+  const damage =
+    data.damage === undefined || hasFoeSide ? null : (
+      <Box key="damage" position="absolute" left={HERO_CELLS.columns} top={Math.max(1, DAMAGE_ROW - Math.floor(data.damage / DAMAGE_STEP_MS))} width={PORTRAIT_GAP} height={1}>
+        <Text bold color={HEX.red}>-1</Text>
       </Box>
     )
 
@@ -211,6 +224,7 @@ export function renderStatus(ui: ElementTable, data: StatusData, Raster?: Elemen
         <Box width={HERO_CELLS.columns + (hasFoeSide ? 1 : PORTRAIT_GAP)} {...(Svg === undefined ? {} : { height: STATS_ROWS, alignItems: 'center' as const })}>
           {Raster ? <Raster key="hero" {...HERO_CELLS} cells={anim.shownCells} /> : portrait}
           {!hasFoeSide && data.aura?.node}
+          {damage}
         </Box>
       )}
       {hasFoeSide && data.foe !== undefined
@@ -220,88 +234,118 @@ export function renderStatus(ui: ElementTable, data: StatusData, Raster?: Elemen
   )
 
   function renderStats() {
+    const gaugeRaster = data.gaugeRaster
+    const levelUp = data.levelUp
+    // The level up's gauge: full, then white, then back to what the new level holds.
+    const xpBar =
+      levelUp !== undefined && levelUp < XP_FULL_MS
+        ? Bar(ui, 'XP', RGB.magenta, 1, `${CALLS_PER_LEVEL}/${CALLS_PER_LEVEL}`, barWidth, gaugeRaster)
+        : levelUp !== undefined && levelUp < XP_FLASH_MS
+        ? Bar(ui, 'XP', 0xffffff, 1, `${CALLS_PER_LEVEL}/${CALLS_PER_LEVEL}`, barWidth, gaugeRaster)
+        : Bar(ui, 'XP', RGB.magenta, xp / CALLS_PER_LEVEL, `${xp}/${CALLS_PER_LEVEL}`, barWidth, gaugeRaster)
+    const isGlowing = data.isFlashing
+    const comboStyle =
+      data.comboFx === 'up'
+        ? { inverse: true, color: HEX.gold }
+        : combo.current === 0
+        ? { dimColor: true }
+        : combo.current >= 10
+        ? { color: HEX.gold }
+        : {}
     return (
       <Box flexDirection="column" width={statsWidth} height={STATS_ROWS}>
         <Box height={1}>
           <Box flexGrow={1}>
-            <Text bold color={frame}>
+            <Text bold color={tone(frame)}>
               {name}
             </Text>
           </Box>
-          <Text bold color="yellow">
-            Lv.{level}
+          {/* The level as a badge: gold, white while a level up glows. */}
+          <Text bold color="#1a1020" backgroundColor={isGlowing ? '#ffffff' : HEX.gold}>
+            {` Lv.${level} `}
           </Text>
           {data.onHelp !== undefined && <Text> </Text>}
           {data.onHelp !== undefined && <Button key="help" label="?" plain onPress={data.onHelp} />}
         </Box>
         <Text wrap="truncate">
-          <Text italic color="cyan">{rankOf(hero, level)}</Text>
+          <Text italic color={HEX.cyan}>{rankOf(hero, level)}</Text>
           <Text dimColor> · {data.casts} casts</Text>
         </Text>
-        {Bar(ui, 'HP', gaugeColor(hp, HEARTS, 'green'), hp, HEARTS, `${hp}/${HEARTS}`, barWidth, Svg)}
+        {HpBar(ui, hp, barWidth, gaugeRaster, data.heartFlash)}
         {mp === undefined
-          ? Bar(ui, 'MP', 'blue', 0, MP_MAX, '?', barWidth, Svg)
+          ? Bar(ui, 'MP', RGB.blue, 0, '?', barWidth, gaugeRaster)
           : data.rest !== undefined
           ? (() => {
               const poured = restingMana(data.rest.from ?? 0, mp, data.rest.elapsed)
-              return Bar(ui, 'MP', 'cyan', poured, MP_MAX, `${poured}%`, barWidth, Svg)
+              return Bar(ui, 'MP', RGB.cyan, poured / MP_MAX, `${poured}%`, barWidth, gaugeRaster)
             })()
-          : Bar(ui, 'MP', gaugeColor(mp, MP_MAX, 'blue'), mp, MP_MAX, `${mp}%`, barWidth, Svg)}
-        {Bar(ui, 'XP', 'magenta', xp, CALLS_PER_LEVEL, `${xp}/${CALLS_PER_LEVEL}`, barWidth, Svg)}
-        <Text color={frame} dimColor wrap="truncate">
+          : Bar(ui, 'MP', rampRgb(mp / MP_MAX, RGB.blue), mp / MP_MAX, `${mp}%`, barWidth, gaugeRaster)}
+        {xpBar}
+        <Text color={tone(frame)} dimColor wrap="truncate">
           {'┈'.repeat(statsWidth)}
         </Text>
         <Box height={1}>
           <Box flexGrow={1}>
             <Text wrap="truncate">
-              <Text bold color={combo.current >= 10 ? 'yellow' : 'white'}>⚡×{combo.current}</Text>
+              <Text bold {...comboStyle}>⚡×{combo.current}</Text>
+              {data.comboFx === 'break' && <Text bold color={HEX.red}> BREAK</Text>}
               <Text dimColor> best {combo.best}</Text>
             </Text>
           </Box>
-          {usd !== undefined && <Text color="yellow">⛁ {usd.toFixed(2)}</Text>}
+          {usd !== undefined && (
+            <Text>
+              <Text dimColor>⛁ </Text>
+              <Text color={HEX.gold}>{usd.toFixed(2)}</Text>
+            </Text>
+          )}
         </Box>
         <Text wrap="truncate">
-          <Text color="yellow">⚙ {data.jobsOut}</Text>
+          <Text {...(data.jobsOut === 0 ? { dimColor: true } : { color: HEX.gold })}>⚙ {data.jobsOut}</Text>
           <Text dimColor> {data.jobsOut === 1 ? 'job' : 'jobs'}</Text>
-          <Text color="green">  ♣ {data.petsOut}</Text>
+          <Text {...(data.petsOut === 0 ? { dimColor: true } : { color: HEX.green })}>  ♣ {data.petsOut}</Text>
           <Text dimColor> in party</Text>
         </Text>
         {data.rest !== undefined ? (
-          <Text bold color="cyan" wrap="truncate">
+          <Text bold color={HEX.cyan} wrap="truncate">
             🌙 Resting at the inn <Text dimColor>· MP restored</Text>
           </Text>
         ) : data.knockout === 'down' ? (
-          <Text bold color="red" wrap="truncate">
+          <Text bold color={HEX.red} wrap="truncate">
             💀 K.O. <Text dimColor>· a clean cast revives</Text>
           </Text>
         ) : data.knockout === 'revived' ? (
-          <Text bold color="green" wrap="truncate">
+          <Text bold color={HEX.green} wrap="truncate">
             ✨ REVIVED! <Text dimColor>hearts restored</Text>
           </Text>
         ) : data.waitingFor !== undefined ? (
-          <Text bold color="yellow" wrap="truncate">
+          <Text bold color={HEX.gold} wrap="truncate">
             ❗ {data.waitingFor === 'AskUserQuestion' ? 'awaiting your answer' : `awaiting your word on ${data.waitingFor}`}
           </Text>
         ) : current ? (
-          <Text color="yellow" wrap="truncate">
+          <Text color={HEX.gold} wrap="truncate">
             {hero.acting} <Text bold>{current.tool}</Text>{' '}
             <Text dimColor>{oneLine(current.summary, statsWidth - hero.acting.length - 2 - current.tool.length)}</Text>
           </Text>
         ) : (
           <Text dimColor wrap="truncate">
-            {data.camp === undefined ? hero.resting : `🏕 camping at ${data.camp}`}
+            {data.camp === undefined ? hero.resting : `⛺ camping at ${data.camp}`}
           </Text>
         )}
         {bossRow ??
           (failed > 0 ? (
-            <Text color="red" wrap="truncate">
+            <Text color={HEX.red} wrap="truncate">
               ✗ {failed} {hero.failures}
             </Text>
           ) : (
-            <Text color="green" dimColor>
+            <Text color={HEX.green} dimColor>
               ✓ no {hero.failures}
             </Text>
           ))}
+        {data.celebration !== undefined && (
+          <Box key="celebration" position="absolute" right={0} bottom={0}>
+            {data.celebration}
+          </Box>
+        )}
       </Box>
     )
   }

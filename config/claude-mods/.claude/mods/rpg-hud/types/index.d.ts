@@ -149,6 +149,8 @@ declare module 'claude-code' {
       calls: ToolCall[]
       // Every main-loop call this session, uncapped: the hero's level and XP.
       castCount: number
+      // The highest level toasted so far, so parallel calls announce each level once.
+      announcedLevel: number
       // Rows scrolled down each menu window.
       offsets: Record<string, number>
       // Until when the status panel glows after a level up.
@@ -199,6 +201,10 @@ declare module 'claude-code' {
       restFx: { at: number; from?: number } | null
       // Each closing line's loot, by the line's id.
       claimedLoot: Record<string, import('../hooks/loot').Loot>
+      // The heart a failed call just cost, and when: it flashes white and a -1 floats up beside the portrait.
+      hpFx: { at: number; index: number } | null
+      // The combo's last rise or break, and when; a break keeps the count it broke from, whose aura fades out.
+      comboFx: { kind: 'up' | 'break'; at: number; from: number } | null
     }
   }
 }

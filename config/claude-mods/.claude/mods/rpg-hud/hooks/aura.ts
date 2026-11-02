@@ -28,3 +28,14 @@ export const auraFrames = (tier: 1 | 2, rows: number): (number | undefined)[][][
     return pixels
   })
 }
+
+// A broken combo's aura going out: its sparks keep climbing as they dim, a step a frame, the last frame bare.
+export const fadingAura = (tier: 1 | 2, rows: number): (number | undefined)[][][] =>
+  auraFrames(tier, rows).map((frame, at) => {
+    const kept = 1 - (at + 1) / AURA_FRAMES
+    const dim = (rgb: number) => {
+      const channel = (shift: number) => Math.round(((rgb >> shift) & 0xff) * kept)
+      return (channel(16) << 16) | (channel(8) << 8) | channel(0)
+    }
+    return frame.map(row => row.map(color => (color === undefined || kept <= 0 ? undefined : dim(color))))
+  })

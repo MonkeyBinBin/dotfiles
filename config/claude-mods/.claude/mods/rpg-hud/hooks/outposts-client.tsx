@@ -3,6 +3,7 @@ import type { ClientModule } from 'claude-code'
 import type { Outpost } from '../types'
 import { fit, pickList } from './pick-list'
 import type { PickState } from './pick-list'
+import { HEX } from './palette'
 
 export type OutpostRow = { kind: 'back' } | { kind: 'outpost'; outpost: Outpost } | { kind: 'note'; text: string }
 
@@ -22,9 +23,9 @@ const AGE = 5
 // Where the outpost stands: here, a lock, a ruin, or a plain camp.
 export const markerOf = (outpost: Outpost): { glyph: string; color: string } => {
   if (outpost.isPrunable) return { glyph: '💀', color: 'gray' }
-  if (outpost.isHere) return { glyph: '@ ', color: 'yellow' }
-  if (outpost.isLocked) return { glyph: '🔒', color: 'cyan' }
-  return { glyph: '⚑ ', color: 'green' }
+  if (outpost.isHere) return { glyph: '@ ', color: HEX.gold }
+  if (outpost.isLocked) return { glyph: '🔒', color: HEX.cyan }
+  return { glyph: '⚑ ', color: HEX.green }
 }
 
 // The worktrees as outposts: a click on one opens its bag, one on the first row goes back to the map.
@@ -49,7 +50,7 @@ const Outposts: ClientModule<OutpostsProps, PickState> = (props, surface) => {
         const isHover = state.hover === index
         if (row.kind === 'back') {
           return (
-            <Text key="back" color={isHover ? 'yellow' : 'cyan'} bold={isHover}>
+            <Text key="back" color={isHover ? HEX.gold : HEX.cyan} bold={isHover}>
               {cursor(isHover)}◂ back to the map
             </Text>
           )
@@ -64,21 +65,21 @@ const Outposts: ClientModule<OutpostsProps, PickState> = (props, surface) => {
         const { outpost } = row
         const marker = markerOf(outpost)
         const distance = `${outpost.ahead > 0 ? `↑${outpost.ahead}` : ''}${outpost.behind > 0 ? `↓${outpost.behind}` : ''}`
-        let status = { text: outpost.dirty > 0 ? `⚠ ${outpost.dirty} unsaved` : '✓ saved', color: outpost.dirty > 0 ? 'red' : 'green' }
+        let status = { text: outpost.dirty > 0 ? `⚠ ${outpost.dirty} unsaved` : '✓ saved', color: outpost.dirty > 0 ? HEX.red : HEX.green }
         if (outpost.isPrunable) status = { text: 'prunable', color: 'gray' }
-        else if (isHover) status = { text: '⏎ open bag', color: 'yellow' }
+        else if (isHover) status = { text: '⏎ open bag', color: HEX.gold }
         const right = outpost.isHere && !isHover ? 'here' : outpost.isLocked && !isHover ? 'lock' : outpost.age
         return (
           <Box key={`o-${outpost.path}`} flexDirection="row" height={1}>
-            <Text color="yellow">{cursor(isHover)}</Text>
+            <Text color={HEX.gold}>{cursor(isHover)}</Text>
             <Text color={marker.color}>{fit(marker.glyph, MARK)}</Text>
-            <Text bold={isHover || outpost.isHere} color={isHover ? 'yellow' : undefined} dimColor={outpost.isPrunable}>
+            <Text bold={isHover || outpost.isHere} color={isHover ? HEX.gold : undefined} dimColor={outpost.isPrunable}>
               {fit(outpost.name, nameWidth)}
             </Text>
-            <Text color="green" dimColor={!isHover}>
+            <Text color={HEX.green} dimColor={!isHover}>
               {fit(`${outpost.branch || '(detached)'}${distance === '' ? '' : ` ${distance}`}`, BRANCH)}
             </Text>
-            <Text color={status.color} dimColor={status.color === 'green'}>
+            <Text color={status.color} dimColor={status.color === HEX.green}>
               {fit(status.text, STATUS)}
             </Text>
             <Text dimColor>{fit(right, AGE)}</Text>

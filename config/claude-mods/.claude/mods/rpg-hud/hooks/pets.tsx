@@ -1,9 +1,11 @@
-import type { ElementTable } from 'claude-code'
+import type { ElementTable, RenderChildren } from 'claude-code'
 
 import type { Pet } from '../types'
 import { FRAME_MS, PET_TICKS, anim } from './anim'
 import { PET_COLUMNS, PET_ROWS, petCells, petSeed, speciesFor } from './pet-sprites'
 import { formatElapsed, oneLine } from './util'
+import { emptyItem } from './empty'
+import { HEX, STATUS_MARKS, tone } from './palette'
 import { cellsToPixels, spriteSvg } from './svg'
 import type { Item } from './window'
 
@@ -31,9 +33,9 @@ export const rosterOrder = (list: readonly Pet[]): Pet[] => {
 
 const statusLine = (pet: Pet, now: number) => {
   const elapsed = formatElapsed((pet.endedAt ?? now) - pet.startedAt)
-  if (pet.status === 'run') return { text: `✦ questing ${elapsed}`, color: 'yellow' }
-  if (pet.status === 'ok') return { text: `✓ returned ${elapsed}`, color: 'green' }
-  return { text: `✗ fainted ${elapsed}`, color: 'red' }
+  const mark = STATUS_MARKS[pet.status]
+  const word = pet.status === 'run' ? 'questing' : pet.status === 'ok' ? 'returned' : 'fainted'
+  return { text: `${mark.glyph} ${word} ${elapsed}`, color: mark.color }
 }
 
 export const partySubtitle = (list: readonly Pet[]): string =>
@@ -45,16 +47,19 @@ export function petItems(
   now: number,
   width: number,
   Raster?: ElementTable<'terminal'>['Raster'],
+  // A moment in a pet's sprite slot, by pet: a summoning poof, a return sparkle, a faint. It stands in for the
+  // creature while it plays.
+  slots: ReadonlyMap<string, RenderChildren> = new Map(),
 ): Item[] {
   const { Box, Text } = ui
   // The animation repaints the running pets; the window decides which are on screen, so all are candidates.
   anim.pets = new Map(
     list
-      .filter(pet => pet.status === 'run')
+      .filter(pet => pet.status === 'run' && !slots.has(pet.id))
       .map(pet => [`pet-${pet.id}`, { seed: petSeed(pet), shown: anim.pets.get(`pet-${pet.id}`)?.shown ?? '' }]),
   )
   if (list.length === 0) {
-    return [{ key: 'empty', rows: 1, node: <Text dimColor>No companions yet. Subagents you summon join the party.</Text> }]
+    return [emptyItem(ui, 'No companions yet. Subagents you summon join the party.', Raster)]
   }
   const Svg = Raster === undefined && 'Svg' in ui ? ui.Svg : undefined
   const textWidth = Math.max(0, width - (Raster || Svg ? PET_COLUMNS + SPRITE_GAP : 0))
@@ -73,7 +78,7 @@ export function petItems(
         <Box flexDirection="row" height={CARD_ROWS}>
           {Raster && (
             <Box width={PET_COLUMNS + SPRITE_GAP}>
-              <Raster key={`pet-${pet.id}`} columns={PET_COLUMNS} rows={PET_ROWS} cells={petCells(seed, pet.status, 0)} />
+              {slots.get(pet.id) ?? <Raster key={`pet-${pet.id}`} columns={PET_COLUMNS} rows={PET_ROWS} cells={petCells(seed, pet.status, 0)} />}
             </Box>
           )}
           {Svg &&
@@ -90,11 +95,11 @@ export function petItems(
               <Box flexGrow={1}>
                 <Text wrap="truncate">
                   {/* White fades on a light terminal; the default foreground reads on either (as in the bag). */}
-                  <Text bold color={pet.status === 'err' ? 'gray' : species.color === 'white' ? undefined : species.color}>
+                  <Text bold color={pet.status === 'err' ? 'gray' : species.color === 'white' ? undefined : tone(species.color)}>
                     {species.name}
                   </Text>
                   <Text dimColor> {oneLine(pet.kind, 16)}</Text>
-                  {pet.camp !== undefined && <Text color="cyan"> ⚑{pet.camp}</Text>}
+                  {pet.camp !== undefined && <Text color={HEX.cyan}> ⚑{pet.camp}</Text>}
                 </Text>
               </Box>
               <Text color={status.color}>{status.text}</Text>

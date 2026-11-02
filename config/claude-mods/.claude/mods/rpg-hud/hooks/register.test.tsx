@@ -14,12 +14,12 @@ import { EMPTY_LOOT, claimLoot, forge, lootText } from './loot'
 import { parseDiff, rarityOf, splitBar } from './diff'
 import { countPatch, patchSource } from './edit-card'
 import { trailStops } from './map'
-import { gaugeColor, heroStats, manaLeft, normalizeCall, panelDuel, rankFor, statusLayout } from './hero'
+import { DAMAGE_MS, XP_FLASH_MS, gaugeColor, heroStats, manaLeft, normalizeCall, panelDuel, rankFor, statusLayout } from './hero'
 import { rosterOrder } from './pets'
-import { petArt, petCells, speciesFor } from './pet-sprites'
+import { faintFrames, petArt, petCells, speciesFor } from './pet-sprites'
 import { REST_MS, restingMana } from './rest'
 import { AURA_FRAMES, auraFrames, auraTier } from './aura'
-import { MANA_ALARMS, MAP_FX_MS, REVIVE_MS, campFor, localHour, parseUtcOffset, isRefusal, manaAlarm, returnToast, skillOfPrompt, touchFile } from './register'
+import { COMBO_BREAK_MS, CRUMBLE_MS, REVIVE_FADE_MS, MANA_ALARMS, MAP_FX_MS, REVIVE_MS, campFor, localHour, parseUtcOffset, isRefusal, manaAlarm, returnToast, skillOfPrompt, touchFile } from './register'
 import { formatDuration, recapText, topTools } from './recap'
 import { HELP_COMMANDS, helpText } from './help'
 import { filterSpells, spellRarity, timeColor } from './spellbook'
@@ -32,7 +32,9 @@ import { CLASSES, CLASS_IDS, rankOf, rollClass } from './classes'
 import { HERO_CLASS_FRAMES, HERO_SIZE as HERO_CELLS_SIZE } from './hero-cells'
 import { PORTRAIT_BUSTS } from './portrait-cells'
 import { cellsToPixels, gridToPixels, spriteSvg } from './svg'
-import { composeSprite } from './util'
+import { blendCells, composeSprite } from './util'
+import { HEX, RGB, STATUS_MARKS, TIERS } from './palette'
+import { TROUGH, gaugeRuns } from './gauge'
 
 const PANE_PROPS = {
   title: 'Adventure',
@@ -126,7 +128,7 @@ const cardOf = async (ui: Awaited<ReturnType<typeof mountPane>>, tab: string) =>
 
 for (const surface of ['terminal', 'desktop'] as const) {
   test(`logs calls and loses a heart per failure on ${surface}`, async ($, on) => {
-    world(on, { tool: failBash('boom') })
+    const { clock } = world(on, { tool: failBash('boom') })
     await $.tool.call({ tool: 'Read', file_path: '/x/y/a.md' })
     await $.tool.call({ tool: 'Bash', command: 'false' })
 
@@ -134,7 +136,17 @@ for (const surface of ['terminal', 'desktop'] as const) {
     const shown = (await texts(ui)).join('|')
     expect(shown).toContain('a.md')
     if (surface === 'terminal') {
-      expect(shown).toContain(`HP |${'█'.repeat(14)}|${'░'.repeat(4)}| 4/5`)
+      // The HP gauge, four fifths full, flashes white for the heart just lost, and a -1 floats up beside the portrait.
+      expect(shown).toContain('HP | 4/5')
+      expect(shown).toContain('-1')
+      const hp = async () => (await ui.findAll({ type: 'Raster' })).find(r => r.key === 'bar-HP')?.props?.cells as string | undefined
+      const flashed = await hp()
+      expect(flashed).toBeDefined()
+      await clock.advance(DAMAGE_MS + 10)
+      const settled = await hp()
+      expect(settled).toBeDefined()
+      expect(settled).not.toBe(flashed)
+      expect((await texts(ui)).join('|')).not.toContain('-1')
     } else {
       // Off the terminal the bars are drawings: no block characters, the reading in the drawing's alt.
       expect(shown).not.toContain('█')
@@ -154,7 +166,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
   test(`the status panel stays on top whatever the menu shows on ${surface}`, async ($, on) => {
     world(on)
     const ui = await mountPane($, surface)
-    for (const [key, title] of [['pets', '🐾 PARTY'], ['map', '🧭 WORLD MAP'], ['skills', '📜 SKILLS'], ['jobs', '⚙ JOBS'], ['spells', '📖 SPELL BOOK']] as const) {
+    for (const [key, title] of [['pets', '🐾 PARTY'], ['map', '🧭 WORLD MAP'], ['skills', '📜 SKILLS'], ['jobs', '🧰 JOBS'], ['spells', '📖 SPELL BOOK']] as const) {
       await showTab($, ui, key, surface)
       const shown = await texts(ui)
       expect(shown).toContain(title)
@@ -166,7 +178,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
 test('draws the portrait and the icon menu on the terminal', async ($, on) => {
   world(on)
   const ui = await mountPane($, 'terminal')
-  expect(await ui.findAll({ type: 'Raster' })).toHaveLength(1)
+  expect((await ui.findAll({ type: 'Raster' })).filter(r => r.key === 'hero')).toHaveLength(1)
   // Five folder tabs, each its icon over its name, drawn whole by a Client; no number keys on show.
   const tabs = (await ui.findAll({ type: 'Client' })).filter(c => String(c.props?.key ?? '').startsWith('icon-'))
   expect(tabs.map(c => (c.props?.props as { label: string }).label)).toEqual(['SPELL', 'PARTY', 'MAP', 'SKILL', 'JOBS'])
@@ -190,7 +202,7 @@ test('a click anywhere on a tab picks it, and closes the help page', async ($, o
   // Its name, under the icon.
   await ui.pointer({ type: 'down', x: 5, y: 4, button: 'left', in: 'icon-jobs' })
   await ui.pointer({ type: 'up', x: 5, y: 4, button: 'left', in: 'icon-jobs' })
-  expect((await texts(ui)).join('|')).toContain('⚙ JOBS')
+  expect((await texts(ui)).join('|')).toContain('🧰 JOBS')
   // With the help page open, the active tab closes it.
   await ui.press({ key: 'help' })
   await showTab($, ui, 'jobs')
@@ -225,7 +237,7 @@ test('the selected tab lights its name in its colour; the others are dim', async
 test('a narrow, short pane drops the portrait and folds the menu into one line', async ($, on) => {
   world(on)
   const ui = await mountPane($, 'terminal', 24, 40)
-  expect(await ui.findAll({ type: 'Raster' })).toHaveLength(0)
+  expect((await ui.findAll({ type: 'Raster' })).filter(r => r.key === 'hero')).toHaveLength(0)
   expect((await texts(ui)).join('|')).toContain('📖 SPELL BOOK')
 })
 
@@ -283,10 +295,13 @@ test('fits the portrait only beside a usable stats column', () => {
   expect(panelDuel(90, true)).toEqual({ hasPortrait: true, scale: 2, midColumns: 16, arenaColumns: 48 })
 })
 
-test('gauges turn yellow then red as they drain', () => {
-  expect(gaugeColor(5, 5, 'green')).toBe('green')
-  expect(gaugeColor(2, 5, 'green')).toBe('yellow')
-  expect(gaugeColor(1, 5, 'green')).toBe('red')
+test('gauges slide from their own colour through gold to red as they drain', () => {
+  expect(gaugeColor(5, 5, RGB.green)).toBe(HEX.green)
+  expect(gaugeColor(3, 5, RGB.green)).toBe(HEX.green)
+  expect(gaugeColor(1.5, 5, RGB.green)).toBe(HEX.gold)
+  expect(gaugeColor(0, 5, RGB.green)).toBe(HEX.red)
+  // Between the stops the colour blends: neither end.
+  expect([HEX.green, HEX.gold]).not.toContain(gaugeColor(2.2, 5, RGB.green))
 })
 
 test('the combo grows with each clean cast and breaks on a fizzle', async ($, on) => {
@@ -390,8 +405,8 @@ test('a summoned subagent joins the party and reports back', async ($, on) => {
   expect(shown).toContain('1 questing · 1 summoned')
   expect(shown).toContain('Find config')
   expect(shown).toContain('⚔ 1 · Grep PLUGIN_DIRS')
-  // The portrait and the hawk.
-  expect(await ui.findAll({ type: 'Raster' })).toHaveLength(2)
+  // The portrait and the creature.
+  expect((await ui.findAll({ type: 'Raster' })).filter(r => r.key === 'hero' || String(r.key).startsWith('pet-'))).toHaveLength(2)
 
   await $.turn.complete({ agentId: 'agent-1', answer: 'Found it in settings.json\nmore', durationMs: 5, isAborted: false, turnId: 't' } as never)
   shown = (await texts(ui)).join('|')
@@ -659,13 +674,18 @@ test('a combo of ten burns a gold aura beside the portrait, of twenty every colo
   expect(auraFrames(1, 10).flat(2)).not.toContain(0xb466ff)
 
   let failing = false
-  world(on, { tool: e => (failing && e.tool === 'Bash' ? fail('boom') : undefined) })
+  const { clock } = world(on, { tool: e => (failing && e.tool === 'Bash' ? fail('boom') : undefined) })
   for (let n = 0; n < 10; n += 1) await $.tool.call({ tool: 'Read', file_path: `/x/${n}.md` })
   const ui = await mountPane($, 'terminal')
   expect((await ui.findAll({ type: 'Raster' })).some(raster => raster.key === 'aura')).toBe(true)
   failing = true
   await $.tool.call({ tool: 'Bash', command: 'boom' })
+  // Broken, the aura fades out under a BREAK rather than vanishing, then it is gone.
+  expect((await ui.findAll({ type: 'Raster' })).some(raster => raster.key === 'aura')).toBe(true)
+  expect((await texts(ui)).join('|')).toContain('BREAK')
+  await clock.advance(COMBO_BREAK_MS + 10)
   expect((await ui.findAll({ type: 'Raster' })).some(raster => raster.key === 'aura')).toBe(false)
+  expect((await texts(ui)).join('|')).not.toContain('BREAK')
 })
 
 test('a spell is as rare as what it achieved, and only one that landed has a rarity', async ($, on) => {
@@ -1366,7 +1386,7 @@ test('walks from the map to an outpost, its bag and a diff, and back', async ($,
   expect(shown).toContain(' ⚑feat-x')
 
   await ui.press({ key: 'open-outposts' })
-  expect((await texts(ui)).join('|')).toContain('🏕 OUTPOSTS  4 camps · 1 with unsaved work')
+  expect((await texts(ui)).join('|')).toContain('⛺ OUTPOSTS  4 camps · 1 with unsaved work')
   const camps = (await ui.findAll({ type: 'Text', in: 'outposts' })).map(row => row.text ?? '').join('|')
   expect(camps).toContain('feat-x')
   expect(camps).toContain('feat/x ↑2')
@@ -1376,7 +1396,7 @@ test('walks from the map to an outpost, its bag and a diff, and back', async ($,
 
   // A ruin opens nothing; feat-x (row 2) opens its own bag.
   await ui.pointer({ type: 'up', x: 6, y: 4, button: 'left', in: 'outposts' })
-  expect((await texts(ui)).join('|')).toContain('🏕 OUTPOSTS')
+  expect((await texts(ui)).join('|')).toContain('⛺ OUTPOSTS')
   await ui.pointer({ type: 'up', x: 6, y: 2, button: 'left', in: 'outposts' })
   shown = (await texts(ui)).join('|')
   expect(shown).toContain('🎒 INVENTORY  ⚑feat-x · 2 items · +7 −1')
@@ -1388,7 +1408,7 @@ test('walks from the map to an outpost, its bag and a diff, and back', async ($,
   await ui.press({ key: 'inspect-back' })
   expect((await texts(ui)).join('|')).toContain('⚑feat-x')
   await ui.pointer({ type: 'up', x: 3, y: 0, button: 'left', in: 'bag' })
-  expect((await texts(ui)).join('|')).toContain('🏕 OUTPOSTS')
+  expect((await texts(ui)).join('|')).toContain('⛺ OUTPOSTS')
   await ui.pointer({ type: 'up', x: 3, y: 0, button: 'left', in: 'outposts' })
   expect((await texts(ui)).join('|')).toContain('🧭 WORLD MAP')
 })
@@ -1400,7 +1420,7 @@ test('a session in an outpost camps there, and a pet sent elsewhere shows its ca
   await $.agent.spawn({ prompt: 'Fix it', description: 'Fix it', subagentType: 'general-purpose', cwd: '/x-wt/locked-one' } as never)
 
   const ui = await mountPane($, 'terminal', 40)
-  expect((await texts(ui)).join('|')).toContain('🏕 camping at feat-x')
+  expect((await texts(ui)).join('|')).toContain('⛺ camping at feat-x')
   await showTab($, ui, 'pets')
   expect((await texts(ui)).join('|')).toContain(' ⚑locked-one')
 })
@@ -1454,7 +1474,7 @@ test("the session's own outpost opened from the list leads back to the list", as
   await ui.pointer({ type: 'up', x: 6, y: 1, button: 'left', in: 'outposts' })
   expect((await ui.findAll({ type: 'Text', in: 'bag' })).map(row => row.text ?? '').join('|')).toContain('◂ back to the outposts')
   await ui.pointer({ type: 'up', x: 3, y: 0, button: 'left', in: 'bag' })
-  expect((await texts(ui)).join('|')).toContain('🏕 OUTPOSTS')
+  expect((await texts(ui)).join('|')).toContain('⛺ OUTPOSTS')
 })
 
 test('a pet working inside the session folder has no camp', async ($, on) => {
@@ -1920,8 +1940,8 @@ test('slow casts are kept by the slow filter and coloured by how slow', () => {
   const call = (id: string, ms: number) => ({ id, tool: 'Bash', summary: '', startedAt: 0, ms, status: 'ok' as const })
   expect(filterSpells([call('a', 200), call('b', 5000), call('c', 40000)], 'slow').map(one => one.id)).toEqual(['b', 'c'])
   expect(timeColor(200)).toBeUndefined()
-  expect(timeColor(5000)).toBe('yellow')
-  expect(timeColor(40000)).toBe('red')
+  expect(timeColor(5000)).toBe(HEX.gold)
+  expect(timeColor(40000)).toBe(HEX.red)
   expect(timeColor(undefined)).toBeUndefined()
 })
 
@@ -1966,7 +1986,7 @@ test('/hud recap sums up the session', async ($, on) => {
     '✦ 3 casts · ✗ 1 blows parried · ⊘ 1 refused · ⚡ best combo 2',
     '📖 most cast: Bash 1 · Edit 1 · Read 1',
     '☠ 0 bosses defeated · Bug Hydra still stands (HP 2)',
-    '🗺 1 file explored · ✎ 1 edited',
+    '🧭 1 file explored · ✎ 1 edited',
     '⛁ $1.50 · 🔮 context 42% full',
   ])
 })
@@ -1983,7 +2003,7 @@ test('/hud recap after a /clear sums up the new session alone', async ($, on) =>
   const lines = ((await $.command.run({ command: 'hud', args: 'recap' } as never)) as { text: string }).text.split('\n')
   expect(lines[0]).toMatch(/· 5m$/)
   expect(lines[1]).toMatch(/^✦ 1 casts · ✗ 0 /)
-  expect(lines).toContain('🗺 1 file explored · ✎ 0 edited')
+  expect(lines).toContain('🧭 1 file explored · ✎ 0 edited')
 })
 
 // --- Waiting on the person ---
@@ -2120,7 +2140,7 @@ test('the number keys pick a tab and ? toggles the help page', async ($, on) => 
   world(on)
   const ui = await mountPane($, 'terminal')
   await ui.key({ key: '5', in: 'icon-spells' })
-  expect((await texts(ui)).join('|')).toContain('⚙ JOBS')
+  expect((await texts(ui)).join('|')).toContain('🧰 JOBS')
   await ui.key({ key: '3', in: 'icon-spells' })
   expect((await texts(ui)).join('|')).toContain('🧭 WORLD MAP')
 
@@ -2328,7 +2348,7 @@ test("a plugin's slash command is no message of the person's", async ($, on) => 
   const ui = await mountPane($, 'terminal', 40)
   await showTab($, ui, 'jobs')
   await $.command.run({ command: 'commit', args: '', origin: { kind: 'plugin', name: 'other' } } as never)
-  expect((await texts(ui)).join('|')).toContain('⚙ JOBS')
+  expect((await texts(ui)).join('|')).toContain('🧰 JOBS')
 })
 
 for (const source of ['clear', 'resume'] as const) {
@@ -2360,7 +2380,7 @@ test('a tab the person picks holds the window until their next message', async (
   const ui = await mountPane($, 'terminal', 40)
   await showTab($, ui, 'jobs')
   await $.tool.call({ tool: 'Skill', skill: 'commit' } as never)
-  expect((await texts(ui)).join('|')).toContain('⚙ JOBS')
+  expect((await texts(ui)).join('|')).toContain('🧰 JOBS')
   // The next message lets it follow again.
   await $.prompt.submit({ text: 'and now?' } as never)
   await $.tool.call({ tool: 'Skill', skill: 'commit' } as never)
@@ -2399,7 +2419,7 @@ test("/hud with a tab's number opens that tab", async ($, on) => {
   on('ui.open', async () => ({ value: undefined }) as never)
   const ui = await mountPane($, 'terminal')
   await $.command.run({ command: 'hud', args: '5' } as never)
-  expect((await texts(ui)).join('|')).toContain('⚙ JOBS')
+  expect((await texts(ui)).join('|')).toContain('🧰 JOBS')
   await $.command.run({ command: 'hud', args: '3' } as never)
   expect((await texts(ui)).join('|')).toContain('🧭 WORLD MAP')
   // A number past the menu only opens the HUD.
@@ -2518,7 +2538,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
     await $.tool.call({ tool: 'Bash', tool_use_id: 'tu-b1', command: 'npm run dev', description: 'Start the dev server', run_in_background: true } as never)
     // The window turns to the jobs, and the status panel counts the one running.
     let shown = (await texts(ui)).join('|')
-    expect(shown).toContain('⚙ JOBS')
+    expect(shown).toContain('🧰 JOBS')
     expect(shown).toContain('Start the dev server')
     expect(shown).toContain('$ npm run dev')
     expect(shown).toContain('1 on expedition')
@@ -2527,7 +2547,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
     await $.prompt.submit({ text: notification('b1', 'completed', 'Background command "x" completed (exit code 3)'), origin: { kind: 'task-notification' } } as never)
     await showTab($, ui, 'jobs', surface)
     shown = (await texts(ui)).join('|')
-    expect(shown).toContain('❌ exit 3')
+    expect(shown).toContain('✗ exit 3')
     expect(shown).toContain('⚙ 0| jobs')
     expect(toasts).toContain('⚙ Job failed: Start the dev server')
   })
@@ -2546,7 +2566,7 @@ test('TaskStop stops the job it names', async ($, on) => {
   await $.tool.call({ tool: 'Monitor', command: 'tail -f log', description: 'Watch the log', timeout_ms: 0 } as never)
   expect((await texts(ui)).join('|')).toContain('◉ ')
   await $.tool.call({ tool: 'TaskStop', task_id: 'm1' } as never)
-  expect((await texts(ui)).join('|')).toContain('🛑 recalled')
+  expect((await texts(ui)).join('|')).toContain('■ recalled')
 })
 
 test("a running job's stop button stops it through TaskStop", async ($, on) => {
@@ -2568,7 +2588,7 @@ test("a running job's stop button stops it through TaskStop", async ($, on) => {
   await ui.press({ key: 'job-stop-b1' })
   expect(stops).toEqual(['b1'])
   const shown = (await texts(ui)).join('|')
-  expect(shown).toContain('🛑 recalled')
+  expect(shown).toContain('■ recalled')
   // The HUD's own TaskStop is none of the hero's casts.
   expect(shown).toContain('1 casts')
   await showTab($, ui, 'spells', 'desktop')
@@ -2688,10 +2708,10 @@ test('a running job marches on; a finished one says how it ended, as the quest n
   const words = new Uint32Array(Uint8Array.from(atob(marchCells(0)), ch => ch.charCodeAt(0)).buffer)
   expect(words.length).toBe(MARCH_COLUMNS * 3)
   const job = { id: 'b', toolUseId: 't', kind: 'shell' as const, command: 'x', description: '', startedAt: 0, endedAt: 65_000 }
-  expect(jobState({ ...job, status: 'run', endedAt: undefined }, 5_000).text).toBe('⚔ 5s')
-  expect(jobState({ ...job, status: 'ok' }, 0).text).toBe('✅ back · 1m05s')
-  expect(jobState({ ...job, status: 'err', exitCode: 2 }, 0).text).toBe('❌ exit 2 · 1m05s')
-  expect(jobState({ ...job, status: 'kill' }, 0).text).toBe('🛑 recalled · 1m05s')
+  expect(jobState({ ...job, status: 'run', endedAt: undefined }, 5_000).text).toBe('✦ 5s')
+  expect(jobState({ ...job, status: 'ok' }, 0).text).toBe('✓ back · 1m05s')
+  expect(jobState({ ...job, status: 'err', exitCode: 2 }, 0).text).toBe('✗ exit 2 · 1m05s')
+  expect(jobState({ ...job, status: 'kill' }, 0).text).toBe('■ recalled · 1m05s')
 })
 
 test('a portrait bust only moves between frames: the figure never changes its look', () => {
@@ -2763,7 +2783,7 @@ test('on desktop a click anywhere on a tab picks it, its drawing too, and then t
   // On the drawn icon, over the name, then on the bar's row: a Client laid over the whole tab takes them all.
   for (const [x, y, tab, title] of [
     [5, 0, 'map', '🧭 WORLD MAP'],
-    [5, 2, 'jobs', '⚙ JOBS'],
+    [5, 2, 'jobs', '🧰 JOBS'],
     [2, 3, 'pets', '🐾 PARTY'],
   ] as const) {
     await ui.pointer({ type: 'down', x, y, button: 'left', in: `icon-${tab}` })
@@ -2777,4 +2797,206 @@ test('on desktop a click anywhere on a tab picks it, its drawing too, and then t
   expect((await texts(ui)).join('|')).toContain('🧭 WORLD MAP')
   // The overlay draws nothing of its own: the drawn icons still show.
   expect((await ui.findAll({ type: 'Svg' })).some(svg => svg.props.alt === 'Map')).toBe(true)
+})
+
+// --- Visual polish: shared marks, gauges, hearts, bursts ---
+
+const PNG_1X1 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
+
+// A terminal that draws pictures: every portrait and burst frame reads as a PNG, each burst's meta says how many,
+// and every blit lands. Returns the Image swaps the animation sent, by key.
+const pictureWorld = (on: On, frames = 3) => {
+  on('fs.read', async (_$, e) => {
+    const { path, as } = e as { path: string; as?: string }
+    if (path.endsWith('meta.json')) return { value: JSON.stringify({ frames, cells: [8, 3] }) } as never
+    return { value: as === 'bytes' ? { base64: PNG_1X1 } : '' } as never
+  })
+  const swaps: string[] = []
+  on('ui.blit', async (_$, e) => {
+    if ('source' in e) swaps.push(e.key)
+    return { value: {} }
+  })
+  return swaps
+}
+
+// Mounts the pane and lets the portrait's probe find the terminal draws pictures.
+const mountWithPictures = async ($: Engine, clock: { advance: (ms: number) => Promise<void> }) => {
+  const ui = await mountPane($, 'terminal')
+  await clock.advance(600)
+  // The probe's answer draws the pane again, its menu icons as pictures too: wait for that drawing.
+  for (let turn = 0; turn < 20 && !(await imageKeys(ui)).includes('icon-spells'); turn += 1) await clock.advance(10)
+  return ui
+}
+
+const imageKeys = async (ui: Awaited<ReturnType<typeof mountPane>>) => (await ui.findAll({ type: 'Image' })).map(image => String(image.key ?? image.props?.key))
+
+test('a level up plays its burst beside the portrait, fills and flashes the XP gauge, then lets it go', async ($, on) => {
+  const { clock } = world(on)
+  pictureWorld(on)
+  const ui = await mountWithPictures($, clock)
+  for (let n = 1; n <= 10; n += 1) await $.tool.call({ tool: 'Read', file_path: `/x/f${n}.md` })
+  // A burst's frames are read as the pane is drawn: let that drawing finish.
+  await clock.advance(1)
+  expect(await imageKeys(ui)).toContain('fx-level-up')
+  // The level shows as a badge, white while it glows.
+  const badge = (await ui.findAll({ type: 'Text' })).find(t => t.text === ' Lv.2 ')
+  expect(badge?.props?.backgroundColor).toBe('#ffffff')
+  // The XP gauge reads full before it empties to the new level's.
+  expect((await texts(ui)).join('|')).toContain('XP | 10/10')
+  await clock.advance(XP_FLASH_MS + 10)
+  expect((await texts(ui)).join('|')).toContain('XP | 0/10')
+  // The animation plays the burst through, then the pane is drawn again without it.
+  await clock.advance(1000)
+  expect(await imageKeys(ui)).not.toContain('fx-level-up')
+})
+
+test('no picture, no burst: a terminal that refuses Images levels up with the gauges alone', async ($, on) => {
+  const { clock } = world(on)
+  on('ui.blit', async () => ({ deny: 'no placeholder images' }) as never)
+  on('fs.read', async (_$, e) => ({ value: (e as { as?: string }).as === 'bytes' ? { base64: PNG_1X1 } : JSON.stringify({ frames: 3, cells: [8, 3] }) }) as never)
+  const ui = await mountPane($, 'terminal')
+  await clock.advance(600)
+  for (let n = 1; n <= 10; n += 1) await $.tool.call({ tool: 'Read', file_path: `/x/f${n}.md` })
+  expect(await imageKeys(ui)).not.toContain('fx-level-up')
+  expect((await texts(ui)).join('|')).toContain('Lv.2')
+})
+
+test('a revive fades the grey out of the hero and spreads its wings beside the portrait', async ($, on) => {
+  let failing = true
+  const { clock } = world(on, { tool: e => (failing && e.tool === 'Bash' ? fail('boom') : undefined) })
+  pictureWorld(on)
+  const ui = await mountWithPictures($, clock)
+  for (let n = 0; n < 5; n += 1) await $.tool.call({ tool: 'Bash', command: `false ${n}` })
+  expect((await texts(ui)).join('|')).toContain('K.O.')
+  failing = false
+  await $.tool.call({ tool: 'Read', file_path: '/x/a.md' })
+  await clock.advance(1)
+  const rasters = async () => (await ui.findAll({ type: 'Raster' })).map(r => r.key)
+  expect(await rasters()).toContain('hero-fade')
+  expect(await imageKeys(ui)).toContain('fx-revive')
+  await clock.advance(REVIVE_FADE_MS + 10)
+  expect(await rasters()).not.toContain('hero-fade')
+  expect(await imageKeys(ui)).toContain('hero')
+})
+
+test('a revive cross-fades from the grey cells to the colour ones', () => {
+  const colour = composeSprite(['RG', 'GR'], { R: 0xff0000, G: 0x00ff00 })
+  const grey = composeSprite(['RG', 'GR'], { R: 0x404040, G: 0x404040 })
+  expect(blendCells(grey, colour, 0)).toBe(grey)
+  expect(blendCells(grey, colour, 1)).toBe(colour)
+  const half = blendCells(grey, colour, 0.5)
+  expect(half).not.toBe(grey)
+  expect(half).not.toBe(colour)
+})
+
+test('a slain boss crumbles, then confetti falls over the arena before the panel returns', async ($, on) => {
+  let output = 'Tests: 3 failed, 9 passed'
+  const { clock } = world(on, { tool: e => (e.tool === 'Bash' ? (output === '' ? { result: { text: 'all green' } } : fail(output)) : undefined) })
+  pictureWorld(on, 18)
+  const ui = await mountPane($, 'terminal', 40, 90)
+  await clock.advance(600)
+  await $.tool.call({ tool: 'Bash', command: 'pnpm test' })
+  await clock.advance(FX_MS.appear + 10)
+  output = ''
+  await $.tool.call({ tool: 'Bash', command: 'pnpm test' })
+  expect(await imageKeys(ui)).not.toContain('fx-confetti')
+  await clock.advance(CRUMBLE_MS + 10)
+  await clock.advance(1)
+  expect(await imageKeys(ui)).toContain('fx-confetti')
+  expect((await texts(ui)).join('|')).toContain('✦ VICTORY')
+  await clock.advance(2000)
+  expect(await imageKeys(ui)).not.toContain('fx-confetti')
+  expect((await texts(ui)).join('|')).toContain('CLAUDE')
+})
+
+test('a summoned pet arrives in a poof, comes back in a sparkle, and a fainting one blinks before it greys', async ($, on) => {
+  const { clock } = world(on)
+  pictureWorld(on)
+  let spawned = 0
+  on('agent.spawn', async () => ({ model: 'claude-haiku-4-5', agentId: `agent-${(spawned += 1)}` }))
+  const ui = await mountWithPictures($, clock)
+  await showTab($, ui, 'pets')
+  await $.agent.spawn({ prompt: 'a', description: 'One', subagentType: 'Explore', tool_use_id: 'tu-1' } as never)
+  await clock.advance(1)
+  expect(await imageKeys(ui)).toContain('pet-fx-tu-1')
+  await clock.advance(1500)
+  expect(await imageKeys(ui)).not.toContain('pet-fx-tu-1')
+  expect((await ui.findAll({ type: 'Raster' })).map(r => r.key)).toContain('pet-tu-1')
+
+  await $.turn.complete({ agentId: 'agent-1', answer: 'done', durationMs: 5, isAborted: false, turnId: 't' } as never)
+  await clock.advance(1)
+  expect(await imageKeys(ui)).toContain('pet-fx-tu-1')
+
+  await $.agent.spawn({ prompt: 'b', description: 'Two', subagentType: 'Explore', tool_use_id: 'tu-2' } as never)
+  await clock.advance(1500)
+  await $.turn.complete({ agentId: 'agent-2', answer: '', durationMs: 5, isAborted: true, turnId: 't2' } as never)
+  const fainting = (await ui.findAll({ type: 'Raster' })).find(r => r.key === 'pet-tu-2')
+  expect(fainting?.props?.cells).toBe(faintFrames('agent-2')[0])
+  expect(faintFrames('agent-2').at(-1)).toBe(petCells('agent-2', 'err', 0))
+})
+
+test('the spell book, the party and the jobs mark how things stand alike', async ($, on) => {
+  const job = { id: 'j', toolUseId: 't', kind: 'shell' as const, command: 'x', description: '', startedAt: 0, endedAt: 0 }
+  expect(jobState({ ...job, status: 'ok' }, 0).color).toBe(STATUS_MARKS.ok.color)
+  expect(jobState({ ...job, status: 'err' }, 0).text.startsWith(STATUS_MARKS.err.glyph)).toBe(true)
+  expect(jobState({ ...job, status: 'kill' }, 0).text.startsWith(STATUS_MARKS.kill.glyph)).toBe(true)
+  expect(jobState({ ...job, status: 'done' }, 0).text).toBe('· ended · 0s')
+  // The rarity ladder: the bag, the spell book and the skills climb the same glyphs and colours.
+  expect(rarityOf(500)).toMatchObject(TIERS.epic)
+  expect(rarityOf(3)).toMatchObject(TIERS.common)
+})
+
+test('a running spell twinkles in the spell book', async ($, on) => {
+  let release = () => {}
+  const { clock } = world(on, { tool: e => (e.tool === 'Bash' ? new Promise(done => (release = () => done({ result: { text: 'ok' } }))) : undefined) as never })
+  const blitted: { key: string; cells: string }[] = []
+  on('ui.blit', async (_$, e) => {
+    if ('cells' in e) blitted.push({ key: e.key, cells: e.cells })
+    return { value: {} }
+  })
+  const ui = await mountPane($, 'terminal')
+  const running = $.tool.call({ tool: 'Bash', command: 'sleep 1', tool_use_id: 'run-1' } as never)
+  for (let turn = 0; turn < 20; turn += 1) await Promise.resolve()
+  await clock.advance(1000)
+  const marks = (await ui.findAll({ type: 'Raster' })).filter(r => String(r.key).startsWith('spell-'))
+  expect(marks).toHaveLength(1)
+  const key = String(marks[0]?.key)
+  expect(new Set(blitted.filter(one => one.key === key).map(one => one.cells)).size).toBeGreaterThan(1)
+  release()
+  await running
+  expect((await ui.findAll({ type: 'Raster' })).filter(r => String(r.key).startsWith('spell-'))).toHaveLength(0)
+})
+
+test('MP running low pulses its gauge', async ($, on) => {
+  const { clock } = world(on, { usage: { startedAt: 0, rateLimits: [], context: { window: 200000, percent: 90 } } })
+  const blitted: string[] = []
+  on('ui.blit', async (_$, e) => {
+    if ('cells' in e) blitted.push(e.key)
+    return { value: {} }
+  })
+  await $.tool.call({ tool: 'Read', file_path: '/x/a.md' })
+  await mountPane($, 'terminal')
+  await clock.advance(1500)
+  expect(blitted).toContain('bar-MP')
+})
+
+test('gauges step by eighths over a dark trough, their top edge lit', () => {
+  const runs = gaugeRuns(0.5, 4, 0x5aa9ff)
+  expect(runs.map(([glyph]) => glyph)).toEqual([0x2580, 0x2580, 0x2580, 0x2580])
+  expect(runs[0]?.[2]).toBe(0x5aa9ff)
+  expect(runs[3]?.[2]).toBe(TROUGH)
+  // 3/16 of four cells: three quarters of a cell, then a part cell of six eighths.
+  expect(gaugeRuns(3 / 16, 4, 0x5aa9ff).map(([glyph]) => glyph)).toEqual([0x258a, 0x2580, 0x2580, 0x2580])
+  expect(gaugeRuns(0, 3, 0x5aa9ff).every(([, , bg]) => bg === TROUGH)).toBe(true)
+})
+
+test('the titles use emoji that are always two cells wide, and widths count them so', () => {
+  expect(cellWidth('🧰 JOBS')).toBe(7)
+  expect(cellWidth('⛺ OUTPOSTS')).toBe(11)
+  expect(cellWidth('🏹 Equipment')).toBe(12)
+  expect(cellWidth('⛺')).toBe(2)
+  expect(cellWidth('⚡')).toBe(2)
+  // Text-default symbols stay narrow.
+  expect(cellWidth('⚙')).toBe(1)
+  expect(cellWidth('⚔')).toBe(1)
 })

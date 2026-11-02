@@ -60,7 +60,7 @@ export const MENU: readonly MenuEntry[] = [
   {
     id: 'jobs',
     label: 'Jobs',
-    title: '⚙ JOBS',
+    title: '🧰 JOBS',
     color: 'yellow',
     // A terminal in a gold frame: green lines of output and a white cursor.
     pixels: ['.kkkkkkk.', 'kYYYYYYYk', 'kYKHHHKYk', 'kYKKKKKYk', 'kYKHHKKYk', 'kYKKKWKYk', 'kyyyyyyyk', '.kkkkkkk.'],

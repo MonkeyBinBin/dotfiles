@@ -1,18 +1,29 @@
 import type { ElementTable } from 'claude-code'
 
-import type { SpellFilter, ToolCall, ToolCallStatus } from '../types'
-import { formatMs, oneLine } from './util'
+import type { SpellFilter, ToolCall } from '../types'
+import { anim } from './anim'
+import { emptyItem } from './empty'
+import { HEX, STATUS_MARKS, TIERS, tone } from './palette'
+import { formatMs, oneLine, packCells } from './util'
 import type { Item } from './window'
 
 // Fixed columns; the incantation takes what is left.
 // The tool column fits 'AskUserQuestion' whole; longer names (MCP tools) are cut.
 const COLUMNS = { mark: 2, rune: 2, tool: 16, time: 7 }
 
-export const STATUS_MARKS: Record<ToolCallStatus, { glyph: string; color: string }> = {
-  run: { glyph: '✦', color: 'yellow' },
-  ok: { glyph: '✓', color: 'green' },
-  err: { glyph: '✗', color: 'red' },
-  deny: { glyph: '⊘', color: 'gray' },
+// A running spell's mark twinkles: ✦ ✧ ⋆ ✧, brightening and dimming, a step every few ticks.
+export const RUNE_TICKS = 2
+const RUNE_STEPS: ReadonlyArray<readonly [number, number]> = [
+  [0x2726, 0xffd23c],
+  [0x2727, 0xffe68c],
+  [0x22c6, 0xb48c1e],
+  [0x2727, 0xffe68c],
+]
+const DEFAULT_COLOR = 0x01000000
+
+export const runeCells = (tick: number): string => {
+  const [glyph, color] = RUNE_STEPS[Math.floor(tick / RUNE_TICKS) % RUNE_STEPS.length]!
+  return packCells([[glyph, color, DEFAULT_COLOR]])
 }
 
 // Each tool is a school of magic: its rune and colour.
@@ -30,8 +41,10 @@ const SCHOOLS: Record<string, { rune: string; color: string }> = {
   WebSearch: { rune: '☁', color: 'blue' },
 }
 
-export const schoolOf = (tool: string) =>
-  SCHOOLS[tool] ?? (tool.startsWith('mcp__') ? { rune: '⚙', color: 'white' } : { rune: '•', color: 'white' })
+export const schoolOf = (tool: string) => {
+  const school = SCHOOLS[tool] ?? (tool.startsWith('mcp__') ? { rune: '⚙', color: 'white' } : { rune: '•', color: 'white' })
+  return { rune: school.rune, color: tone(school.color) }
+}
 
 // How rare a spell was, by what it achieved: slaying a boss is legendary; a delivery, a summons or a skill epic; a
 // save or a forged file rare; the rest common. Only a spell that landed has one.
@@ -48,11 +61,11 @@ export const spellRarity = (call: ToolCall): Rarity | undefined => {
   return 'common'
 }
 
-// A landed spell's mark by its rarity; the common keep the plain tick.
+// A landed spell's mark by its rarity, from the shared ladder; the common keep the plain tick.
 const RARITY_MARKS: Record<Exclude<Rarity, 'common'>, { glyph: string; color: string }> = {
-  rare: { glyph: '◆', color: 'blue' },
-  epic: { glyph: '◆', color: 'magenta' },
-  legendary: { glyph: '★', color: 'yellow' },
+  rare: TIERS.rare,
+  epic: TIERS.epic,
+  legendary: TIERS.legendary,
 }
 
 // A call this long is slow, and one this long is a slog: its time turns yellow, then red.
@@ -61,8 +74,8 @@ const SLOG_MS = 30_000
 
 export const timeColor = (ms?: number): string | undefined => {
   if (ms === undefined) return undefined
-  if (ms >= SLOG_MS) return 'red'
-  return ms >= SLOW_MS ? 'yellow' : undefined
+  if (ms >= SLOG_MS) return HEX.red
+  return ms >= SLOW_MS ? HEX.gold : undefined
 }
 
 // Short labels: the filters share the title row with the title and the scroll gauge.
@@ -96,13 +109,20 @@ export function spellFilters(ui: ElementTable, list: readonly ToolCall[], active
   )
 }
 
-// The newest spell the filter keeps first, one row each.
-export function spellItems(ui: ElementTable, list: readonly ToolCall[], width: number, filter: SpellFilter = 'all'): Item[] {
+// The newest spell the filter keeps first, one row each. On the terminal a running spell's mark is a Raster the
+// animation twinkles.
+export function spellItems(ui: ElementTable, list: readonly ToolCall[], width: number, filter: SpellFilter = 'all', Raster?: ElementTable<'terminal'>['Raster']): Item[] {
   const { Box, Text } = ui
   const kept = filterSpells(list, filter)
+  // The window decides which are on screen, so every running spell is a candidate.
+  anim.spells = new Map(
+    kept
+      .filter(call => Raster !== undefined && call.status === 'run')
+      .map(call => [`spell-${call.id}`, { shown: anim.spells.get(`spell-${call.id}`)?.shown ?? '' }]),
+  )
   if (kept.length === 0) {
     const empty = (list.length === 0 ? FILTERS[0] : FILTERS.find(one => one.id === filter))?.empty ?? ''
-    return [{ key: 'empty', rows: 1, node: <Text dimColor>{empty}</Text> }]
+    return [emptyItem(ui, empty, Raster)]
   }
   const summaryWidth = Math.max(0, width - COLUMNS.mark - COLUMNS.rune - COLUMNS.tool - COLUMNS.time)
   return kept
@@ -117,14 +137,18 @@ export function spellItems(ui: ElementTable, list: readonly ToolCall[], width: n
         node: (
           <Box height={1}>
             <Box width={COLUMNS.mark}>
-              <Text color={mark.color} bold={rarity === 'legendary'}>{mark.glyph}</Text>
+              {call.status === 'run' && Raster !== undefined ? (
+                <Raster key={`spell-${call.id}`} columns={1} rows={1} cells={runeCells(anim.tick)} />
+              ) : (
+                <Text color={mark.color} bold={rarity === 'legendary'}>{mark.glyph}</Text>
+              )}
             </Box>
             <Box width={COLUMNS.rune}>
               <Text color={school.color}>{school.rune}</Text>
             </Box>
             <Box width={COLUMNS.tool}>
               {/* A legendary spell's name burns gold whatever its school. */}
-              <Text bold color={rarity === 'legendary' ? 'yellow' : school.color} wrap="truncate">
+              <Text bold color={rarity === 'legendary' ? HEX.gold : school.color} wrap="truncate">
                 {oneLine(call.tool, COLUMNS.tool - 1)}
               </Text>
             </Box>
@@ -136,7 +160,7 @@ export function spellItems(ui: ElementTable, list: readonly ToolCall[], width: n
             <Box width={COLUMNS.time} justifyContent="flex-end">
               <Text
                 dimColor={call.status !== 'run' && timeColor(call.ms) === undefined}
-                color={call.status === 'run' ? 'yellow' : timeColor(call.ms)}
+                color={call.status === 'run' ? HEX.gold : timeColor(call.ms)}
                 wrap="truncate"
               >
                 {formatMs(call.ms)}

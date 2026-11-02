@@ -2,6 +2,8 @@
 // block-character bars come out as gappy glyphs. Sprites reuse the terminal's own data: Raster cells decode
 // back to pixels, so the hero, the pets and the menu icons need no second copy.
 
+import { HEX } from './palette'
+
 // One row of colours per pixel row; undefined is see-through.
 export type Pixels = (string | undefined)[][]
 
@@ -95,16 +97,16 @@ export const spriteSvg = (frames: readonly Pixels[], px: number, frameMs: number
   }
 }
 
-// The terminal's named colours, for SVG fills.
+// The terminal's named colours, for SVG fills: the palette the terminal's text is drawn in.
 const NAMED: Record<string, string> = {
-  red: '#ff5f5f',
-  green: '#5ad27a',
-  yellow: '#ffd23c',
-  blue: '#5aa9ff',
-  magenta: '#c88cff',
-  cyan: '#56c8dc',
-  white: '#e6e6e6',
-  gray: '#8a8a8a',
+  red: HEX.red,
+  green: HEX.green,
+  yellow: HEX.gold,
+  blue: HEX.blue,
+  magenta: HEX.magenta,
+  cyan: HEX.cyan,
+  white: HEX.white,
+  gray: HEX.gray,
 }
 
 export const fillOf = (color: string): string => NAMED[color] ?? color

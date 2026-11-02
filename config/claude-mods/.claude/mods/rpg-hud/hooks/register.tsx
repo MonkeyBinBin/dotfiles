@@ -38,7 +38,7 @@ import type { OutpostRow, OutpostsProps } from './outposts-client'
 import { bagSubtitle, inspectItems } from './inspect'
 import { renderEditCard } from './edit-card'
 import type { EditOutput } from './edit-card'
-import { CALLS_PER_LEVEL, STATUS_ROWS, heroStats, manaLeft, normalizeCall, panelDuel, renderStatus, statusLayout } from './hero'
+import { CALLS_PER_LEVEL, DAMAGE_MS, HEARTS, LOW_MANA, STATUS_ROWS, XP_FLASH_MS, XP_FULL_MS, heroStats, manaLeft, normalizeCall, panelDuel, renderStatus, statusLayout } from './hero'
 import { PORTRAIT_BUSTS, PORTRAIT_FRAMES } from './portrait-cells'
 import { CLASS_IDS, classOf, isClassId, rankOf, rollClass } from './classes'
 import { mapItems, mapSubtitle } from './map'
@@ -46,17 +46,21 @@ import { RAINBOW_MS, phaseOf, weatherOf } from './overworld'
 import { ICON_COLUMNS, ICON_ROWS, MENU, drawnIcon, entryOf, iconText, isTab } from './menu'
 import { cardWidth, slotKey } from './menu-client'
 import type { MenuIconProps } from './menu-client'
-import { PET_COLUMNS, PET_ROWS, petArt, petCells, petSeed, speciesFor } from './pet-sprites'
+import { PET_COLUMNS, PET_ROWS, faintFrames, petArt, petCells, petSeed, speciesFor } from './pet-sprites'
 import { partySubtitle, petItems } from './pets'
 import { recapText } from './recap'
 import { castText, skillItems, skillRows, skillsSubtitle } from './skills'
-import { filterSpells, spellFilters, spellItems } from './spellbook'
+import { filterSpells, runeCells, spellFilters, spellItems } from './spellbook'
 import { HELP_COMMANDS, helpItems, helpText } from './help'
 import { EMPTY_PROGRESS, progressOf } from './progress'
 import { MARCH_COLUMNS, addJob, endJob, jobItems, jobsSubtitle, marchCells, parseJobEnds, reconcileJobs, trimJobs } from './jobs'
 import type { JobEnd } from './jobs'
-import { composeColors, drainCells, summarize } from './util'
-import { AURA_COLUMNS, auraFrames, auraTier } from './aura'
+import { blendCells, composeColors, drainCells, summarize } from './util'
+import { burstFrame, burstMs, isPlaying, loadBurst } from './fx'
+import type { Burst } from './fx'
+import { gaugeCells, glowCells } from './gauge'
+import { HEX, RGB, rampRgb } from './palette'
+import { AURA_COLUMNS, auraFrames, auraTier, fadingAura } from './aura'
 import { REST_MS } from './rest'
 import { EMPTY_LOOT, KEPT_CLAIMED, KEPT_UNCLAIMED, claimLoot, forge, lootText } from './loot'
 import type { Loot, TurnLoot } from './loot'
@@ -113,6 +117,8 @@ const knockout = atom({ plugin: 'rpg-hud', key: 'knockout' } as const, null as K
 const revivedBy = atom({ plugin: 'rpg-hud', key: 'revivedBy' } as const, '')
 const mapFx = atom({ plugin: 'rpg-hud', key: 'mapFx' } as const, null as MapFx | null)
 const restFx = atom({ plugin: 'rpg-hud', key: 'restFx' } as const, null as { at: number; from?: number } | null)
+const hpFx = atom({ plugin: 'rpg-hud', key: 'hpFx' } as const, null as { at: number; index: number } | null)
+const comboFx = atom({ plugin: 'rpg-hud', key: 'comboFx' } as const, null as { kind: 'up' | 'break'; at: number; from: number } | null)
 
 // The calls since the hero last revived, the one that revived them first; all of them when it has scrolled out.
 export const sinceRevive = <T extends { id: string }>(list: readonly T[], revivedBy: string): T[] => {
@@ -125,6 +131,21 @@ export const REVIVE_MS = 2500
 export const MAP_FX_MS = 4800
 // How often the panel is drawn while the MP pours back after a compaction.
 const REST_FRAME_MS = 120
+// A revived hero's colour comes back over this long, a step a tick, before the picture returns.
+export const REVIVE_FADE_MS = 500
+// A lost heart flashes white this long.
+export const HEART_FLASH_MS = 150
+// A risen combo's count lights this long; a broken one cries BREAK this long while its aura fades.
+export const COMBO_UP_MS = 300
+export const COMBO_BREAK_MS = 1000
+// A slain boss crumbles to sparks this long before the confetti falls over the arena.
+export const CRUMBLE_MS = 1600
+// The longest the confetti may keep the duel up after the crumble.
+const CONFETTI_MAX_MS = 2000
+// A pet's summoning poof and its return sparkle play this long at most; a fainting pet blinks and falls a frame
+// every FAINT_FRAME_MS, all in this while.
+const PET_FX_MAX_MS = 1800
+const FAINT_FRAME_MS = 200
 
 // Starts the HUD's watch of the session, once; a reload keeps it.
 const markStart = async ($: EngineInterface) => {
@@ -170,6 +191,8 @@ async function resetSession($: EngineInterface) {
     update($, revivedBy, () => ''),
     update($, mapFx, () => null),
     update($, restFx, () => null),
+    update($, hpFx, () => null),
+    update($, comboFx, () => null),
     update($, unclaimedLoot, () => []),
     update($, startedAt, () => now),
     update($, pets, list => list.filter(pet => pet.status === 'run')),
@@ -784,11 +807,70 @@ async function paintAura($: EngineInterface) {
   else anim.aura = undefined
 }
 
+// The bursts playing, a frame a tick; one played through leaves, and the pane is drawn again without its picture.
+async function paintBursts($: EngineInterface, now: number) {
+  let isOver = false
+  await Promise.all(
+    [...anim.bursts].map(async ([key, play]) => {
+      const elapsed = now - play.at
+      if (elapsed >= burstMs(play.burst)) {
+        anim.bursts.delete(key)
+        isOver = true
+        return
+      }
+      const png = burstFrame(play.burst, elapsed)
+      if (png === play.shown) return
+      const done = await $.ui.blit({ requestId: PANE, key, source: { png } }).catch(() => ({ deny: 'blit failed' }))
+      if (done.deny !== undefined) anim.bursts.delete(key)
+      else play.shown = png
+    }),
+  )
+  if (isOver) $.ui.invalidate('ui.render')
+}
+
+// The frame of cells played once `now`, from the moment they began; the last is held.
+const spriteStep = (sprite: { frames: string[]; at: number; frameMs: number }, now: number): number =>
+  Math.max(0, Math.min(sprite.frames.length - 1, Math.floor((now - sprite.at) / sprite.frameMs)))
+
+// Cells played once, the last held; one played through, or refusing its blit (gone), leaves.
+async function paintSprites($: EngineInterface, now: number) {
+  for (const [key, sprite] of anim.sprites) {
+    const cells = sprite.frames[spriteStep(sprite, now)] ?? sprite.shown
+    if (cells !== sprite.shown && !(await blit($, key, cells, sprite.columns, sprite.rows))) {
+      anim.sprites.delete(key)
+      continue
+    }
+    sprite.shown = cells
+    if (now - sprite.at >= sprite.frames.length * sprite.frameMs) anim.sprites.delete(key)
+  }
+}
+
+// The low-mana pulse: the MP gauge brightens and dims.
+async function paintPulse($: EngineInterface) {
+  const pulse = anim.pulse
+  if (pulse === undefined) return
+  const cells = pulse.frames[Math.floor(anim.tick / pulse.ticks) % pulse.frames.length] ?? pulse.shown
+  if (cells === pulse.shown) return
+  if (await blit($, pulse.key, cells, pulse.columns, 1)) pulse.shown = cells
+  else anim.pulse = undefined
+}
+
+// The running spells' marks twinkle; one that refuses its blit has scrolled away.
+async function paintSpells($: EngineInterface) {
+  const cells = runeCells(anim.tick)
+  for (const [key, spell] of anim.spells) {
+    if (cells === spell.shown) continue
+    if (await blit($, key, cells, 1, 1)) spell.shown = cells
+    else anim.spells.delete(key)
+  }
+}
+
 async function paint($: EngineInterface) {
   anim.tick += 1
   const hasPets = anim.tab === 'pets' && anim.pets.size > 0
   const hasMap = anim.tab === 'map' && anim.overworld !== undefined
   const hasJobs = anim.tab === 'jobs' && anim.jobs.size > 0
+  const hasSpells = anim.tab === 'spells' && anim.spells.size > 0
   // The portrait refusing means the pane is closed: nothing of ours is on screen.
   if (anim.hasHero && !(await paintHero($))) return stop()
   if (hasPets) await paintPets($)
@@ -796,7 +878,32 @@ async function paint($: EngineInterface) {
   if (anim.boss !== undefined) await paintBoss($)
   if (anim.aura !== undefined) await paintAura($)
   if (hasJobs) await paintJobs($)
-  if (!anim.hasHero && !hasPets && !hasMap && !hasJobs && anim.boss === undefined && anim.aura === undefined) stop()
+  if (hasSpells) await paintSpells($)
+  if (anim.pulse !== undefined) await paintPulse($)
+  const now = anim.sprites.size > 0 || anim.bursts.size > 0 ? await $.clock.now() : 0
+  if (anim.sprites.size > 0) await paintSprites($, now)
+  if (anim.bursts.size > 0) await paintBursts($, now)
+  const isIdle =
+    !anim.hasHero && !hasPets && !hasMap && !hasJobs && !hasSpells && anim.boss === undefined && anim.aura === undefined &&
+    anim.pulse === undefined && anim.sprites.size === 0 && anim.bursts.size === 0
+  if (isIdle) stop()
+}
+
+// Draws a baked burst as a keyed Image `now - at` ms in, and hands it to the animation to play through.
+const burstImage = (Image: ElementTable<'terminal'>['Image'], key: string, burst: Burst, at: number, now: number) => {
+  const png = burstFrame(burst, now - at)
+  if (anim.bursts.get(key)?.at !== at) anim.bursts.set(key, { burst, at, shown: png })
+  return <Image key={key} source={{ png }} columns={burst.columns} rows={burst.rows} alt=" " />
+}
+
+// Hands cells played once from the moment `at` to the animation, and gives the frame for `now`. Timed from the
+// moment, not the drawing: a pane drawn again part way through picks up where the cells are, never starts over.
+const playSprite = (key: string, frames: string[], frameMs: number, columns: number, rows: number, at: number, now: number): string => {
+  const sprite = { frames, at, frameMs, columns, rows, shown: '' }
+  sprite.shown = frames[spriteStep(sprite, now)] ?? ''
+  if (now - at < frames.length * frameMs) anim.sprites.set(key, sprite)
+  else anim.sprites.delete(key)
+  return sprite.shown
 }
 
 // Each draw of an animated tab starts the clock again if a refusal stopped it.
@@ -840,6 +947,8 @@ type PageContext = {
   inner: number
   now: number
   Raster: ElementTable<'terminal'>['Raster'] | undefined
+  // The terminal's Image, where it is known to draw pictures: for the bursts.
+  Image: ElementTable<'terminal'>['Image'] | undefined
   // Whether the page draws on the terminal, where a button can hold a row's columns.
   isTerminal: boolean
   callList: ToolCall[]
@@ -905,11 +1014,11 @@ function pickBody($: EngineInterface, e: { surface: string }, list: PickList<nev
 
 const backToMap = ($: EngineInterface) => void update($, mapView, (): MapView => ({ view: 'map' }))
 
-const spellsPage = async ($: EngineInterface, { ui, inner, callList }: PageContext): Promise<Page> => {
+const spellsPage = async ($: EngineInterface, { ui, inner, callList, Raster }: PageContext): Promise<Page> => {
   const filter = await read($, spellFilter)
   const casts = await read($, castCount)
   return {
-    items: spellItems(ui, callList, inner, filter),
+    items: spellItems(ui, callList, inner, filter, Raster),
     subtitle: filter === 'all' ? `${casts} casts` : `${filterSpells(callList, filter).length} of ${casts} casts`,
     ...(callList.length === 0
       ? {}
@@ -922,8 +1031,40 @@ const spellsPage = async ($: EngineInterface, { ui, inner, callList }: PageConte
   }
 }
 
-const petsPage = async (_$: EngineInterface, { ui, inner, now, Raster, petList }: PageContext): Promise<Page> => ({
-  items: petItems(ui, petList, now, inner, Raster),
+// What a pet's sprite slot shows for a moment instead of the creature: a poof as it is summoned, a sparkle as it
+// comes back (where the terminal draws pictures), and a blink and fall as it faints.
+async function petSlots($: EngineInterface, ui: ElementTable, list: readonly Pet[], now: number, Raster: PageContext['Raster'], Image: PageContext['Image']) {
+  const slots = new Map<string, RenderChildren>()
+  if (Raster === undefined) return slots
+  const { Box } = ui
+  for (const pet of list) {
+    const since = pet.status === 'run' ? now - pet.startedAt : pet.endedAt === undefined ? -1 : now - pet.endedAt
+    if (since < 0 || since >= PET_FX_MAX_MS) {
+      if (pet.status === 'err') anim.sprites.delete(`pet-${pet.id}`)
+      continue
+    }
+    if (pet.status === 'err') {
+      const cells = playSprite(`pet-${pet.id}`, faintFrames(petSeed(pet)), FAINT_FRAME_MS, PET_COLUMNS, PET_ROWS, pet.endedAt!, now)
+      slots.set(pet.id, <Raster key={`pet-${pet.id}`} columns={PET_COLUMNS} rows={PET_ROWS} cells={cells} />)
+      continue
+    }
+    if (Image === undefined) continue
+    const name = pet.status === 'run' ? 'poof' : 'sparkle'
+    const burst = await loadBurst($, name)
+    if (burst === undefined || !isPlaying(burst, since)) continue
+    const at = pet.status === 'run' ? pet.startedAt : pet.endedAt!
+    slots.set(
+      pet.id,
+      <Box key={`pet-fx-box-${pet.id}`} width={PET_COLUMNS} justifyContent="center">
+        {burstImage(Image, `pet-fx-${pet.id}`, burst, at, now)}
+      </Box>,
+    )
+  }
+  return slots
+}
+
+const petsPage = async ($: EngineInterface, { ui, inner, now, Raster, Image, petList }: PageContext): Promise<Page> => ({
+  items: petItems(ui, petList, now, inner, Raster, await petSlots($, ui, petList, now, Raster, Image)),
   subtitle: partySubtitle(petList),
 })
 
@@ -986,7 +1127,7 @@ const outpostsPage = async ($: EngineInterface): Promise<Page> => {
   const rows: OutpostRow[] = [{ kind: 'back' }, ...list.map(outpost => ({ kind: 'outpost' as const, outpost }))]
   if (list.length === 0) rows.push({ kind: 'note', text: 'No outposts: this repository has one worktree.' })
   return {
-    title: '🏕 OUTPOSTS',
+    title: '⛺ OUTPOSTS',
     subtitle: `${list.length} camps · ${list.filter(one => one.dirty > 0).length} with unsaved work`,
     list: pickList<OutpostRow>({
       key: 'outposts',
@@ -1433,6 +1574,8 @@ export const register: Register = on => {
       if (fight.event === 'defeat') {
         feat = 'slay'
         $.ui.toast('⚔ Boss defeated!')
+        // Once it has crumbled the confetti falls over the arena: the pane is drawn again to hang it there.
+        if (canDrawImage === true) $.clock.after(CRUMBLE_MS, () => $.ui.invalidate('ui.render'))
         // The rainbow over the map fades once its while is up.
         $.clock.after(RAINBOW_MS, () => $.ui.invalidate('ui.render'))
         await update($, tally, t => ({ ...t, bossesDefeated: t.bossesDefeated + 1 }))
@@ -1489,7 +1632,18 @@ export const register: Register = on => {
     const fallen = await read($, knockout)
     if (isError && fallen?.state !== 'down') {
       const stood = sinceRevive((await read($, calls)).map(normalizeCall), await read($, revivedBy))
-      if (heroStats(stood, stood.length).hp === 0) {
+      const hpNow = heroStats(stood, stood.length).hp
+      const hpBefore = heroStats(stood.map(one => (one.id === call.id ? { ...one, status: 'ok' as const } : one)), stood.length).hp
+      // The heart it cost flashes white for a moment, and a -1 floats up beside the portrait.
+      if (hpNow < hpBefore) {
+        await update($, hpFx, () => ({ at: endedAt, index: hpNow }))
+        const climb = $.clock.every(HEART_FLASH_MS, () => $.ui.invalidate('ui.render'))
+        $.clock.after(DAMAGE_MS, () => {
+          climb.cancel()
+          $.ui.invalidate('ui.render')
+        })
+      }
+      if (hpNow === 0) {
         await update($, knockout, (): Knockout => ({ state: 'down', at: endedAt }))
         $.ui.toast('💀 Claude is knocked out! A clean cast revives them')
       }
@@ -1497,12 +1651,23 @@ export const register: Register = on => {
       await update($, revivedBy, () => call.id)
       await update($, knockout, (): Knockout => ({ state: 'up', at: endedAt }))
       $.ui.toast('✨ Revived! Every heart restored')
+      // The colour comes back, then the picture returns.
+      $.clock.after(REVIVE_FADE_MS, () => $.ui.invalidate('ui.render'))
       $.clock.after(REVIVE_MS, () => $.ui.invalidate('ui.render'))
     }
-    if (!isRefused) await update($, combo, current => {
-      const streak = isError ? 0 : current.current + 1
-      return { current: streak, best: Math.max(current.best, streak) }
-    })
+    if (!isRefused) {
+      const before = (await read($, combo)).current
+      await update($, combo, current => {
+        const streak = isError ? 0 : current.current + 1
+        return { current: streak, best: Math.max(current.best, streak) }
+      })
+      // A rise lights the count for a moment; a streak broken cries BREAK while its aura fades.
+      const kind = isError ? (before > 0 ? 'break' : undefined) : 'up'
+      if (kind !== undefined) {
+        await update($, comboFx, () => ({ kind, at: endedAt, from: before }))
+        $.clock.after(kind === 'up' ? COMBO_UP_MS : COMBO_BREAK_MS, () => $.ui.invalidate('ui.render'))
+      }
+    }
 
     if (e.tool === 'Agent' && !isBackground && !isRefused) {
       // Without run_in_background, core may still send the agent to the background (its type asks to, or the call
@@ -1543,6 +1708,9 @@ export const register: Register = on => {
       await update($, turnLoot, loot => ({ ...loot, level }))
       $.ui.toast(`✦ Level up! Lv.${level} ${rankOf(classOf(await read($, heroClass)), level)}`)
       await update($, flashUntil, () => endedAt + FLASH_MS)
+      // The XP gauge shows full, flashes white, then empties to the new level's.
+      $.clock.after(XP_FULL_MS, () => $.ui.invalidate('ui.render'))
+      $.clock.after(XP_FLASH_MS, () => $.ui.invalidate('ui.render'))
       void $.clock
         .sleep(FLASH_MS)
         .then(() => update($, flashUntil, until => (until <= endedAt + FLASH_MS ? 0 : until)))
@@ -1627,7 +1795,7 @@ export const register: Register = on => {
     return (
       <Box flexDirection="row">
         {drawn}
-        <Text color="yellow" wrap="truncate"> · {lootText(loot)}</Text>
+        <Text color={HEX.gold} wrap="truncate"> · {lootText(loot)}</Text>
       </Box>
     )
   })
@@ -1672,9 +1840,17 @@ export const register: Register = on => {
     const isRevived = fall?.state === 'up' && now - fall.at < REVIVE_MS
     const lastRevive = await read($, revivedBy)
     const rest = await read($, restFx)
-    const downCells = isDown ? drainCells((PORTRAIT_BUSTS[hero.id]?.idle ?? HERO_CLASS_FRAMES[hero.id].idle)[0] ?? '') : undefined
+    const stillCells = (PORTRAIT_BUSTS[hero.id]?.idle ?? HERO_CLASS_FRAMES[hero.id].idle)[0] ?? ''
+    const downCells = isDown ? drainCells(stillCells) : undefined
+    // Just revived, the grey drains back out of the hero a step a tick before the picture returns.
+    const isFading = fall?.state === 'up' && now - fall.at >= 0 && now - fall.at < REVIVE_FADE_MS && Raster !== undefined
+    const fadeCells = isFading
+      ? playSprite('hero-fade', [0.2, 0.4, 0.6, 0.8, 1].map(t => blendCells(drainCells(stillCells), stillCells, t)), FRAME_MS, HERO_CELLS.columns, HERO_CELLS.rows, fall.at, now)
+      : (anim.sprites.delete('hero-fade'), undefined)
+    // Bursts play where the terminal is known to draw pictures.
+    const Image = Raster !== undefined && canDrawImage === true ? ($.ui.resolve(e) as ElementTable<'terminal'>).Image : undefined
     // A class with a portrait draws it as a picture until the terminal is found not to draw one.
-    const portraitSet = !isDown && Raster !== undefined && PORTRAIT_BUSTS[hero.id] !== undefined && canDrawImage !== false ? await portraitFrames($, hero.id) : undefined
+    const portraitSet = !isDown && !isFading && Raster !== undefined && PORTRAIT_BUSTS[hero.id] !== undefined && canDrawImage !== false ? await portraitFrames($, hero.id) : undefined
     const portrait = portraitSet === undefined ? undefined : frameOf(portraitSet[anim.mood], anim.mood, anim.moodTick)
     anim.heroImage = portrait !== undefined
     if (portrait !== undefined) anim.shownPng = portrait
@@ -1682,9 +1858,33 @@ export const register: Register = on => {
     if (portrait !== undefined && canDrawImage === undefined && fitsPortrait) probeImage($, portrait)
     // A boss out turns the status panel to a duel; its frames start over with each new moment of the fight, and
     // only a foe on screen animates.
-    const fightFx = liveFx(await read($, bossFx), now)
-    const foe = shownBoss(bossNow, fightFx)
-    const duel = foe === undefined ? undefined : panelDuel(width, true)
+    const lastFx = await read($, bossFx)
+    let fightFx = liveFx(lastFx, now)
+    // A boss slain keeps the duel up a little longer where the terminal draws pictures: once it has crumbled,
+    // confetti falls over the empty arena.
+    let confetti: Burst | undefined
+    if (lastFx?.event === 'defeat' && Image !== undefined && now - lastFx.at >= 0 && now - lastFx.at < CRUMBLE_MS + CONFETTI_MAX_MS) {
+      const burst = await loadBurst($, 'confetti')
+      if (burst !== undefined && now - lastFx.at < CRUMBLE_MS + burstMs(burst)) {
+        fightFx = lastFx
+        confetti = burst
+      }
+    }
+    let foe = shownBoss(bossNow, fightFx)
+    let duel = foe === undefined ? undefined : panelDuel(width, true)
+    if (confetti !== undefined && !(duel !== undefined && duel.scale > 0 && duel.arenaColumns >= confetti.columns)) {
+      confetti = undefined
+      fightFx = liveFx(lastFx, now)
+      foe = shownBoss(bossNow, fightFx)
+      duel = foe === undefined ? undefined : panelDuel(width, true)
+    }
+    const statsShown = !(duel !== undefined && duel.scale > 0)
+    const arenaOverlay =
+      confetti !== undefined && Image !== undefined && lastFx !== null && duel !== undefined && now - lastFx.at >= CRUMBLE_MS ? (
+        <Box key="confetti" position="absolute" bottom={0} left={Math.floor((duel.arenaColumns - confetti.columns) / 2)}>
+          {burstImage(Image, 'fx-confetti', confetti, lastFx.at + CRUMBLE_MS, now)}
+        </Box>
+      ) : undefined
     // Pets out in the background join the fight; one just back throws a shot, its moment ending in a redraw.
     const fighters = petList
       .filter(pet => pet.isBackground === true && (pet.status === 'run' || (pet.status === 'ok' && pet.endedAt !== undefined && now - pet.endedAt < ASSIST_MS)))
@@ -1714,11 +1914,22 @@ export const register: Register = on => {
     } else {
       anim.boss = undefined
     }
-    // A combo of ten or more burns as an aura beside the portrait.
+    // A combo of ten or more burns as an aura beside the portrait; a broken one's aura fades out.
     const comboNow = await read($, combo)
     const tier = auraTier(comboNow.current)
+    const lastCombo = await read($, comboFx)
+    const comboAge = lastCombo === null ? -1 : now - lastCombo.at
+    const comboMoment =
+      lastCombo?.kind === 'up' && comboAge >= 0 && comboAge < COMBO_UP_MS ? ('up' as const)
+      : lastCombo?.kind === 'break' && comboAge >= 0 && comboAge < COMBO_BREAK_MS ? ('break' as const)
+      : undefined
+    const brokenTier = comboMoment === 'break' && lastCombo !== null ? auraTier(lastCombo.from) : 0
     let aura: { node: RenderChildren; tier: 1 | 2 } | undefined
-    if (tier > 0 && !isDown && foe === undefined) {
+    if (tier === 0 && brokenTier > 0 && !isDown && foe === undefined && Raster !== undefined) {
+      anim.aura = undefined
+      const cells = playSprite('aura', fadingAura(brokenTier as 1 | 2, HERO_CELLS.rows).map(composeColors), FRAME_MS, AURA_COLUMNS, HERO_CELLS.rows, lastCombo!.at, now)
+      aura = { tier: brokenTier as 1 | 2, node: <Raster key="aura" columns={AURA_COLUMNS} rows={HERO_CELLS.rows} cells={cells} /> }
+    } else if (tier > 0 && !isDown && foe === undefined) {
       const frames = auraFrames(tier as 1 | 2, HERO_CELLS.rows)
       if (Raster !== undefined) {
         const cells = frames.map(composeColors)
@@ -1732,6 +1943,33 @@ export const register: Register = on => {
     } else {
       anim.aura = undefined
     }
+    if (aura === undefined || tier > 0) anim.sprites.delete('aura')
+    // A lost heart's flash and the -1 climbing beside the portrait.
+    const lastHurt = await read($, hpFx)
+    const hurtAge = lastHurt === null ? -1 : now - lastHurt.at
+    // The level up's moment, while its glow lasts.
+    const flashEnd = await read($, flashUntil)
+    const levelUp = flashEnd > now ? now - (flashEnd - FLASH_MS) : undefined
+    // A burst in the stats column's corner: the revive's wings, else the level up's pillar of light.
+    let celebration: RenderChildren | undefined
+    if (Image !== undefined && statsShown) {
+      const moment = isRevived && fall !== null ? { name: 'revive' as const, at: fall.at } : levelUp !== undefined ? { name: 'level-up' as const, at: flashEnd - FLASH_MS } : undefined
+      const burst = moment === undefined ? undefined : await loadBurst($, moment.name)
+      if (moment !== undefined && burst !== undefined && isPlaying(burst, now - moment.at)) celebration = burstImage(Image, `fx-${moment.name}`, burst, moment.at, now)
+    }
+    // MP running low pulses; the animation brightens and dims its gauge.
+    const vitalsNow = await read($, vitals)
+    const mana = manaLeft(vitalsNow)
+    const isResting = rest !== null && now - rest.at < REST_MS
+    if (Raster !== undefined && statsShown && !isResting && mana !== undefined && mana < LOW_MANA) {
+      const gaugeWidth = statusLayout(width, true).barWidth
+      const share = mana / 100
+      const rgb = rampRgb(share, RGB.blue)
+      const frames = [gaugeCells(share, gaugeWidth, rgb), glowCells(share, gaugeWidth, rgb, 0.45)]
+      anim.pulse = { key: 'bar-MP', frames, ticks: 5, columns: gaugeWidth, shown: frames[0]! }
+    } else {
+      anim.pulse = undefined
+    }
     const status = renderStatus(
       ui,
       {
@@ -1744,21 +1982,28 @@ export const register: Register = on => {
                 party,
                 ...(fightFx === undefined ? {} : { fx: fightFx }),
                 ...(Raster === undefined ? {} : { Raster, cells: anim.boss?.shown ?? '' }),
+                ...(arenaOverlay === undefined ? {} : { overlay: arenaOverlay }),
               },
             }),
         hero,
         list: sinceRevive(callList, lastRevive),
         casts: await read($, castCount),
         ...(isDown ? { knockout: 'down' as const } : isRevived ? { knockout: 'revived' as const } : {}),
-        ...(rest !== null && now - rest.at < REST_MS ? { rest: { elapsed: now - rest.at, ...(rest.from === undefined ? {} : { from: rest.from }) } } : {}),
-        vitals: await read($, vitals),
+        ...(rest !== null && isResting ? { rest: { elapsed: now - rest.at, ...(rest.from === undefined ? {} : { from: rest.from }) } } : {}),
+        vitals: vitalsNow,
         combo: comboNow,
         boss: bossNow,
         jobsOut: (await read($, jobs)).filter(job => job.status === 'run').length,
         petsOut: petList.filter(pet => pet.status === 'run').length,
         ...campOf(await read($, outposts)),
-        isFlashing: (await read($, flashUntil)) > now,
+        isFlashing: levelUp !== undefined,
         width,
+        ...(Raster === undefined ? {} : { gaugeRaster: Raster }),
+        ...(levelUp === undefined ? {} : { levelUp }),
+        ...(lastHurt !== null && hurtAge >= 0 && hurtAge < HEART_FLASH_MS ? { heartFlash: lastHurt.index } : {}),
+        ...(hurtAge >= 0 && hurtAge < DAMAGE_MS ? { damage: hurtAge } : {}),
+        ...(comboMoment === undefined ? {} : { comboFx: comboMoment }),
+        ...(celebration === undefined ? {} : { celebration }),
         ...(waiting === null ? {} : { waitingFor: waiting }),
         onHelp: () => {
           void update($, isHelpOpen, open => !open)
@@ -1770,8 +2015,10 @@ export const register: Register = on => {
               onFight: () => fillPrompt($, fightText(bossNow), `Ask Claude: ${fightText(bossNow)}`),
             }),
       },
-      portrait === undefined && downCells === undefined ? Raster : undefined,
-      downCells !== undefined
+      portrait === undefined && downCells === undefined && fadeCells === undefined ? Raster : undefined,
+      fadeCells !== undefined && Raster !== undefined
+        ? <Raster key="hero-fade" {...HERO_CELLS} cells={fadeCells} />
+        : downCells !== undefined
         ? Raster !== undefined
           ? <Raster key="hero-ko" {...HERO_CELLS} cells={downCells} />
           : Svg === undefined
@@ -2007,7 +2254,7 @@ export const register: Register = on => {
     const tabKey = (active === 'map' && view.view !== 'map' ? `map:${view.view}` : active) as PageKey
     const windowKey: PageKey = helpOpen ? 'help' : tabKey
     const offset = (await read($, offsets))[windowKey] ?? 0
-    const page = await pageFor($, windowKey, { ui, view, inner, now, Raster, isTerminal: e.surface === 'terminal', callList, petList, progress: progressNow, offset, rows })
+    const page = await pageFor($, windowKey, { ui, view, inner, now, Raster, Image, isTerminal: e.surface === 'terminal', callList, petList, progress: progressNow, offset, rows })
     const items = page.items ?? []
     // A list scrolls a row a step; items an item a step, where the stops between them are.
     layout = { rows, total: page.list?.rows.length ?? totalRows(items), key: windowKey, ...(page.list === undefined ? { stops: itemStops(items) } : {}) }
@@ -2020,6 +2267,11 @@ export const register: Register = on => {
     }
     // Only an overworld the window shows (the map itself, not its bag) can take a blit.
     if (windowKey !== 'map' || !pageItems(items, offset, rows).shown.some(item => item.key === 'overworld')) anim.overworld = undefined
+    if (active === 'spells') {
+      // Only the spells the window shows can take a blit.
+      const shown = new Set(pageItems(items, offset, rows).shown.map(item => `spell-${item.key}`))
+      for (const key of anim.spells.keys()) if (!shown.has(key)) anim.spells.delete(key)
+    }
     if (active === 'jobs') {
       // Only the jobs the window shows can take a blit.
       const shown = new Set(pageItems(items, offset, rows).shown.map(item => `job-${item.key}`))
@@ -2029,6 +2281,10 @@ export const register: Register = on => {
       anim.hasHero ||
       (active === 'pets' && anim.pets.size > 0) ||
       anim.overworld !== undefined ||
+      anim.pulse !== undefined ||
+      anim.sprites.size > 0 ||
+      anim.bursts.size > 0 ||
+      (active === 'spells' && anim.spells.size > 0) ||
       anim.boss !== undefined ||
       anim.aura !== undefined ||
       (active === 'jobs' && anim.jobs.size > 0)

@@ -4,6 +4,7 @@ import type { BagItem } from '../types'
 import { STATUS_GLYPHS, rarityOf, splitBar } from './diff'
 import { fit, fitTail, pickList } from './pick-list'
 import type { PickState } from './pick-list'
+import { HEX } from './palette'
 
 // `label` names where back leads: the map, or the outposts for a bag opened from them.
 export type BagRow = { kind: 'back'; label?: string } | { kind: 'item'; item: BagItem } | { kind: 'note'; text: string }
@@ -41,7 +42,7 @@ const Bag: ClientModule<BagProps, PickState> = (props, surface) => {
         const isHover = state.hover === index
         if (row.kind === 'back') {
           return (
-            <Text key="back" color={isHover ? 'yellow' : 'cyan'} bold={isHover}>
+            <Text key="back" color={isHover ? HEX.gold : HEX.cyan} bold={isHover}>
               {cursor(isHover)}◂ back to {row.label ?? 'the map'}
             </Text>
           )
@@ -63,17 +64,17 @@ const Bag: ClientModule<BagProps, PickState> = (props, surface) => {
             : ` +${item.added} −${item.removed}`
         return (
           <Box key={`item-${item.path}`} flexDirection="row" height={1}>
-            <Text color="yellow">{cursor(isHover)}</Text>
+            <Text color={HEX.gold}>{cursor(isHover)}</Text>
             <Text color={rarity.color} bold>
               {(STATUS_GLYPHS[item.status] ?? '✎') + ' '}
             </Text>
-            <Text color={isHover ? 'yellow' : rarity.color === 'white' ? undefined : rarity.color} bold={isHover}>
+            <Text color={isHover ? HEX.gold : rarity.color === 'white' ? undefined : rarity.color} bold={isHover}>
               {fitTail(item.path, pathWidth)}
             </Text>
-            <Text color="green">{'▮'.repeat(plus)}</Text>
-            <Text color="red">{'▮'.repeat(minus)}</Text>
+            <Text color={HEX.green}>{'▮'.repeat(plus)}</Text>
+            <Text color={HEX.red}>{'▮'.repeat(minus)}</Text>
             <Text dimColor>{'·'.repeat(BAR - plus - minus)}</Text>
-            <Text color={isHover ? 'yellow' : undefined} dimColor={!isHover}>
+            <Text color={isHover ? HEX.gold : undefined} dimColor={!isHover}>
               {fit(isHover ? ' ⏎ inspect' : stats, STATS)}
             </Text>
           </Box>

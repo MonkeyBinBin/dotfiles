@@ -1,6 +1,7 @@
 import type { Timer } from 'claude-code'
 
 import type { Tab } from '../types'
+import type { Burst } from './fx'
 import { HERO_CLASS_FRAMES, HERO_SIZE } from './hero-cells'
 import type { HeroClassId } from './hero-cells'
 
@@ -60,4 +61,14 @@ export const anim = {
   jobs: new Map<string, { shown: string }>(),
   // The map tab's overworld while on screen: its frames as Raster cells and the one shown.
   overworld: undefined as { frames: string[]; columns: number; rows: number; shown: string } | undefined,
+  // Baked bursts playing, by Image key: the burst, the moment it began (ms) and the frame shown. Each leaves once
+  // played through, and the pane is drawn again without it.
+  bursts: new Map<string, { burst: Burst; at: number; shown: string }>(),
+  // Raster cells played once, by key: a pet fainting, a hero's colour coming back, an aura going out. From the
+  // moment (ms) they began, `frameMs` a frame, the last held.
+  sprites: new Map<string, { frames: string[]; at: number; frameMs: number; columns: number; rows: number; shown: string }>(),
+  // A gauge that pulses (MP running low): its frames in turn, `ticks` each.
+  pulse: undefined as { key: string; frames: string[]; ticks: number; columns: number; shown: string } | undefined,
+  // Running spells' marks on screen, by Raster key: the glyph shown last.
+  spells: new Map<string, { shown: string }>(),
 }

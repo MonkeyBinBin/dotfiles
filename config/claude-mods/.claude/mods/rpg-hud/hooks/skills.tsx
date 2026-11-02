@@ -2,6 +2,8 @@ import type { ElementTable } from 'claude-code'
 
 import type { Loadout, Progress, SkillSlot } from '../types'
 import type { Item } from './window'
+import { gauge, gaugeText } from './gauge'
+import { HEX, RGB, TIERS as RARITY } from './palette'
 
 // Uses to reach each mastery star.
 const MASTERY = [1, 3, 10] as const
@@ -10,13 +12,13 @@ export const GLOW_MS = 5 * 60 * 1000
 
 export const masteryStars = (uses: number): string => MASTERY.map(at => (uses >= at ? '★' : '☆')).join('')
 
-// Mastery tiers, highest first: a skill climbs as it is cast.
+// Mastery tiers, highest first: a skill climbs as it is cast, up the rarity ladder the spell book and the bag use.
 export type Tier = 'master' | 'adept' | 'novice' | 'untried'
-const TIERS: readonly { tier: Tier; at: number; color: string; gem: string }[] = [
-  { tier: 'master', at: MASTERY[2], color: 'yellow', gem: '◆' },
-  { tier: 'adept', at: MASTERY[1], color: 'cyan', gem: '◈' },
-  { tier: 'novice', at: MASTERY[0], color: 'green', gem: '◇' },
-  { tier: 'untried', at: 0, color: 'gray', gem: '·' },
+const TIERS: readonly { tier: Tier; at: number; color: string; rgb: number; gem: string }[] = [
+  { tier: 'master', at: MASTERY[2], color: RARITY.legendary.color, rgb: RGB.gold, gem: RARITY.legendary.glyph },
+  { tier: 'adept', at: MASTERY[1], color: RARITY.rare.color, rgb: RGB.blue, gem: RARITY.rare.glyph },
+  { tier: 'novice', at: MASTERY[0], color: RARITY.uncommon.color, rgb: RGB.green, gem: RARITY.uncommon.glyph },
+  { tier: 'untried', at: 0, color: 'gray', rgb: RGB.gray, gem: '·' },
 ]
 
 export const tierOf = (uses: number): Tier => TIERS.find(t => uses >= t.at)?.tier ?? 'untried'
@@ -144,10 +146,10 @@ const countText = (uses: number): string => {
   return next === undefined ? 'MAX' : `${uses}/${next}`
 }
 
-// The bar's filled cells toward the next star, of `cells`.
-const barFill = (uses: number, cells: number): number => {
+// How far the bar is toward the next star; a master's is full.
+const barShare = (uses: number): number => {
   const next = nextStar(uses)
-  return next === undefined ? cells : Math.floor((cells * uses) / next)
+  return next === undefined ? 1 : uses / next
 }
 
 const padEnd = (text: string, width: number) => text + ' '.repeat(Math.max(0, width - [...text].length))
@@ -185,35 +187,27 @@ export function skillItems(
       }
       case 'skill': {
         const { node, isSealed } = row
-        const { color, gem } = styleOf(tierOf(node.uses))
+        const { color, rgb, gem } = styleOf(tierOf(node.uses))
         const isLearned = node.uses > 0
         const name = fit(shortName(node.name), columns.name - 1)
-        const filled = barFill(node.uses, BAR - 1)
+        const share = barShare(node.uses)
         const count = countText(node.uses)
         const isMax = count === 'MAX'
         const parts = {
           gem: (
-            <Text key="gem" color={node.isGlowing ? 'yellow' : color} bold={node.isGlowing} dimColor={isSealed}>
+            <Text key="gem" color={node.isGlowing ? HEX.gold : color} bold={node.isGlowing} dimColor={isSealed}>
               {padEnd(node.isGlowing ? '✦' : gem, GEM)}
             </Text>
           ),
           stars: (
-            <Text key="stars" color="yellow" dimColor={!isLearned}>
+            <Text key="stars" color={HEX.gold} dimColor={!isLearned}>
               {padEnd(masteryStars(node.uses), STARS)}
             </Text>
           ),
-          filled: (
-            <Text key="filled" color={color}>
-              {' ' + '▰'.repeat(filled)}
-            </Text>
-          ),
-          empty: (
-            <Text key="empty" dimColor>
-              {'▱'.repeat(BAR - 1 - filled)}
-            </Text>
-          ),
+          // The gauge toward the next star, a space before it, as Text runs a button's label can hold.
+          bar: [<Text key="bar-gap"> </Text>, ...gaugeText(ui, `bar-${node.name}`, share, BAR - 1, rgb)],
           count: (
-            <Text key="count" dimColor={!isMax} {...(isMax ? { color: 'yellow', bold: true } : {})}>
+            <Text key="count" dimColor={!isMax} {...(isMax ? { color: HEX.gold, bold: true } : {})}>
               {padStart(count, COUNT)}
             </Text>
           ),
@@ -233,7 +227,7 @@ export function skillItems(
                   {padEnd(name, columns.name)}
                 </Text>,
                 parts.stars,
-                ...(columns.hasBar ? [parts.filled, parts.empty] : []),
+                ...(columns.hasBar ? parts.bar : []),
                 parts.count,
                 ...(columns.hasSource ? [parts.source] : []),
               ]}
@@ -249,11 +243,8 @@ export function skillItems(
             </Box>
             <Box width={STARS}>{parts.stars}</Box>
             {columns.hasBar && (
-              <Box width={BAR}>
-                <Text>
-                  {parts.filled}
-                  {parts.empty}
-                </Text>
+              <Box width={BAR} paddingLeft={1}>
+                {gauge(ui, { key: `bar-${node.name}`, share, width: BAR - 1, rgb, alt: countText(node.uses) })}
               </Box>
             )}
             <Box width={COUNT} justifyContent="flex-end">
@@ -283,15 +274,15 @@ export function skillItems(
       case 'gear-title':
         return item(
           index,
-          <Text bold color="magenta">
-            🛡 Equipment <Text dimColor>{row.count} MCP servers</Text>
+          <Text bold color={HEX.blue}>
+            🏹 Equipment <Text dimColor>{row.count} MCP servers</Text>
           </Text>,
         )
       case 'gear':
         return item(
           index,
           <Text wrap="truncate">
-            <Text color={row.isLoaded ? 'magenta' : 'gray'}>{row.isLoaded ? '  ⚔ ' : '  · '}</Text>
+            <Text color={row.isLoaded ? HEX.blue : 'gray'}>{row.isLoaded ? '  ⚔ ' : '  · '}</Text>
             <Text dimColor={!row.isLoaded}>{row.server}</Text>
             <Text dimColor> {row.tools} tools</Text>
           </Text>,

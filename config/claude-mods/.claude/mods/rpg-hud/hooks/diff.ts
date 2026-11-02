@@ -1,13 +1,15 @@
 // Shared by the bag, the inspect view and the transcript's edit cards: how big a change is, and its diff lines.
 
+import { TIERS } from './palette'
+
 export type Rarity = { name: string; color: string; glyph: string }
 
-// The bigger the change, the rarer the item.
+// The bigger the change, the rarer the item, on the ladder the spell book and the skills share.
 export const rarityOf = (lines: number): Rarity => {
-  if (lines >= 200) return { name: 'epic', color: 'magenta', glyph: '✦' }
-  if (lines >= 50) return { name: 'rare', color: 'blue', glyph: '◆' }
-  if (lines >= 10) return { name: 'uncommon', color: 'green', glyph: '◆' }
-  return { name: 'common', color: 'white', glyph: '◇' }
+  if (lines >= 200) return { name: 'epic', ...TIERS.epic }
+  if (lines >= 50) return { name: 'rare', ...TIERS.rare }
+  if (lines >= 10) return { name: 'uncommon', ...TIERS.uncommon }
+  return { name: 'common', ...TIERS.common }
 }
 
 // The status letter's glyph: edited, new, gone, moved.
