@@ -1,8 +1,8 @@
 // The quest board: every agent as a notice pinned to the camp's board, grouped by who needs the person
-// first (求援 blocked, 凱旋 done, 出征 working, 待命 idle), pinned ones on top. Each notice has its status
+// first (SOS blocked, Loot done, On quest working, Resting idle), pinned ones on top. Each notice has its status
 // seal, the agent's title, its space and tab, and how long it's been at it. Click: go to it. Right-click:
 // pin / unpin. On a narrow sidebar only the seals show.
-import { div, image } from "gpui-kit";
+import { div, image, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { agents, spaces, theme, run, setAgentOrder } from "herdr";
 import { ART, RANK, LABEL, since, sidebarNarrow } from "../state.js";
@@ -11,7 +11,7 @@ const SLOT = "#1d1b2f";
 
 export class Quests {
   constructor(cx) {
-    // only for the "12 分" clocks
+    // only for the "12m" clocks
     cx.timer.every(30000, (cx) => cx.notify());
   }
 
@@ -20,10 +20,18 @@ export class Quests {
       .child(image(`${ART}/icon-${a.status}.gif`).size(size));
   }
 
+  // the agent's tool (Claude Code, Codex...): its icon on its tile, from Herdr's program table
+  tool(t, prog) {
+    const tile = div().size(14).flex_none().flex().items_center().justify_center().bg(prog?.tile ?? t.border);
+    if (!prog?.icon) return tile.child(div().text_size(10).text_color("#ffffff").child((prog?.name ?? "?")[0]));
+    return tile.child(prog.tint ? svg(prog.icon).size(10).text_color(prog.color ?? "#ffffff") : image(prog.icon).size(10));
+  }
+
   row(t, a, tabs) {
     const tab = tabs.get(a.tab);
     const clock = a.status === "working" ? since(tab?.working_since) : a.status === "idle" ? "" : since(tab?.changed_at);
     const where = [a.space_name, tab?.named ? tab.name : `#${a.tab_index}`, clock].filter(Boolean).join(" · ");
+    const prog = a.program;
     const color = { blocked: t.blocked, done: t.done, working: t.working, idle: t.border }[a.status];
     return h_flex().id(`q-${a.address}`).gap(8).pl(6).pr(8).py(5).items_center()
       .bg(a.focused ? t.selected : t.surface).border_l(3).border_color(color)
@@ -36,8 +44,11 @@ export class Quests {
       .child(this.seal(t, a))
       .child(v_flex().flex_1().min_w(0).gap(3).text_size(12)
         .child(div().truncate().text_color(t.foreground).child(a.title || a.program?.name || a.address))
-        .child(div().truncate().text_color(t.dim).child(where)))
-      .when(a.pinned, (el) => el.child(div().flex_none().text_size(12).text_color(t.accent).child("釘")));
+        .child(h_flex().min_w(0).gap(5).items_center()
+          .child(this.tool(t, prog))
+          .child(div().flex_none().text_color(t.muted).child(prog?.name ?? a.app ?? "agent"))
+          .child(div().truncate().text_color(t.dim).child(`· ${where}`))))
+      .when(a.pinned, (el) => el.child(div().flex_none().text_size(12).text_color(t.accent).child("PIN")));
   }
 
   render() {
@@ -47,23 +58,23 @@ export class Quests {
     setAgentOrder(list.map((a) => a.address));
 
     if (sidebarNarrow()) {
-      return v_flex().size_full().bg(t.chrome).items_center().gap(6).pt(8).overflow_y_scrollbar()
+      return v_flex().size_full().bg(t.chrome + "d9").items_center().gap(6).pt(8).overflow_y_scrollbar()
         .children(list.map((a) => div().id(`qn-${a.address}`).on_click(() => run("pane.focus", { pane: a.pane })).child(this.seal(t, a, 16))));
     }
 
     const groups = [
-      { key: "pinned", label: "釘選", members: list.filter((a) => a.pinned) },
+      { key: "pinned", label: "Pinned", members: list.filter((a) => a.pinned) },
       ...["blocked", "done", "working", "idle"].map((s) => ({ key: s, label: LABEL[s], members: list.filter((a) => !a.pinned && a.status === s) })),
     ].filter((g) => g.members.length);
 
     const head = h_flex().px(10).py(8).items_center().border_b(2).border_color(t.border).text_size(12)
-      .child(div().flex_1().text_color(t.foreground).child("任務公告欄"))
-      .child(div().text_color(t.dim).child(`${list.length} 件`));
+      .child(div().flex_1().text_color(t.foreground).child("QUEST BOARD"))
+      .child(div().text_color(t.dim).child(`${list.length}`));
     const body = v_flex().id("quests").flex_1().min_h(0).overflow_y_scrollbar().px(8).py(8).gap(10)
-      .when(!groups.length, (el) => el.child(div().pt(12).text_size(12).text_color(t.dim).child("沒有任務，繼續擺爛")))
+      .when(!groups.length, (el) => el.child(div().pt(12).text_size(12).text_color(t.dim).child("No quests. Keep slacking.")))
       .children(groups.map((g) => v_flex().gap(4)
         .child(div().px(2).text_size(12).text_color(t.muted).child(`${g.label} ${g.members.length}`))
         .children(g.members.map((a) => this.row(t, a, tabs)))));
-    return v_flex().size_full().bg(t.chrome).border_t(2).border_color(t.border).child(head).child(body);
+    return v_flex().size_full().bg(t.chrome + "d9").child(head).child(body);
   }
 }

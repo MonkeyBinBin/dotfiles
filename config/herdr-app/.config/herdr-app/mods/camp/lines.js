@@ -1,9 +1,9 @@
 // What That Monkey mutters, per mood. One is picked when the mood changes and kept until it changes again.
 export const LINES = {
-  idle: ["今天也很和平…", "營火真暖", "沒事就是好事", "發呆是一種修行"],
-  sleep: ["大家加油，我先睡", "有事再叫我…", "呼…嚕…", "代打辛苦了 zzz"],
-  alarm: ["蛤…又要我出手？", "有傭兵卡關了！", "去看一下啦…", "救命信號彈！"],
-  happy: ["收工收工！", "戰利品放門口就好", "幹得好，賞香蕉", "凱旋歸來！"],
+  idle: ["Quiet night...", "Nice fire.", "No news is good news.", "Staring is a skill."],
+  sleep: ["You got this. Zzz...", "Wake me if it's urgent.", "Five more minutes...", "Good work, mercs. Zzz"],
+  alarm: ["Huh? Me? Now?!", "A merc is stuck!", "Go take a look...", "SOS flare!"],
+  happy: ["Quest complete!", "Leave the loot by the tent.", "Bananas for everyone!", "They're back!"],
 };
 
 export function pick(mood, avoid) {

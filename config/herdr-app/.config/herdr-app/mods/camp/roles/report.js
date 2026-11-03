@@ -1,9 +1,9 @@
-// 戰報: the battle report dialog, opened from the band's tally. That Monkey cheering, how many quests came home
-// since Herdr started, and every agent that needs the person (求援) or came back (凱旋), each with a 前往 button.
+// The battle report, opened from the band's tally: That Monkey cheering, his record (quests home, level), and
+// every agent that needs the person (SOS) or came back (Loot), each with a Go button. Draws its own RPG window.
 import { div, image } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { agents, theme, run, shared, closeOverlay } from "herdr";
-import { ART } from "../state.js";
+import { ART, INK, FRAME, rpgWindow } from "../state.js";
 
 const STAGE = "#151324", SLOT = "#1d1b2f";
 
@@ -20,7 +20,7 @@ export class Report {
           closeOverlay(overlay);
           run("pane.focus", { pane: a.pane });
         })
-        .child("前往"));
+        .child("Go"));
   }
 
   section(t, label, color, list, overlay) {
@@ -34,15 +34,15 @@ export class Report {
     const t = theme(), list = agents(), overlay = p.overlay;
     const wins = shared("camp.wins") ?? 0;
     const blocked = list.filter((a) => a.status === "blocked"), done = list.filter((a) => a.status === "done");
-    return v_flex().size_full().bg(t.popover).text_size(12).p(12).gap(12)
+    return rpgWindow(v_flex().size_full().text_size(12).p(12).gap(12)
       .child(h_flex().gap(12).items_center()
         .child(div().flex_none().bg(STAGE).border(2).border_color(t.border).child(image(`${ART}/monkey-happy.gif`).w(90).h(90)))
         .child(v_flex().flex_1().gap(6)
-          .child(div().text_size(24).text_color(t.foreground).child("戰報"))
-          .child(div().text_color(t.muted).child(`這次開營以來凱旋 ${wins} 次`))
-          .child(div().text_color(t.dim).child(blocked.length ? "有傭兵在等你出手…" : "營地一切平安"))))
+          .child(div().text_size(24).text_color(t.foreground).child("REPORT"))
+          .child(div().text_color(t.muted).child(`Quests home: ${wins} · Lv${1 + Math.floor(wins / 4)}`))
+          .child(div().text_color(t.dim).child(blocked.length ? "A merc needs your hand..." : "All quiet at camp."))))
       .child(v_flex().id("report-list").flex_1().min_h(0).overflow_y_scrollbar().gap(12)
-        .child(this.section(t, "求援", t.blocked, blocked, overlay))
-        .child(this.section(t, "凱旋", t.done, done, overlay)));
+        .child(this.section(t, "SOS", t.blocked, blocked, overlay))
+        .child(this.section(t, "Loot", t.done, done, overlay)))).size_full();
   }
 }

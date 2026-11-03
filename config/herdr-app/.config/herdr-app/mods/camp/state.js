@@ -1,10 +1,11 @@
 // What the whole camp is up to, shared by every role.
+import { div } from "gpui-kit";
 import { layout } from "herdr";
 
 export const ART = "mods/camp/assets";
 // Status order: who needs the person first.
 export const RANK = { blocked: 0, done: 1, working: 2, idle: 3 };
-export const LABEL = { blocked: "求援", done: "凱旋", working: "出征", idle: "待命" };
+export const LABEL = { blocked: "SOS", done: "Loot", working: "On quest", idle: "Resting" };
 
 /** The mood every agent adds up to (the band adds "happy" for a moment when one finishes). */
 export function baseMood(list) {
@@ -26,12 +27,18 @@ function find(node, id) {
 export const sidebarNarrow = () => (find(layout(), "sidebar")?.size?.px ?? Infinity) < 160;
 export const sidebarWidth = () => find(layout(), "sidebar")?.size?.px;
 
-/** "剛剛", "12 分", "3 時" since ms. */
+/** "now", "12m", "3h", "2d" since ms. */
 export function since(ms, now = Date.now()) {
   if (!ms) return "";
   const m = Math.floor((now - ms) / 60000);
-  if (m < 1) return "剛剛";
-  if (m < 60) return `${m} 分`;
+  if (m < 1) return "now";
+  if (m < 60) return `${m}m`;
   const h = Math.floor(m / 60);
-  return h < 48 ? `${h} 時` : `${Math.floor(h / 24)} 天`;
+  return h < 48 ? `${h}h` : `${Math.floor(h / 24)}d`;
+}
+
+// The camp's RPG window: a dark outer line, a cream frame, the night fill. Wrap content in it.
+export const INK = "#0c0a14", FRAME = "#e6dcc6", FILL = "#1b1834", PAPER = "#f3e9d2";
+export function rpgWindow(content, fill = FILL) {
+  return div().border(2).border_color(INK).child(div().size_full().border(2).border_color(FRAME).bg(fill).child(content));
 }

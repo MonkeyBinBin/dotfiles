@@ -9,9 +9,11 @@ import { div, image } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { agents, spaces, theme, run, shared, setShared, openOverlay } from "herdr";
 import { pick } from "../lines.js";
-import { ART } from "../state.js";
+import { ART, INK, PAPER, rpgWindow } from "../state.js";
 
-const BG = "#151324";
+const BG = "#151324", GRASS = "#3f6e40", SOIL = "#1d3a24";
+// a few stars over the band's sky (left %, top px, twinkle period ms); they sit where no GIF covers them
+const STARS = [[46, 14, 2300], [58, 30, 3100], [63, 10, 2700], [71, 40, 3600], [79, 18, 2000], [88, 34, 2900], [93, 8, 3300]];
 const HAPPY_MS = 3600;
 const MAX_MERCS = 5;
 // GIFs are baked at 4x their pixels and shown at 2x, so 1:1 on a 2x screen.
@@ -57,6 +59,19 @@ export class Band {
     return "idle";
   }
 
+  // A speech balloon: cream paper, dark ink, a stepped pixel tail down-left toward his head.
+  balloon(t, mood) {
+    const edge = { alarm: t.blocked, happy: t.done }[mood] ?? INK;
+    const row = (left, w) => h_flex().ml(left).h(2)
+      .child(div().w(2).h_full().bg(edge)).child(div().w(w).h_full().bg(PAPER)).child(div().w(2).h_full().bg(edge));
+    const tail = v_flex().absolute().left(10).bottom(-8)
+      .child(row(6, 6)).child(row(4, 4)).child(row(2, 2)).child(div().ml(0).w(4).h(2).bg(edge));
+    return div().id("balloon").absolute().left(px(52)).top(6)
+      .child(div().px(10).py(6).bg(PAPER).border(2).border_color(edge)
+        .text_size(12).text_color(INK).whitespace_nowrap().child(this.line))
+      .child(tail);
+  }
+
   render(cx) {
     const t = theme(), list = agents();
     this.watch(list, cx);
@@ -69,38 +84,43 @@ export class Band {
 
     const urgent = blocked[0] ?? done[0];
     const monkey = div().id("monkey").flex_shrink_0().w(px(60)).h(px(60))
-      .child(image(`${ART}/monkey-${mood === "sleep" ? "sleep" : mood}.gif`).w(px(60)).h(px(60)))
+      .child(image(`${ART}/monkey-${mood}.gif`).w(px(60)).h(px(60)))
       .when(Boolean(urgent), (el) => el.on_click(() => run("agent.focus", { terminal: urgent.address })));
     const fire = image(`${ART}/${mood === "alarm" ? "campfire-blue" : "campfire"}.gif`).flex_shrink_0().w(px(56)).h(px(60));
 
-    const bubbleColor = { alarm: t.blocked, happy: t.done, sleep: t.dim, idle: t.muted }[mood];
-    const bubble = div().flex_shrink_0().px(10).py(6).border(2).border_color(bubbleColor).bg(t.chrome)
-      .text_size(12).text_color(t.foreground).whitespace_nowrap().child(this.line);
-
     const mercs = h_flex().items_end().gap(2).children(
       working.slice(0, MAX_MERCS).map((a) =>
-        div().id(`merc-${a.address}`).flex_shrink_0().w(px(24)).h(px(26))
+        div().id(`merc-${a.address}`).flex_shrink_0().w(px(24)).h(px(28))
           .on_click(() => run("agent.focus", { terminal: a.address }))
-          .child(image(`${ART}/merc-${mercColor(a)}.gif`).w(px(24)).h(px(26)))))
-      .when(working.length > MAX_MERCS, (el) => el.child(div().pb(8).text_size(12).text_color(t.dim).child(`+${working.length - MAX_MERCS}`)));
+          .child(image(`${ART}/merc-${mercColor(a)}.gif`).w(px(24)).h(px(28)))))
+      .when(working.length > MAX_MERCS, (el) => el.child(div().pb(14).text_size(12).text_color(t.foreground).child(`+${working.length - MAX_MERCS}`)));
 
     const space = spaces().find((s) => s.active);
     const stat = (color, label, n) => h_flex().gap(6).items_center()
       .child(div().size(8).bg(n ? color : t.border)).child(div().text_color(n ? t.foreground : t.dim).child(`${label} ${n}`));
-    const status = v_flex().id("tally").flex_shrink_0().gap(8).px(12).py(6).text_size(12).items_end()
-      .hover((s) => s.bg(t.surface))
-      .on_click(() => openOverlay({ mod: "camp", kind: "dialog", width: 380, height: 440, props: { role: "report" } }))
-      .child(h_flex().gap(14)
-        .child(stat(t.blocked, "求援", blocked.length))
-        .child(stat(t.done, "凱旋", done.length))
-        .child(stat(t.working, "出征", working.length)))
-      .child(div().text_color(t.dim).child([space?.machine ?? "本機營地", space?.branch, "戰報 ›"].filter(Boolean).join(" · ")));
+    const tally = div().id("tally").flex_shrink_0()
+      .on_click(() => openOverlay({ mod: "camp", kind: "dialog", width: 400, height: 460, frame: "none", props: { role: "report" } }))
+      .child(rpgWindow(v_flex().gap(8).px(12).py(8).text_size(12).items_end()
+        .child(h_flex().gap(14)
+          .child(stat(t.blocked, "SOS", blocked.length))
+          .child(stat(t.done, "Loot", done.length))
+          .child(stat(t.working, "Quest", working.length)))
+        .child(div().text_color(t.dim).child([space?.machine ?? "Home camp", space?.branch, "Report >"].filter(Boolean).join(" · ")))));
 
-    return h_flex().id("root").size_full().bg(BG).border_t(2).border_color(t.border).items_end().gap(12).pl(12).overflow_hidden()
-      .child(monkey)
-      .child(fire)
-      .child(v_flex().h_full().justify_center().gap(8).flex_shrink_0().child(bubble).child(mercs))
-      .child(div().flex_1())
-      .child(v_flex().h_full().justify_center().pr(4).child(status));
+    // the night over the camp, its ground (the same grass and soil rows the GIFs are baked with), a few stars
+    const ground = v_flex().absolute().left(0).right(0).bottom(0).h(6)
+      .child(div().h(2).bg(GRASS)).child(div().h(4).bg(SOIL));
+    const stars = STARS.map(([l, top, period], i) => div().absolute().top(top).left(`${l}%`).size(2).bg(i % 3 ? "#e6e8ff" : "#ffe6b0")
+      .loop("opacity", { from: 0.25, to: 1, period }));
+    return div().id("root").relative().size_full().bg(BG).overflow_hidden()
+      .children(stars)
+      .child(ground)
+      .child(h_flex().size_full().items_end().gap(12).pl(12)
+        .child(monkey)
+        .child(fire)
+        .child(mercs)
+        .child(div().flex_1())
+        .child(v_flex().h_full().justify_center().pr(10).child(tally)))
+      .child(this.balloon(t, mood));
   }
 }

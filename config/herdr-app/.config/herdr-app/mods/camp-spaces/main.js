@@ -1,4 +1,4 @@
-// The camp's spaces (營地據點): Herdr's spaces mod (cloned from 0.1.12), reskinned: each space is a pixel tent
+// The camp's spaces (CAMPS): Herdr's spaces mod (cloned from 0.1.12), reskinned: each space is a pixel tent
 // in its own color instead of a letter avatar, square corners. Behaviour is unchanged.
 // Workspace spaces: stable colored avatars, worktrees under their checkout,
 // grouped by machine when more than one is known. After a space's name, the repo
@@ -432,9 +432,9 @@ export default class Spaces extends View {
       changed = true;
     }
     if (changed) setShared("space.colors", kept);
-    return v_flex().size_full().min_h(0).bg(t.chrome).text_size(12)
+    return v_flex().size_full().min_h(0).bg(t.chrome + "d9").text_size(12)
       .child(h_flex().h(31).pl(16).pr(10).items_center().justify_between().text_size(12).text_color(t.dim)
-        .when(!collapsed, el => el.child("營地據點"))
+        .when(!collapsed, el => el.child("CAMPS"))
         .child(div().id("space-new").size(26).flex_none().flex().items_center().justify_center().hover(s => s.bg(t.hover).text_color(t.foreground))
           .on_click(() => run("space.new")).child(svg("mods/workspace-chrome/plus.svg").size(14))))
       .child(v_flex().flex_1().min_h(0).px(8).pb(14).overflow_y_scrollbar().mode("always")
