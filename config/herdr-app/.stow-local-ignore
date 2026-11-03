@@ -1,2 +1,3 @@
 # mods/ is copied, not linked: Herdr will not load images through symlinks (scripts/herdr-camp/install.sh)
 mods
+kit

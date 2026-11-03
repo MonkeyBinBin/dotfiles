@@ -1,5 +1,6 @@
 // The quest board's status seals, 12 x 12: a red ! seal that jolts (blocked), a little chest with a glint
-// (done), a torch flame (working), a crescent moon bobbing (idle). Pick with `kind`.
+// (done), a torch flame (working), a crescent moon bobbing (idle), and the lists' menu cursor (`cursor`).
+// Pick with `kind`.
 
 import { hex, wrap, TAU, tileNoise } from "../../core/index.js";
 import { Grid } from "../critters/_lib.js";
@@ -68,9 +69,23 @@ function moon(ph) {
   g.outline((x, y, nx, ny) => MOON[0]);
 }
 
+// the menu cursor: a cream pointer with a dark outline, pointing right
+function cursor() {
+  for (let y = -10; y <= -4; y++) {
+    const w = 4 - Math.abs(y + 7);
+    for (let x = -3; x <= -3 + w; x++) g.set(x, y, x === -3 + w || Math.abs(y + 7) === 3 ? hex("#c8b088") : hex("#fff6dc"));
+  }
+  g.outline(INK);
+}
+
 export function draw(p, t, o) {
   const ph = wrap(t, D) / D;
   g.clear();
+  if (o.kind === "cursor") {
+    cursor();
+    g.draw(p);
+    return;
+  }
   if (o.kind === "blocked") {
     const s = seal(ph);
     g.draw(p);

@@ -24,7 +24,7 @@
       "id": "topbar",
       "type": "row",
       "size": {
-        "px": 64
+        "px": 76
       },
       "gap": 8,
       "resizable": false,
@@ -41,13 +41,7 @@
             "props": {
               "role": "hero"
             }
-          },
-          "border": {
-            "width": 2,
-            "color": "#c9bfa6"
-          },
-          "radius": 4,
-          "shadow": "md"
+          }
         },
         {
           "id": "tabs",
@@ -55,13 +49,7 @@
           "window_drag": true,
           "content": {
             "mod": "camp-tabs"
-          },
-          "border": {
-            "width": 2,
-            "color": "#c9bfa6"
-          },
-          "radius": 4,
-          "shadow": "md"
+          }
         }
       ]
     },
@@ -91,13 +79,7 @@
               "min": 90,
               "content": {
                 "mod": "camp-spaces"
-              },
-              "border": {
-                "width": 2,
-                "color": "#c9bfa6"
-              },
-              "radius": 4,
-              "shadow": "md"
+              }
             },
             {
               "id": "agents",
@@ -111,13 +93,7 @@
                 "props": {
                   "role": "quests"
                 }
-              },
-              "border": {
-                "width": 2,
-                "color": "#c9bfa6"
-              },
-              "radius": 4,
-              "shadow": "md"
+              }
             },
             {
               "id": "sidebar-footer",
@@ -126,17 +102,11 @@
                 "px": 69
               },
               "content": {
-                "mod": "workspace-chrome",
+                "mod": "camp",
                 "props": {
-                  "footer": true
+                  "role": "footer"
                 }
-              },
-              "border": {
-                "width": 2,
-                "color": "#c9bfa6"
-              },
-              "radius": 4,
-              "shadow": "md"
+              }
             }
           ]
         },
@@ -152,16 +122,16 @@
                 "tab": "active",
                 "pane": {
                   "gap": 8,
-                  "radius": 4,
+                  "radius": 2,
                   "background": "background",
                   "lone": true,
                   "border": {
-                    "width": 2,
-                    "color": "#c9bfa6"
+                    "width": 3,
+                    "color": "#6a421e"
                   },
                   "focus": {
-                    "width": 2,
-                    "color": "accent"
+                    "width": 3,
+                    "color": "#e8b060"
                   },
                   "header": {
                     "content": {
@@ -210,10 +180,10 @@
                 }
               ],
               "border": {
-                "width": 2,
-                "color": "#c9bfa6"
+                "width": 3,
+                "color": "#6a421e"
               },
-              "radius": 4,
+              "radius": 2,
               "shadow": "md"
             }
           ]
@@ -224,20 +194,14 @@
       "id": "status",
       "type": "block",
       "size": {
-        "px": 124
+        "px": 144
       },
       "content": {
         "mod": "camp",
         "props": {
           "role": "band"
         }
-      },
-      "border": {
-        "width": 2,
-        "color": "#c9bfa6"
-      },
-      "radius": 4,
-      "shadow": "md"
+      }
     }
   ]
 }

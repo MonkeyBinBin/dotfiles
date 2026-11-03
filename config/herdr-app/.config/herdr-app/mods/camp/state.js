@@ -1,5 +1,4 @@
 // What the whole camp is up to, shared by every role.
-import { div } from "gpui-kit";
 import { layout } from "herdr";
 
 export const ART = "mods/camp/assets";
@@ -35,10 +34,4 @@ export function since(ms, now = Date.now()) {
   if (m < 60) return `${m}m`;
   const h = Math.floor(m / 60);
   return h < 48 ? `${h}h` : `${Math.floor(h / 24)}d`;
-}
-
-// The camp's RPG window: a dark outer line, a cream frame, the night fill. Wrap content in it.
-export const INK = "#0c0a14", FRAME = "#e6dcc6", FILL = "#1b1834", PAPER = "#f3e9d2";
-export function rpgWindow(content, fill = FILL) {
-  return div().border(2).border_color(INK).child(div().size_full().border(2).border_color(FRAME).bg(fill).child(content));
 }

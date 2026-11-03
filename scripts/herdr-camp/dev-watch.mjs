@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const pkg = join(repo, "config/herdr-app/.config/herdr-app");
+const kit = join(repo, "config/herdr-app/kit");
 const home = process.env.HERDR_APP_HOME ?? join(homedir(), ".config/herdr-app");
 const SKIP = new Set(["gpui-kit.d.ts", "jsconfig.json"]);
 
@@ -32,33 +33,48 @@ function linkFor(rel) {
   return null;
 }
 
+const links = new Set(), mods = new Set();
+let timer = null;
+
 function copyMod(name) {
+  // the shared camp kit goes into every camp mod (mods can't import across folders), the source copy too
+  if (name.startsWith("camp")) spawnSync("rsync", ["-a", "--delete", kit + "/", join(pkg, "mods", name, "kit") + "/"], { stdio: "inherit" });
   const r = spawnSync("rsync", ["-a", "--delete", "--exclude", "gpui-kit.d.ts", "--exclude", "jsconfig.json",
     join(pkg, "mods", name) + "/", join(home, "mods", name) + "/"], { stdio: "inherit" });
   console.log(r.status === 0 ? `copied mods/${name}` : `rsync failed for mods/${name}`);
 }
 
-const links = new Set(), mods = new Set();
-let timer = null;
+// a kit change reaches every camp mod
+watch(kit, (_event, file) => {
+  if (!file || file.startsWith(".")) return;
+  const camp = spawnSync("ls", [join(pkg, "mods")], { encoding: "utf8" }).stdout.split("\n").filter((n) => n.startsWith("camp"));
+  for (const m of camp) mods.add(m);
+  clearTimeout(timer);
+  timer = setTimeout(flush, 150);
+});
+
 watch(pkg, { recursive: true }, (_event, file) => {
   if (!file) return;
   const parts = file.split(sep);
   if (parts.some((s) => s.startsWith(".")) || SKIP.has(parts.at(-1))) return;
+  if (parts[0] === "mods" && parts[2] === "kit") return;
   if (parts[0] === "mods" && parts.length > 2) mods.add(parts[1]);
   else {
     const link = linkFor(file);
     if (link) links.add(link);
   }
   clearTimeout(timer);
-  timer = setTimeout(() => {
-    const now = new Date();
-    for (const l of links) {
-      lutimesSync(l, now, now);
-      console.log(`reload ${l.slice(home.length + 1)}`);
-    }
-    for (const m of mods) copyMod(m);
-    links.clear();
-    mods.clear();
-  }, 150);
+  timer = setTimeout(flush, 150);
 });
+
+function flush() {
+  const now = new Date();
+  for (const l of links) {
+    lutimesSync(l, now, now);
+    console.log(`reload ${l.slice(home.length + 1)}`);
+  }
+  for (const m of mods) copyMod(m);
+  links.clear();
+  mods.clear();
+}
 console.log(`watching ${pkg.slice(repo.length + 1)} -> ${home}`);

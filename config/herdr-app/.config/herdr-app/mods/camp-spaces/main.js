@@ -1,5 +1,6 @@
-// The camp's spaces (CAMPS): Herdr's spaces mod (cloned from 0.1.12), reskinned: each space is a pixel tent
-// in its own color instead of a letter avatar, square corners. Behaviour is unchanged.
+// The camp's spaces (CAMPS): Herdr's spaces mod (cloned from 0.1.12), reskinned in the camp kit (a wooden plaque): each space is
+// a pixel tent in its own color instead of a letter avatar, the shown one marked by the menu cursor rather
+// than a filled row. Behaviour is unchanged.
 // Workspace spaces: stable colored avatars, worktrees under their checkout,
 // grouped by machine when more than one is known. After a space's name, the repo
 // its first terminal is in now, only where unusual: branch, ahead/behind. Agent state lives in the agents list, not here. Click to
@@ -7,6 +8,7 @@
 
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
+import { framed } from "./kit/frame.js";
 import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout } from "herdr";
 
 function find(node, id) {
@@ -359,10 +361,6 @@ export default class Spaces extends View {
       .h(rowHeight({ tree }))
       .flex_none()
       .justify_center()
-      .border_l(3)
-      .border_color(on ? t.accent : t.chrome)
-      .when(on, (el) => el.bg(t.selected))
-      .when(!on, (el) => el.hover((s) => s.bg(t.hover)))
       .when(this.pressed === i && this.over !== i, (el) => el.opacity(0.5))
       .when(this.pressed !== null && this.over === i && this.pressed !== i, (el) => el.child(
         div().absolute().left(0).right(0).h(2).bg(t.accent)
@@ -393,12 +391,15 @@ export default class Spaces extends View {
       .on_mouse_down("right", () => this.menu(w))
       .child(
         h_flex()
-          .gap(9)
+          .gap(8)
           .items_center()
-          .when(Boolean(tree), el => el.pl(22).child(svg("mods/workspace-chrome/branch.svg").size(13).text_color(t.dim)))
+          // the menu cursor points at the shown camp; the rest are dimmer
+          .child(div().w(20).flex_none().when(on, (el) => el.child(
+            div().relative().loop("left", { from: 0, to: 3, period: 700 }).child(image("mods/camp/assets/cursor.png").w(20).h(20)))))
+          .when(Boolean(tree), el => el.pl(14).child(svg("mods/workspace-chrome/branch.svg").size(13).text_color(t.dim)))
           .when(!tree, el => el.child(div().size(20).flex_none().flex().items_center().justify_center().bg(SLOT)
             .child(image(`mods/camp/assets/tent-${TENTS.has(color) ? color : "ansi6"}.gif`).size(16))))
-          .child(div().flex_shrink(0).max_w(150).truncate().text_color(t.foreground).child(w.name))
+          .child(div().flex_shrink(0).max_w(150).truncate().text_color(on ? t.foreground : t.muted).child(w.name))
           .child(g ? this.gitTail(g, tree, w.name, t) : div().flex_1()),
       );
   }
@@ -432,13 +433,14 @@ export default class Spaces extends View {
       changed = true;
     }
     if (changed) setShared("space.colors", kept);
-    return v_flex().size_full().min_h(0).bg(t.chrome + "d9").text_size(12)
+    // a riveted wooden plaque, as every camp panel
+    return framed("plaque", v_flex().size_full().min_h(0).text_size(12)
       .child(h_flex().h(31).pl(16).pr(10).items_center().justify_between().text_size(12).text_color(t.dim)
         .when(!collapsed, el => el.child("CAMPS"))
         .child(div().id("space-new").size(26).flex_none().flex().items_center().justify_center().hover(s => s.bg(t.hover).text_color(t.foreground))
           .on_click(() => run("space.new")).child(svg("mods/workspace-chrome/plus.svg").size(14))))
       .child(v_flex().flex_1().min_h(0).px(8).pb(14).overflow_y_scrollbar().mode("always")
         .on_mouse_up("left", (_e, cx) => { this.pressed = null; cx.notify(); })
-        .children(this.grouped(t, collapsed)));
+        .children(this.grouped(t, collapsed))));
   }
 }

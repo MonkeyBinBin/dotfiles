@@ -1,8 +1,9 @@
-// The camp's tab bar: Herdr's tabs mod (cloned from 0.1.12), reskinned as square pixel tabs with the quest
-// board's status seals. Behaviour is unchanged: select, drag to move, double-click to rename, right-click menu,
+// The camp's tab bar: Herdr's tabs mod (cloned from 0.1.12), reskinned in the camp kit: a riveted wooden plaque
+// with each tab and button a wooden plate (the shown tab lit), and the quest board's status seals. Behaviour is unchanged: select, drag to move, double-click to rename, right-click menu,
 // + menu, side panel buttons remembered per space.
 import { View, div, svg, image } from "gpui-kit";
-import { h_flex } from "gpui-base";
+import { h_flex, v_flex } from "gpui-base";
+import { framed, plate, WOOD } from "./kit/frame.js";
 import { spaces, panes, run, openOverlay, theme, window, shared, layout, settings } from "herdr";
 
 const SLOT = "#1d1b2f";
@@ -55,14 +56,16 @@ export default class Tabs extends View {
     const space = spaces().find(p => p.active);
     const shown = space?.tabs ?? [];
     const stop = (_e, cx) => cx.stop_propagation();
-    const button = (id, label, action) => div().id(id).size(26).flex_none().flex().items_center().justify_center().border(2).border_color(t.border).text_color(t.dim).hover(s => s.bg(t.hover).text_color(t.foreground))
-      .on_mouse_down("left", stop).on_click(action).child(label);
+    // small wooden plates
+    const button = (id, label, action) => div().id(id).flex_none().text_color(WOOD.dim).hover(s => s.text_color(WOOD.text))
+      .on_mouse_down("left", stop).on_click(action)
+      .child(plate(div().size(22).flex().items_center().justify_center().child(label)));
     const item = (c, i) => {
       const program = panes().find(p => p.tab === c.id && p.program?.agent)?.program ?? panes().find(p => p.tab === c.id)?.program;
       const name = /^tb\d+$/.test(c.name) ? program?.name ?? "Terminal" : c.name;
-      return h_flex().id(`tab-${c.id}`).h(28).px(8).gap(6).items_center().flex_none().text_size(12)
-        .border(2).border_color(c.active ? t.accent : t.border).bg(c.active ? t.surface : t.chrome).text_color(c.active ? t.foreground : t.muted)
-        .hover(s => s.bg(t.hover))
+      // a wooden plate; the shown tab is the lit one
+      return div().id(`tab-${c.id}`).flex_none().text_size(12)
+        .text_color(c.active ? WOOD.text : WOOD.dim).hover(s => s.text_color(WOOD.text))
         .on_mouse_down("left", (e, cx) => { cx.stop_propagation(); this.pressed = i; if (e.click_count === 2) run("tab.rename", { id: c.id }); })
         .on_mouse_up("left", () => {
           const from = this.pressed; this.pressed = null;
@@ -70,11 +73,13 @@ export default class Tabs extends View {
           else run("tab.select", { id: c.id });
         })
         .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); openOverlay({ mod: "menu", kind: "popup", width: 200, props: { tab: "tab", target: { id: c.id, space: space.id } } }); })
-        .when(Boolean(program?.icon), el => el.child(program.tint ? svg(program.icon).size(14).text_color(t.muted) : image(program.icon).size(14)))
-        .child(div().max_w(170).truncate().child(c.zoomed ? `${name} Z` : name))
-        .when(Boolean(c.status), el => el.child(div().size(18).flex_none().flex().items_center().justify_center().bg(SLOT)
-          .child(image(`mods/camp/assets/icon-${c.status}.gif`).size(16))))
-        .when(c.active, el => el.child(div().id(`close-${c.id}`).text_color(t.dim).on_mouse_down("left", stop).on_click((_e, cx) => { cx.stop_propagation(); run("tab.close", { id: c.id }); }).child(svg("mods/pane/close.svg").size(12))));
+        .child(plate(h_flex().h(26).px(8).gap(6).items_center()
+          .when(Boolean(program?.icon), el => el.child(program.tint ? svg(program.icon).size(14).text_color(WOOD.text) : image(program.icon).size(14)))
+          .child(div().max_w(170).truncate().child(c.zoomed ? `${name} Z` : name))
+          .when(Boolean(c.status), el => el.child(div().size(18).flex_none().flex().items_center().justify_center().bg(SLOT)
+            .child(image(`mods/camp/assets/icon-${c.status}.gif`).size(16))))
+          .when(c.active, el => el.child(div().id(`close-${c.id}`).text_color(WOOD.dim).hover(s => s.text_color(WOOD.text)).on_mouse_down("left", stop).on_click((_e, cx) => { cx.stop_propagation(); run("tab.close", { id: c.id }); }).child(svg("mods/pane/close.svg").size(12)))),
+          { lit: c.active }));
     };
     const root = layout(), sidebar = find(root, "sidebar"), w = window();
     // Old saved rails and a dragged-narrow sidebar can be smaller than the window buttons.
@@ -87,23 +92,23 @@ export default class Tabs extends View {
     this.syncPanel(space, panel, body, enabled);
     const panelButton = (id, label, icon) => {
       const on = panel && !panel.hidden && body?.active === id;
-      return h_flex().id(`panel-${id}`).h(26).px(8).gap(5).flex_none().items_center().border(2).border_color(on ? t.accent : t.border)
-        .text_size(12).bg(on ? t.selected : t.chrome).text_color(on ? t.foreground : t.muted)
-        .hover(s => s.bg(t.hover)).on_mouse_down("left", stop)
+      return div().id(`panel-${id}`).flex_none().text_size(12).text_color(on ? WOOD.text : WOOD.dim)
+        .hover(s => s.text_color(WOOD.text)).on_mouse_down("left", stop)
         .on_click(() => {
           if (on) run("layout.hide", { id: "panel" });
           else { run("layout.select", { stack: "panel-body", child: id }); run("layout.show", { id: "panel" }); }
-        }).child(svg(icon).size(14)).child(label);
+        }).child(plate(h_flex().h(22).px(8).gap(5).items_center().child(svg(icon).size(14)).child(label), { lit: on }));
     };
-    return h_flex().size_full().min_w(0).px(10).pl(lightsPadding).gap(4).items_center().bg(t.chrome).border_b(2).border_color(t.border)
+    // a riveted wooden plaque, the tabs as plates on it
+    return framed("plaque", h_flex().size_full().min_w(0).pl(Math.max(0, lightsPadding - 12)).gap(6).items_center()
       .on_mouse_up("left", () => { this.pressed = null; })
       .on_scroll_wheel(e => { if (Math.abs(e.delta.y) >= 1) run(e.delta.y > 0 ? "tab.prev" : "tab.next"); })
-      .child(h_flex().id("tab-scroll").flex_1().min_w(0).h_full().items_center().gap(3).overflow_x_scrollbar().gap(4).children(shown.map(item)))
+      .child(h_flex().id("tab-scroll").flex_1().min_w(0).h_full().items_center().overflow_x_scrollbar().gap(6).children(shown.map(item)))
       .child(button("tab-new", "+", () => openOverlay({ mod: "new-menu", kind: "popup", width: 250, height: 512 })))
       .when(enabled.includes("files"), el => el.child(panelButton("files", "Files", "mods/files/file.svg")))
       .when(enabled.includes("changes"), el => el.child(panelButton("changes", "Changes", "mods/changes/changes.svg")))
       .when(w?.buttons, el => el.child(button("minimize", w.platform === "windows" ? svg("mods/camp-tabs/win-min.svg").size(16) : "−", () => run("window.minimize")))
         .child(button("maximize", w.platform === "windows" ? svg(`mods/camp-tabs/${w.maximized ? "win-restore" : "win-max"}.svg`).size(16) : "□", () => run("window.maximize")))
-        .child(button("close-window", w.platform === "windows" ? svg("mods/camp-tabs/win-close.svg").size(16) : svg("mods/pane/close.svg").size(13), () => run("window.close"))));
+        .child(button("close-window", w.platform === "windows" ? svg("mods/camp-tabs/win-close.svg").size(16) : svg("mods/pane/close.svg").size(13), () => run("window.close")))));
   }
 }

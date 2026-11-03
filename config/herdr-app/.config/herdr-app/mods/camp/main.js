@@ -3,6 +3,7 @@
 //   band    the campfire stage along the bottom     hero    the hero's status window, top left
 //   quests  the quest board (the agents list)       pane    a wooden sign over each pane (a pane header)
 //   report  the battle report dialog (opened from the band's tally)
+//   footer  Settings and Add machine at the bottom of the sidebar
 import { View, div } from "gpui-kit";
 import { props } from "herdr";
 import { Band } from "./roles/band.js";
@@ -10,8 +11,9 @@ import { Quests } from "./roles/quests.js";
 import { PaneSign } from "./roles/pane.js";
 import { Report } from "./roles/report.js";
 import { Hero } from "./roles/hero.js";
+import { Footer } from "./roles/footer.js";
 
-const ROLES = { band: Band, hero: Hero, quests: Quests, pane: PaneSign, report: Report };
+const ROLES = { band: Band, hero: Hero, quests: Quests, pane: PaneSign, report: Report, footer: Footer };
 
 export default class Camp extends View {
   init(_p, cx) {
