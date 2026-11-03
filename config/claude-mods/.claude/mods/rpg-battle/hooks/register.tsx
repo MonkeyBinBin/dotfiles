@@ -120,7 +120,7 @@ const landingLabel = (Text: TextElement, said: LandingText) => (
 // Terminal rows open with a blank spacer row, so there the gutter starts one row down to meet the title.
 const gutterTop = (surface: string) => (surface === 'terminal' ? 1 : 0)
 
-// A critical hit bursts in pixel art beside its flash, where the terminal draws pictures: each skill its own element,
+// A critical hit bursts in pixel art beside its flash (as half-block cells where the terminal draws no pictures): each skill its own element,
 // pixelfx effects (https://github.com/patch-gg/pixelfx, MIT) baked by tools/bake-fx.mjs at one frame per tick.
 export const BURST_DAMAGE = CRIT_DAMAGE
 const BURSTS: ReadonlyArray<readonly [RegExp, string]> = [
@@ -135,35 +135,38 @@ const BURSTS: ReadonlyArray<readonly [RegExp, string]> = [
 const DEFAULT_BURST = 'crit-hit'
 export const burstOf = (tool: string): string => BURSTS.find(([pattern]) => pattern.test(tool))?.[1] ?? DEFAULT_BURST
 
-// A baked burst: every frame as PNG base64 and the cells it fills.
-export type Burst = { frames: string[]; columns: number; rows: number }
+// A baked burst: every frame as PNG base64, or where the terminal draws no pictures as half-block Raster cells
+// (raster-<C>x<R>.json beside the frames, the same size in cells), and the cells it fills.
+export type Burst = { kind: 'image' | 'cells'; frames: string[]; columns: number; rows: number }
 // Read once each: absent until read, null once a read failed (not tried again).
 const bursts = new Map<string, Burst | null>()
-// A terminal that draws the alt instead of the picture refuses its blit; later crits then go without.
+// A terminal that draws the alt instead of the picture refuses its blit; later crits then burst in cells.
 let canDrawBurst = true
 
-const loadBurst = async ($: EngineInterface, name: string): Promise<Burst | undefined> => {
-  if (!bursts.has(name)) {
-    const dir = `${$.plugin.root}/assets/fx/${name}`
-    const burst = await $.fs
-      .read(`${dir}/meta.json`)
-      .then(async text => {
-        const meta = JSON.parse(text) as { frames: number; cells: [number, number] }
-        const frames = await Promise.all(
-          Array.from({ length: meta.frames }, async (_, n) => (await $.fs.read(`${dir}/${n}.png`, { as: 'bytes' })).base64),
-        )
-        return { frames, columns: meta.cells[0], rows: meta.cells[1] }
-      })
-      .catch(() => null)
-    bursts.set(name, burst)
+const readBurst = async ($: EngineInterface, name: string, kind: Burst['kind']): Promise<Burst> => {
+  const dir = `${$.plugin.root}/assets/fx/${name}`
+  const meta = JSON.parse(await $.fs.read(`${dir}/meta.json`)) as { frames: number; cells: [number, number] }
+  const [columns, rows] = meta.cells
+  if (kind === 'cells') {
+    const raster = JSON.parse(await $.fs.read(`${dir}/raster-${columns}x${rows}.json`)) as { frames: string[] }
+    return { kind, frames: raster.frames, columns, rows }
   }
-  return bursts.get(name) ?? undefined
+  const frames = await Promise.all(
+    Array.from({ length: meta.frames }, async (_, n) => (await $.fs.read(`${dir}/${n}.png`, { as: 'bytes' })).base64),
+  )
+  return { kind, frames, columns, rows }
+}
+
+const loadBurst = async ($: EngineInterface, name: string, kind: Burst['kind'] = canDrawBurst ? 'image' : 'cells'): Promise<Burst | undefined> => {
+  const id = `${name}:${kind}`
+  if (!bursts.has(id)) bursts.set(id, await readBurst($, name, kind).catch(() => null))
+  return bursts.get(id) ?? undefined
 }
 
 const burstFrame = (burst: Burst, tick: number): string => burst.frames[Math.min(tick, burst.frames.length - 1)]!
 
 // Rows seen running, by tool_use_id: quiet while running, then their landing shown once, then done.
-type Cast = { tick: number; landing?: Landing; damage?: number; burst?: Burst }
+type Cast = { tick: number; landing?: Landing; damage?: number; burst?: Burst; burstName?: string }
 const casts = new Map<string, Cast>()
 const landed = new Set<string>()
 // When each running call was first seen, by tool_use_id: the channelling line counts from it.
@@ -207,15 +210,19 @@ async function paint($: EngineInterface) {
       }
       const burst = cast.burst
       if (burst === undefined) continue
+      const frame = burstFrame(burst, cast.tick)
       blits.push($.ui
-        .blit({ requestId: id, key: 'burst', source: { png: burstFrame(burst, cast.tick) } })
+        .blit(burst.kind === 'image' ? { requestId: id, key: 'burst', source: { png: frame } } : { requestId: id, key: 'burst-cells', cells: frame })
         .catch(() => ({ deny: 'blit failed' }))
-        .then(shown => {
+        .then(async shown => {
           if (shown.deny === undefined) return
           cast.burst = undefined
           // Refused on its first frames, while just drawn, the picture is the terminal's to refuse, not a row
-          // scrolled away: later crits go without.
-          if (cast.tick <= 2) canDrawBurst = false
+          // scrolled away: this crit and later ones burst in cells, drawn again in the picture's place.
+          if (burst.kind !== 'image' || cast.tick > 2) return
+          canDrawBurst = false
+          cast.burst = cast.burstName === undefined ? undefined : await loadBurst($, cast.burstName, 'cells')
+          if (cast.burst !== undefined) hasLanded = true
         }))
     }
     // Each channelling line ticks its seconds over; one whose call has landed (or that keeps being refused) stops.
@@ -331,17 +338,25 @@ export const register: Register = on => {
       cast.landing = landingOf(e.props)
       cast.damage = damageOf(e.props.output)
       cast.tick = 0
-      if (cast.landing === 'hit' && cast.damage >= BURST_DAMAGE && canDrawBurst) cast.burst = await loadBurst($, burstOf(e.props.tool))
+      if (cast.landing === 'hit' && cast.damage >= BURST_DAMAGE) {
+        cast.burstName = burstOf(e.props.tool)
+        cast.burst = await loadBurst($, cast.burstName)
+      }
     }
     if (cast?.landing !== undefined) ensureTicker($)
 
-    const { Box, Text, Image } = $.ui.resolve(e)
+    const { Box, Text, Image, Raster } = $.ui.resolve(e)
+    const burst = cast?.burst
     const bar = cast?.landing === undefined || !labelsLanding(cast.landing) ? null : (
       <Box flexDirection="row" marginLeft={2}>
         {landingLabel(Text, landingText(cast.landing, cast.damage))}
-        {cast.burst && (
+        {burst && (
           <Box marginLeft={1}>
-            <Image key="burst" source={{ png: burstFrame(cast.burst, cast.tick) }} columns={cast.burst.columns} rows={cast.burst.rows} alt=" " />
+            {burst.kind === 'image' ? (
+              <Image key="burst" source={{ png: burstFrame(burst, cast.tick) }} columns={burst.columns} rows={burst.rows} alt=" " />
+            ) : (
+              <Raster key="burst-cells" cells={burstFrame(burst, cast.tick)} columns={burst.columns} rows={burst.rows} />
+            )}
           </Box>
         )}
       </Box>

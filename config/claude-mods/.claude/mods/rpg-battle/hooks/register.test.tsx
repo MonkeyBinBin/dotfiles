@@ -137,6 +137,40 @@ test('a critical hit bursts beside its flash for as long as the burst plays, a p
   expect(await crit.findAll({ type: 'Image' })).toHaveLength(0)
 })
 
+test('a terminal that draws no pictures gets the crit in half-block cells, and later crits start in cells', async ($, on) => {
+  const clock = mock.clock(on)
+  const BURST_FRAMES = FLASH_TICKS + 4
+  const blank = btoa(String.fromCharCode(...new Uint8Array(new Uint32Array(Array.from({ length: 19 * 7 }, () => [0x20, 0x01000000, 0x01000000]).flat()).buffer)))
+  const asked: string[] = []
+  on('ui.render', { component: 'ToolUse' }, async ($$, e) => {
+    const { Text } = $$.ui.resolve(e)
+    return <Text>Bash(make)</Text>
+  })
+  on('ui.blit', async (_$, e) => ('source' in e ? { value: { deny: 'the Image draws its alt here: no placeholder images' } } : { value: {} }))
+  on('fs.read', async ($$, e) => {
+    asked.push(e.path)
+    if (e.path.endsWith('raster-19x7.json')) return { value: JSON.stringify({ columns: 19, rows: 7, frames: Array.from({ length: BURST_FRAMES }, () => blank) }) }
+    return { value: e.as === 'bytes' ? { base64: PIXEL } : JSON.stringify({ frames: BURST_FRAMES, cells: [19, 7] }) }
+  })
+  const land = async (id: string) => {
+    const row = { tool_use_id: id, tool: 'Bash', input: { command: 'make' }, isRunning: true, isErrored: false, isInterrupted: false }
+    const ui = await $.ui.mount({ plugin: 'rpg-battle', surface: 'terminal', component: 'ToolUse', props: row })
+    await ui.redraw({ ...row, isRunning: false, output: 'x'.repeat(BURST_DAMAGE) })
+    return ui
+  }
+  const first = await land('c1')
+  expect(await first.findAll({ type: 'Image' })).toHaveLength(1)
+  await clock.advance(80 * 2)
+  expect(await first.findAll({ type: 'Image' })).toHaveLength(0)
+  const cells = await first.findAll({ type: 'Raster' })
+  expect(cells.some(r => (r.key ?? r.props?.key) === 'burst-cells')).toBe(true)
+  expect(asked.some(path => path.endsWith('/assets/fx/meteor/raster-19x7.json'))).toBe(true)
+  // The next crit knows: it starts in cells.
+  const next = await land('c2')
+  expect(await next.findAll({ type: 'Image' })).toHaveLength(0)
+  expect((await next.findAll({ type: 'Raster' })).some(r => (r.key ?? r.props?.key) === 'burst-cells')).toBe(true)
+})
+
 test('a miss lands without a label of its own: its result already says MISS', async ($, on) => {
   on('ui.render', { component: 'ToolUse' }, async ($$, e) => {
     const { Text } = $$.ui.resolve(e)

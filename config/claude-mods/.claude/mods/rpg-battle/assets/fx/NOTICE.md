@@ -1,5 +1,7 @@
 Frames baked from pixelfx (https://github.com/patch-gg/pixelfx) by tools/bake-fx.mjs:
 crit-hit, meteor, mana-burst, thunderclap, ground-slam, smite, dark-explosion, frost-nova.
+Each also as half-block Raster cells (raster-<C>x<R>.json, by tools/raster-fx.mjs from those frames; crit-hit and
+thunderclap at --coverage 0.12) for terminals that draw no pictures.
 crit-hit, meteor, mana-burst, thunderclap, ground-slam and dark-explosion adapt Sprite Fusion's open-source pixel art VFX
 (https://www.spritefusion.com/pixel-art-vfx), Copyright (c) 2026 Hugo Duprez, MIT License.
 
