@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Bakes the camp's pixelfx effects into GIFs for the Herdr `camp` mod.
+// Bakes the pixelfx effects into GIFs and PNGs for the Herdr mods: the camp's (`camp`) and the sub's (`sub`).
 //
 //   node scripts/herdr-camp/bake.mjs            every asset
 //   node scripts/herdr-camp/bake.mjs campfire   only the named ones
@@ -7,7 +7,7 @@
 // Each asset: render the effect with pixelfx, crop it to a window in the effect's own coordinates (feet / base
 // at 0, 0), bake the band's ground under the feet (`ground`), optionally vignette a big glow round its source, composite it over the band's background colour (GIF has no partial alpha, so glow is baked in),
 // fade the edges into that colour so light never ends on a hard line, scale it up nearest-neighbour and encode
-// it with ffmpeg. The mod shows each GIF at half its size: on a 2x screen that's 1:1, and on a 1x screen the
+// it with ffmpeg. `alpha` keeps transparency instead (PNG, or a GIF with one transparent color). The mod shows each GIF at half its size: on a 2x screen that's 1:1, and on a 1x screen the
 // even downscale keeps the pixels crisp.
 //
 // pixelfx (https://github.com/patch-gg/pixelfx, MIT) is cloned to $PIXELFX_DIR (default ~/.cache/pixelfx);
@@ -21,7 +21,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, "../..");
-const OUT = join(REPO, "config/herdr-app/.config/herdr-app/mods/camp/assets");
+const MODS = join(REPO, "config/herdr-app/.config/herdr-app/mods");
+const outOf = (a) => join(MODS, a.mod ?? "camp", "assets");
 const PIXELFX = process.env.PIXELFX_DIR ?? join(homedir(), ".cache/pixelfx");
 
 // The default background (the band's: the camp theme's `canvas`), the upscale factor, the edge fade in native px.
@@ -37,11 +38,36 @@ const MONKEY = [-30, -56, 30, 4];
 const MERC = [-12, -24, 12, 4];
 const BLUE_FIRE = ["#0e1a4a", "#14307a", "#1f4fb8", "#2f7cf0", "#4fa8ff", "#7fd0ff", "#b8ecff", "#e6faff", "#ffffff"];
 
-// Nine-slice frame kits (camp/frame): corner PNGs plus each side's color profile, written to mods/camp/frames.js.
-const FRAME_KINDS = ["plaque", "note"];
+// Nine-slice frame kits: corner PNGs into the mod's assets, each side's color profile into the shared kit/frames.js.
+const FRAME_SETS = [
+  { fx: "camp/frame", mod: "camp", kinds: ["plaque", "note", "book"] },
+  { fx: "sub/frame", mod: "sub", kinds: ["brass", "steel", "bezel"] },
+];
+
+// The sub: everything sits on its own background (alpha), except the sea's opaque scenery strips and the hull.
+const sub = (fx, crop, extra = {}) => ({ fx, crop, mod: "sub", alpha: true, edge: 0, ...extra });
+const MINISUB = { claude: ["#a8502a", "#e8875a", "#ffb48a", "#ffe0c8"], codex: ["#5a5a6a", "#a8a8b8", "#d8d8e0", "#ffffff"], gemini: ["#3a50a8", "#6a90e8", "#a8c8ff", "#e0ecff"], other: ["#4a2a7a", "#8a5ad0", "#c0a0ff", "#ece0ff"] };
+const SUB_ASSETS = {
+  hull: { fx: "sub/hull", crop: [0, 0, 720, 450], mod: "sub", png: true, edge: 0 },
+  ...Object.fromEntries(["idle", "alarm", "happy", "sleep"].map((mood) => [`captain-${mood}`, sub("sub/captain", [-46, -66, 52, 4], { opts: { mood } })])),
+  ...Object.fromEntries(Object.entries(MINISUB).flatMap(([tool, palette]) => [
+    [`minisub-${tool}`, sub("sub/minisub", [-14, -12, 12, 8], { opts: { palette } })],
+    [`minisub-${tool}-loot`, sub("sub/minisub", [-14, -12, 12, 18], { opts: { palette, loot: true } })],
+  ])),
+  sonar: sub("sub/sonar", [-70, -70, 70, 70]),
+  ...Object.fromEntries(["blocked", "done", "working", "idle", "focus"].map((kind) => [`blip-${kind}`, sub("sub/blip", [-10, -10, 10, 10], { opts: { kind } })])),
+  ...Object.fromEntries(["blocked", "done", "working", "idle"].map((kind) => [`lamp-${kind}`, sub("sub/lamp", [-5, -5, 5, 5], { opts: { kind } })])),
+  "sea-sky": { fx: "sub/sea", crop: [0, 0, 176, 64], mod: "sub", edge: 0, opts: { kind: "sky" } },
+  "sea-surface": { fx: "sub/sea", crop: [0, 0, 176, 40], mod: "sub", edge: 0, opts: { kind: "surface" } },
+  "sea-seabed": { fx: "sub/sea", crop: [0, 0, 176, 30], mod: "sub", edge: 0, opts: { kind: "seabed" } },
+  fish: sub("sub/sea", [0, 0, 24, 16], { opts: { kind: "fish" } }),
+  jelly: sub("sub/sea", [0, 0, 20, 18], { opts: { kind: "jelly" } }),
+};
 
 export const ASSETS = {
   sky: { fx: "camp/sky", crop: [0, -270, 480, 0], png: true, edge: 0 },
+  // the adventure log's illustration: him cheering, drawn on the book's parchment
+  "log-portrait": { fx: "camp/monkey-happy", crop: [-30, -52, 30, 4], bg: "#efe0bc", edge: 0 },
   // the stage's signpost: blank boards the band writes the tally on (BOARDS in camp/signpost.js)
   signpost: { fx: "camp/signpost", crop: [-10, -56, 30, 4], ground: true, glow: [4, -42] },
   // the stage's top edge, tiled: pines against the sky (alpha)
@@ -73,6 +99,7 @@ export const ASSETS = {
   "merc-green": { fx: "camp/merc", crop: MERC, ground: true, opts: { palette: ["#1a5a36", "#2f9a5a", "#5ad08a", "#a8f0c4"] } },
   "merc-purple": { fx: "camp/merc", crop: MERC, ground: true, opts: { palette: ["#3c2a7a", "#6a4fc8", "#a98cff", "#d8ccff"] } },
   "merc-blue": { fx: "camp/merc", crop: MERC, ground: true, opts: { palette: ["#1d4a8a", "#2f7cd0", "#5cb6ff", "#b0e0ff"] } },
+  ...SUB_ASSETS,
 };
 
 function run(cmd, args, opts = {}) {
@@ -135,14 +162,19 @@ function bake(name, a) {
       return Buffer.from(upscale(out, w, h, SCALE).buffer);
     });
     if (a.png) {
-      const file = join(OUT, `${name}.png`);
+      const file = join(outOf(a), `${name}.png`);
       writeFileSync(file, encodePNG(w * SCALE, h * SCALE, new Uint8ClampedArray(frames[0].buffer, frames[0].byteOffset, frames[0].byteLength)));
       console.log(`${name.padEnd(14)}   1 frame   ${w}x${h} -> ${w * SCALE}x${h * SCALE}  ${(statSync(file).size / 1024).toFixed(0)} KB  ${relative(REPO, file)}`);
       return;
     }
-    const file = join(OUT, `${name}.gif`);
+    const file = join(outOf(a), `${name}.gif`);
+    // with alpha: one palette slot for transparency, and every frame whole (no diffing against the last one,
+    // which would leave stale pixels where a frame turns transparent)
+    const vf = a.alpha
+      ? "split[a][b];[a]palettegen=max_colors=255:reserve_transparent=1:stats_mode=full[p];[b][p]paletteuse=dither=none:alpha_threshold=128"
+      : "split[a][b];[a]palettegen=max_colors=255:stats_mode=full[p];[b][p]paletteuse=dither=none";
     run("ffmpeg", ["-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgba", "-s", `${w * SCALE}x${h * SCALE}`, "-r", String(r.fps), "-i", "-",
-      "-vf", "split[a][b];[a]palettegen=max_colors=255:stats_mode=full[p];[b][p]paletteuse=dither=none", "-loop", "0", file],
+      "-vf", vf, ...(a.alpha ? ["-gifflags", "-offsetting-transdiff"] : []), "-loop", "0", file],
       { input: Buffer.concat(frames) });
     console.log(`${name.padEnd(14)} ${String(r.n).padStart(3)} frames  ${w}x${h} -> ${w * SCALE}x${h * SCALE}  ${(statSync(file).size / 1024).toFixed(0)} KB  ${relative(REPO, file)}`);
   });
@@ -152,8 +184,10 @@ const hex8 = (rgba, i) => "#" + [0, 1, 2, 3].map((c) => rgba[i + c].toString(16)
 
 // One sample frame per kind, sliced: corners to PNG (with alpha), sides to color profiles in screen order.
 async function bakeFrames() {
-  const fx = await loadEffect("camp/frame"), kits = {};
-  for (const kind of FRAME_KINDS) {
+  const kits = {};
+  for (const set of FRAME_SETS) {
+  const fx = await loadEffect(set.fx), OUT = join(MODS, set.mod, "assets");
+  for (const kind of set.kinds) {
     const k = fx.mod.KINDS[kind], r = renderFrames(fx, { bg: "none", options: { kind }, actor: false });
     const px = r.frames[0].clear, W = r.w, H = r.h, { cx, cy } = k;
     const at = (x, y) => hex8(px, (y * W + x) * 4);
@@ -166,7 +200,7 @@ async function bakeFrames() {
       writeFileSync(join(OUT, `frame-${kind}-${n}.png`), corner(x0, y0));
     const mx = W >> 1, my = H >> 1, range = (a, n) => Array.from({ length: n }, (_, i) => a + i);
     kits[kind] = {
-      cx, cy, fill: k.fill,
+      art: `mods/${set.mod}/assets`, cx, cy, fill: k.fill,
       top: range(0, cy).map((y) => at(mx, y)),
       bottom: range(H - cy, cy).map((y) => at(mx, y)),
       left: range(0, cx).map((x) => at(x, my)),
@@ -174,14 +208,15 @@ async function bakeFrames() {
     };
     console.log(`frame-${kind.padEnd(8)} corners ${cx}x${cy} -> 4 PNGs, sides -> frames.js`);
   }
+  }
   writeFileSync(join(REPO, "config/herdr-app/kit/frames.js"),
-    "// Generated by scripts/herdr-camp/bake.mjs from the camp/frame effect: don't edit, re-bake.\n" +
-    "// Per kind: side thickness in native px (cx left/right, cy top/bottom), the fill, and each side's colors in\n" +
+    "// Generated by scripts/herdr-camp/bake.mjs from the camp/frame and sub/frame effects: don't edit, re-bake.\n" +
+    "// Per kind: where its corner PNGs are (art), side thickness in native px (cx left/right, cy top/bottom), the fill, and each side's colors in\n" +
     "// screen order (top: outside to inside, bottom: inside to outside, left: outside in, right: inside out).\n" +
     `export const FRAMES = ${JSON.stringify(kits, null, 2)};\n`);
 }
 
-mkdirSync(OUT, { recursive: true });
+for (const m of ["camp", "sub"]) mkdirSync(join(MODS, m, "assets"), { recursive: true });
 const pick = process.argv.slice(2);
 for (const [name, a] of Object.entries(ASSETS)) if (!pick.length || pick.includes(name)) await bake(name, a);
 if (!pick.length || pick.includes("frames")) await bakeFrames();

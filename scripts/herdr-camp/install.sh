@@ -14,7 +14,7 @@ for mod in "$SRC"/mods/*/; do
   name="$(basename "$mod")"
   # the kit also goes into the source copy (gitignored), so a Herdr still loading the mod from dotfiles (it
   # remembers where a once-symlinked mod really lived) and `herdr-app check` on the repo both resolve it
-  case "$name" in camp*) rsync -a --delete "$REPO/config/herdr-app/kit/" "$mod/kit/" ;; esac
+  case "$name" in camp*|sub*) rsync -a --delete "$REPO/config/herdr-app/kit/" "$mod/kit/" ;; esac
   if [ -L "$DEST/mods/$name" ]; then rm "$DEST/mods/$name"; fi
   rsync -a --delete --exclude gpui-kit.d.ts --exclude jsconfig.json "$mod" "$DEST/mods/$name/"
   echo "copied mods/$name"

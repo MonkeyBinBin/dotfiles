@@ -1,5 +1,5 @@
 # Herdr writes these into every mod folder
 gpui-kit.d.ts
 jsconfig.json
-# the shared kit, copied into each camp mod by scripts/herdr-camp/install.sh (source: config/herdr-app/kit)
+# the shared kit, copied into each camp and sub mod by scripts/herdr-camp/install.sh (source: config/herdr-app/kit)
 .config/herdr-app/mods/*/kit/

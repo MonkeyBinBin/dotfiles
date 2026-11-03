@@ -3,6 +3,7 @@
 // Kinds (`kind`):
 //   plaque  a wooden plaque: dark outline, beveled planks lit from the top left, an iron rivet in each corner
 //   note    a parchment note: a red pin in its top left corner, a dog-ear at the bottom right
+//   book    an open book's leather cover round its pages, brass protectors on the corners
 // The frame is drawn in local pixels from the top left (origin [0, 0]); every side has a fixed thickness
 // (cx at the left and right, cy at the top and bottom), and nothing along a side varies, so it can stretch.
 
@@ -32,12 +33,28 @@ export const KINDS = {
     rings: [[INK, INK], ...[["#c8955a", "#6a421e"], ["#a8743e", "#5a3520"], ["#8a5a34", "#4a2c14"], ["#6a421e", "#3b2416"]].map(([a, b]) => [hex(a), hex(b)]), [INK, INK]],
     rivet: true,
   },
+  book: {
+    cx: 7, cy: 7, fill: "#efe0bc",
+    rings: [[INK, INK], ...[["#9a4a2c", "#5a2214"], ["#7a3420", "#4a1c10"], ["#5a2416", "#3a140c"], ["#2a0e08", "#2a0e08"], ["#e6d4ac", "#c8b088"], ["#d8c49a", "#bca474"]].map(([a, b]) => [hex(a), hex(b)])],
+    brass: true,
+  },
   note: {
     cx: 5, cy: 5, fill: "#efe0bc",
     rings: [[hex("#5a3e22"), hex("#3e2a16")], [hex("#fff6dc"), hex("#c8b088")], [hex("#f6ead0"), hex("#dcc8a0")], [hex("#efe0bc"), hex("#efe0bc")], [hex("#efe0bc"), hex("#efe0bc")]],
     note: true,
   },
 };
+
+function brassCorners(p) {
+  // brass protectors folded over each corner of the cover: a lit edge, a darker face, a rivet
+  const BRASS = C("#5a3a0c", "#b8801c", "#e8b060", "#fff0b0");
+  for (const [sx, sy] of [[1, 1], [-1, 1], [1, -1], [-1, -1]]) {
+    const ox = sx > 0 ? 1 : W - 2, oy = sy > 0 ? 1 : H - 2;
+    for (let i = 0; i < 5; i++)
+      for (let j = 0; j < 5 - i; j++) p.px(ox + sx * i, oy + sy * j, BRASS[i === 0 || j === 0 ? 2 : i + j === 4 ? 0 : 1]);
+    p.px(ox + sx, oy + sy, BRASS[3]);
+  }
+}
 
 function noteExtras(p) {
   // the pin, in the top left corner: a red head with a highlight, its shadow down-right
@@ -76,4 +93,5 @@ export function draw(p, _t, o) {
   const k = KINDS[o.kind];
   ringFrame(p, k);
   if (k.note) noteExtras(p);
+  if (k.brass) brassCorners(p);
 }

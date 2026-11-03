@@ -14,6 +14,7 @@ const BG = "#151324", GRASS = "#3f6e40", SOIL = "#1d3a24", SIGN_INK = "#140c08",
 // a few stars over the band's sky (left %, top px, twinkle period ms); they sit where no GIF covers them
 const STARS = [[46, 14, 2300], [58, 30, 3100], [63, 10, 2700], [71, 40, 3600], [79, 18, 2000], [88, 34, 2900], [93, 8, 3300]];
 const HAPPY_MS = 3600;
+const LOG_MAX = 12;
 const TREE_H = 24; // the pine tiles: 12 native px
 const MAX_MERCS = 5;
 // GIFs are baked at 4x their pixels and shown at 2x, so 1:1 on a 2x screen.
@@ -36,15 +37,18 @@ export class Band {
 
   // Agents that just finished make him cheer; seeded on the first render so a restart doesn't.
   watch(list, cx) {
-    let finished = false;
+    const finished = [];
     for (const a of list) {
       const was = this.prev.get(a.address);
-      if (this.started && a.status === "done" && was && was !== "done") finished = true;
+      if (this.started && a.status === "done" && was && was !== "done") finished.push(a);
       this.prev.set(a.address, a.status);
     }
     this.started = true;
-    if (finished) {
-      setShared("camp.wins", (shared("camp.wins") ?? 0) + 1);
+    if (finished.length) {
+      setShared("camp.wins", (shared("camp.wins") ?? 0) + finished.length);
+      // the adventure log's chronicle: the latest quests home, kept across restarts
+      const entries = finished.map((a) => ({ title: a.title || a.program?.name || a.address, tool: a.program?.name ?? a.app ?? "agent", space: a.space_name, at: Date.now() }));
+      setShared("camp.log", [...entries, ...(shared("camp.log") ?? [])].slice(0, LOG_MAX));
       this.happyUntil = Date.now() + HAPPY_MS;
       cx.timer.after(HAPPY_MS + 50, (cx) => cx.notify());
     }
@@ -86,7 +90,7 @@ export class Band {
       .child(image(`${ART}/icon-${status}.gif`).size(16))
       .child(div().text_size(12).text_color(n ? SIGN_INK : SIGN_FAINT).child(String(n)));
     const signpost = div().id("signpost").relative().flex_shrink_0().w(px(40)).h(px(60))
-      .on_click(() => openOverlay({ mod: "camp", kind: "dialog", width: 400, height: 460, frame: "none", props: { role: "report" } }))
+      .on_click(() => openOverlay({ mod: "camp", kind: "dialog", width: 680, height: 460, frame: "none", props: { role: "report" } }))
       .child(image(`${ART}/signpost.gif`).w(px(40)).h(px(60)))
       .child(board(-42, "blocked", blocked.length))
       .child(board(-31, "done", done.length))

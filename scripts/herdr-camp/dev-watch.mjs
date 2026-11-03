@@ -37,8 +37,8 @@ const links = new Set(), mods = new Set();
 let timer = null;
 
 function copyMod(name) {
-  // the shared camp kit goes into every camp mod (mods can't import across folders), the source copy too
-  if (name.startsWith("camp")) spawnSync("rsync", ["-a", "--delete", kit + "/", join(pkg, "mods", name, "kit") + "/"], { stdio: "inherit" });
+  // the shared kit goes into every camp and sub mod (mods can't import across folders), the source copy too
+  if (/^(camp|sub)/.test(name)) spawnSync("rsync", ["-a", "--delete", kit + "/", join(pkg, "mods", name, "kit") + "/"], { stdio: "inherit" });
   const r = spawnSync("rsync", ["-a", "--delete", "--exclude", "gpui-kit.d.ts", "--exclude", "jsconfig.json",
     join(pkg, "mods", name) + "/", join(home, "mods", name) + "/"], { stdio: "inherit" });
   console.log(r.status === 0 ? `copied mods/${name}` : `rsync failed for mods/${name}`);
@@ -47,7 +47,7 @@ function copyMod(name) {
 // a kit change reaches every camp mod
 watch(kit, (_event, file) => {
   if (!file || file.startsWith(".")) return;
-  const camp = spawnSync("ls", [join(pkg, "mods")], { encoding: "utf8" }).stdout.split("\n").filter((n) => n.startsWith("camp"));
+  const camp = spawnSync("ls", [join(pkg, "mods")], { encoding: "utf8" }).stdout.split("\n").filter((n) => /^(camp|sub)/.test(n));
   for (const m of camp) mods.add(m);
   clearTimeout(timer);
   timer = setTimeout(flush, 150);

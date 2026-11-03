@@ -1,0 +1,89 @@
+{
+  "id": "root",
+  "type": "column",
+  "theme": "sub",
+  "ui_font": "Cubic 11",
+  "preview": "layouts/sub.svg",
+  "titlebar": "none",
+  "traffic_lights": [22, 24],
+  "background": { "image": "mods/sub/assets/hull.png", "fit": "cover" },
+  "terminal_padding": [14, 12],
+  "padding": [0, 12],
+  "children": [
+    {
+      "id": "topbar",
+      "type": "block",
+      "size": { "px": 48 },
+      "window_drag": true,
+      "content": { "mod": "sub-tabs" }
+    },
+    {
+      "id": "middle",
+      "type": "row",
+      "gap": 8,
+      "resizable": false,
+      "children": [
+        {
+          "id": "main",
+          "type": "block",
+          "content": {
+            "tab": "active",
+            "pane": {
+              "gap": 8,
+              "radius": 16,
+              "background": "background",
+              "lone": true,
+              "border": { "width": 4, "color": "#4a6a6c" },
+              "focus": { "width": 4, "color": "#c89c48" },
+              "header": {
+                "content": { "mod": "sub", "props": { "role": "pane" } },
+                "height": 32,
+                "position": "top",
+                "reveal": "always"
+              }
+            }
+          }
+        },
+        {
+          "id": "panel",
+          "type": "column",
+          "hidden": true,
+          "size": { "px": 368 },
+          "min": 280,
+          "max": 900,
+          "border": { "width": 4, "color": "#4a6a6c" },
+          "radius": 16,
+          "children": [
+            {
+              "id": "panel-body",
+              "type": "stack",
+              "active": "files",
+              "children": [
+                { "id": "files", "type": "block", "content": { "mod": "files" } },
+                { "id": "changes", "type": "block", "content": { "mod": "changes" } }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "helm",
+          "type": "column",
+          "size": { "px": 388 },
+          "gap": 8,
+          "resizable": false,
+          "children": [
+            { "id": "sea", "type": "block", "content": { "mod": "sub", "props": { "role": "sea" } } },
+            { "id": "sonar", "type": "block", "size": { "px": 296 }, "content": { "mod": "sub", "props": { "role": "sonar" } } }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "deck",
+      "type": "block",
+      "size": { "px": 48 },
+      "window_drag": true,
+      "content": { "mod": "sub", "props": { "role": "deck" } }
+    }
+  ]
+}
