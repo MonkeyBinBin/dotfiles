@@ -40,6 +40,8 @@ import { renderEditCard } from './edit-card'
 import type { EditOutput } from './edit-card'
 import { CALLS_PER_LEVEL, DAMAGE_MS, HEARTS, LOW_MANA, STATUS_ROWS, XP_FLASH_MS, XP_FULL_MS, heroStats, manaLeft, normalizeCall, panelDuel, renderStatus, statusLayout } from './hero'
 import { PORTRAIT_BUSTS, PORTRAIT_FRAMES } from './portrait-cells'
+import { decorateBust } from './bust-fx'
+import type { BustAura } from './bust-fx'
 import { CLASS_IDS, classOf, isClassId, rankOf, rollClass } from './classes'
 import { mapItems, mapSubtitle } from './map'
 import { RAINBOW_MS, phaseOf, weatherOf } from './overworld'
@@ -60,7 +62,7 @@ import { ARENA_RASTERS, burstFrame, burstMs, isPlaying, loadBurst, loadRasterBur
 import type { Burst, BurstName } from './fx'
 import { gaugeCells, glowCells } from './gauge'
 import { HEX, RGB, rampRgb } from './palette'
-import { AURA_COLUMNS, auraFrames, auraTier, fadingAura } from './aura'
+import { AURA_COLUMNS, AURA_FRAMES, auraFrames, auraTier, fadingAura } from './aura'
 import { REST_MS } from './rest'
 import { EMPTY_LOOT, KEPT_CLAIMED, KEPT_UNCLAIMED, claimLoot, forge, lootText } from './loot'
 import type { Loot, TurnLoot } from './loot'
@@ -659,9 +661,9 @@ const stop = () => {
 const frameOf = <T,>(frames: readonly T[], mood: Mood, tick: number): T => frames[Math.floor(tick / FRAME_TICKS[mood]) % frames.length]!
 
 // A class with a portrait shows its bust where the terminal draws cells instead of the picture.
-const heroCells = (mood: Mood, tick: number, hero: HeroClassId): string => {
+const heroCells = (mood: Mood, tick: number, hero: HeroClassId, aura?: BustAura): string => {
   const busts = PORTRAIT_BUSTS[hero]
-  return busts === undefined ? pickFrame(mood, tick, hero) : frameOf(busts[mood], mood, tick)
+  return busts === undefined ? pickFrame(mood, tick, hero) : decorateBust(frameOf(busts[mood], mood, tick), hero, mood, tick, busts.idle[0]!, aura)
 }
 
 // Whether the terminal draws an Image: unknown until a blit to the drawn portrait answers. One that draws
@@ -748,7 +750,11 @@ async function paintHero($: EngineInterface) {
     anim.shownPng = png
     return true
   }
-  const cells = heroCells(anim.mood, anim.moodTick, anim.heroClass)
+  // A broken combo's fire dies down over the strip's fade.
+  const fire = anim.bustAura
+  const kept = fire?.outAt === undefined ? 1 : 1 - (now - fire.outAt) / AURA_OUT_MS
+  const aura = fire === undefined || kept <= 0 ? undefined : { tier: fire.tier, tick: anim.tick, kept }
+  const cells = heroCells(anim.mood, anim.moodTick, anim.heroClass, aura)
   if (cells === anim.shownCells) return true
   if (!(await blit($, 'hero', cells, HERO_CELLS.columns, HERO_CELLS.rows))) return false
   anim.shownCells = cells
@@ -809,6 +815,9 @@ async function paintBoss($: EngineInterface) {
     monster.shown = cells
   } else anim.boss = undefined
 }
+
+// A broken combo's fire round the bust dies down over the same time the strip's sparks fade.
+const AURA_OUT_MS = FRAME_MS * AURA_FRAMES
 
 // The combo's aura: its sparks climb a step each tick.
 async function paintAura($: EngineInterface) {
@@ -1964,7 +1973,19 @@ export const register: Register = on => {
       : undefined
     const brokenTier = comboMoment === 'break' && lastCombo !== null ? auraTier(lastCombo.from) : 0
     let aura: { node: RenderChildren; tier: 1 | 2 } | undefined
-    if (tier === 0 && brokenTier > 0 && !isDown && foe === undefined && Raster !== undefined) {
+    // A bust in cells burns the aura round itself; a picture or a drawing keeps the strip beside it.
+    const burnsBust = Raster !== undefined && portrait === undefined && PORTRAIT_BUSTS[hero.id] !== undefined && fadeCells === undefined
+    if (burnsBust) {
+      anim.aura = undefined
+      anim.sprites.delete('aura')
+      const lit = isDown || foe !== undefined ? 0 : tier > 0 ? tier : brokenTier
+      if (lit === 0) anim.bustAura = undefined
+      else {
+        const outAt = tier === 0 ? lastCombo!.at : undefined
+        if (anim.bustAura?.tier !== lit || anim.bustAura.outAt !== outAt) anim.bustAura = { tier: lit as 1 | 2, ...(outAt === undefined ? {} : { outAt }) }
+        aura = { tier: lit as 1 | 2, node: undefined }
+      }
+    } else if (tier === 0 && brokenTier > 0 && !isDown && foe === undefined && Raster !== undefined) {
       anim.aura = undefined
       const cells = playSprite('aura', fadingAura(brokenTier as 1 | 2, HERO_CELLS.rows).map(composeColors), FRAME_MS, AURA_COLUMNS, HERO_CELLS.rows, lastCombo!.at, now)
       aura = { tier: brokenTier as 1 | 2, node: <Raster key="aura" columns={AURA_COLUMNS} rows={HERO_CELLS.rows} cells={cells} /> }
@@ -1982,6 +2003,7 @@ export const register: Register = on => {
     } else {
       anim.aura = undefined
     }
+    if (!burnsBust) anim.bustAura = undefined
     if (aura === undefined || tier > 0) anim.sprites.delete('aura')
     // A lost heart's flash and the -1 climbing beside the portrait.
     const lastHurt = await read($, hpFx)

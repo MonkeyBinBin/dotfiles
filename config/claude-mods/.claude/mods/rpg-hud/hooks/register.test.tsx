@@ -31,6 +31,7 @@ import { pageItems, scrolledOffset, tabbedTop } from './window'
 import { CLASSES, CLASS_IDS, rankOf, rollClass } from './classes'
 import { HERO_CLASS_FRAMES, HERO_SIZE as HERO_CELLS_SIZE } from './hero-cells'
 import { PORTRAIT_BUSTS } from './portrait-cells'
+import { QUIET_TICKS, decorateBust } from './bust-fx'
 import { cellsToPixels, gridToPixels, spriteSvg } from './svg'
 import { blendCells, composeSprite } from './util'
 import { HEX, RGB, STATUS_MARKS, TIERS } from './palette'
@@ -660,7 +661,7 @@ test('background pets stand on the arena\'s left, and one just back throws a sho
   expect(shot.grids[6]?.palette.X).toBe(0xffffff)
 })
 
-test('a combo of ten burns a gold aura beside the portrait, of twenty every colour, and a fizzle puts it out', async ($, on) => {
+test('a combo of ten burns a gold aura round the portrait, of twenty every colour, and a fizzle puts it out', async ($, on) => {
   expect(auraTier(9)).toBe(0)
   expect(auraTier(10)).toBe(1)
   expect(auraTier(20)).toBe(2)
@@ -675,16 +676,25 @@ test('a combo of ten burns a gold aura beside the portrait, of twenty every colo
 
   let failing = false
   const { clock } = world(on, { tool: e => (failing && e.tool === 'Bash' ? fail('boom') : undefined) })
+  const heroBlits: string[] = []
+  on('ui.blit', async (_$, e) => {
+    if ('cells' in e && e.key === 'hero') heroBlits.push(e.cells)
+    return { value: {} }
+  })
   for (let n = 0; n < 10; n += 1) await $.tool.call({ tool: 'Read', file_path: `/x/${n}.md` })
   const ui = await mountPane($, 'terminal')
-  expect((await ui.findAll({ type: 'Raster' })).some(raster => raster.key === 'aura')).toBe(true)
+  // Where the bust is drawn in cells the aura burns round it, not in a strip beside it.
+  expect((await ui.findAll({ type: 'Raster' })).some(raster => raster.key === 'aura')).toBe(false)
+  const bust = PORTRAIT_BUSTS.wizard!
+  const opaque = (cells: string) => cellsToPixels(cells, HERO_CELLS_SIZE.columns, HERO_CELLS_SIZE.rows).flat().filter(Boolean).length
+  await clock.advance(300)
+  expect(opaque(heroBlits.at(-1)!)).toBeGreaterThan(opaque(bust.idle[0]!) + 20)
   failing = true
   await $.tool.call({ tool: 'Bash', command: 'boom' })
-  // Broken, the aura fades out under a BREAK rather than vanishing, then it is gone.
-  expect((await ui.findAll({ type: 'Raster' })).some(raster => raster.key === 'aura')).toBe(true)
+  // Broken, the fire dies down under a BREAK rather than vanishing, then it is gone.
   expect((await texts(ui)).join('|')).toContain('BREAK')
   await clock.advance(COMBO_BREAK_MS + 10)
-  expect((await ui.findAll({ type: 'Raster' })).some(raster => raster.key === 'aura')).toBe(false)
+  expect([...bust.idle, ...bust.hurt]).toContain(heroBlits.at(-1))
   expect((await texts(ui)).join('|')).not.toContain('BREAK')
 })
 
@@ -2733,6 +2743,34 @@ test('a portrait bust only moves between frames: the figure never changes its lo
       const rest = pixels(cells)
       still.forEach((row, y) => row.forEach((color, x) => color !== undefined && expect(rest[y]?.[x]).toBe(color)))
     }
+  }
+})
+
+test('a bust blinks, glints and burns its outline over its own frames, and rests untouched at first', () => {
+  const pixels = (cells: string) => cellsToPixels(cells, HERO_CELLS_SIZE.columns, HERO_CELLS_SIZE.rows)
+  const changed = (a: string, b: string) => {
+    const [pa, pb] = [pixels(a), pixels(b)]
+    return pa.flatMap((row, y) => row.flatMap((color, x) => (color === pb[y]![x] ? [] : [[x, y] as const])))
+  }
+  for (const [id, moods] of Object.entries(PORTRAIT_BUSTS)) {
+    const hero = id as keyof typeof PORTRAIT_BUSTS
+    const still = moods!.idle[0]!
+    // The first ticks of a mood leave the frame as it is: a smoke puff starts on its own first frame, and the
+    // hero settles back on a bare idle frame.
+    for (let tick = 0; tick < QUIET_TICKS; tick += 1) expect(decorateBust(still, hero, 'idle', tick, still)).toBe(still)
+    expect(decorateBust(moods!.hurt[0]!, hero, 'hurt', 0, still)).toBe(moods!.hurt[0])
+    // A blink closes the eyes alone, on a floating frame as on one at rest.
+    for (const frame of [still, moods!.idle[1]!]) {
+      const blink = changed(frame, decorateBust(frame, hero, 'idle', 17, still))
+      expect([hero, blink.length > 0 && blink.length <= 4, blink.every(([x, y]) => x >= 6 && x <= 13 && y >= 9 && y <= 14)]).toEqual([hero, true, true])
+    }
+    // Casting, the outline takes the class's colours; inside it only the eyes brighten.
+    const cast = moods!.cast[0]!
+    const lit = changed(cast, decorateBust(cast, hero, 'cast', 0, still))
+    expect([hero, lit.filter(([x, y]) => pixels(cast)[y]![x] === '#ffffff').length > 20]).toEqual([hero, true])
+    // Hurt, it shakes a column aside.
+    const hurt = moods!.hurt[1]!
+    expect(pixels(decorateBust(hurt, hero, 'hurt', 1, still))[10]!.slice(0, 19)).toEqual(pixels(hurt)[10]!.slice(1, 20))
   }
 })
 

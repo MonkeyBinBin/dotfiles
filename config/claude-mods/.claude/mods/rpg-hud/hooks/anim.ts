@@ -56,6 +56,9 @@ export const anim = {
   // The encounter card's monster while on screen: the frames of the moment it plays, from the tick it began.
   // The combo's aura beside the portrait, while one burns.
   aura: undefined as { frames: string[]; shown: string } | undefined,
+  // The combo's aura as fire round the bust, where the portrait is drawn in cells: its tier, and the moment
+  // (ms) a broken combo began to put it out.
+  bustAura: undefined as { tier: 1 | 2; outAt?: number } | undefined,
   // `base` is the monster's frame last painted, `shown` what is on screen: the base with any arena burst laid on.
   boss: undefined as { key: string; frames: string[]; ticks: number; loop: boolean; columns: number; rows: number; start: number; base: string; shown: string } | undefined,
   // A burst over the arena as half-block cells, where the terminal draws no pictures: laid onto the monster's
