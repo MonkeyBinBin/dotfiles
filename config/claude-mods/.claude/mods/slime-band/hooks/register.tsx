@@ -5,6 +5,8 @@ import type { BandInfo, ContextInfo } from '../types'
 import { layoutGauge, manaLevel } from './context-bar'
 import { TUBE_ROWS, TUBE_TICKS, groundPixels, groundSvg } from './mana-tube'
 import type { ContextGauge } from './context-bar'
+import { HERO_WIDTH, heroAt, heroOf } from './hero-sprite'
+import type { HeroPose, HeroSprite } from './hero-sprite'
 import { SLIME_FRAMES, SLIME_PALETTE, SLIME_ROWS, SLIME_WIDTH } from './slime-sprite'
 import type { SlimePose } from './slime-sprite'
 import { dropIn, formatTokens, glintAt, glintLine, layoutHud, mixToward, rollValue } from './hud'
@@ -263,7 +265,8 @@ const slime = {
   roll: undefined as { from: Map<string, string>; tick: number } | undefined,
   // While a banner shows: which one, the tick it arrived (its letters drop in, then a glint sweeps them) and its burst.
   banner: undefined as { key: string; tick: number } | undefined,
-  burst: undefined as { key: string; burst: Burst; tick: number } | undefined,
+  // In cells, laid onto the track at (left, top) of its own rows.
+  burst: undefined as { key: string; name: string; burst: Burst; tick: number; left: number; top: number; hero: HeroSprite } | undefined,
   // The banner whose burst has played, so a redraw within it does not play it again.
   burstPlayed: '',
   // Draws the band again once the banner's moment passes.
@@ -326,8 +329,9 @@ const hudFrame = (): HudPixel[] => {
 // A rolling number's glow toward white as it starts.
 const ROLL_GLOW = 0.6
 
-// A big moment's burst: a pixelfx effect baked into frames under assets/fx/<name>/ (see assets/fx/NOTICE.md).
-type Burst = { frames: string[]; columns: number; rows: number }
+// A big moment's burst: a pixelfx effect baked into frames under assets/fx/<name>/ (see assets/fx/NOTICE.md), as
+// pictures, or where the terminal draws none as half-block cells (raster-<C>x<R>.json) laid onto the track's.
+type Burst = { kind: 'image' | 'cells'; frames: string[]; columns: number; rows: number }
 const BURSTS: Readonly<Record<string, string>> = {
   'LEVEL UP!': 'level-up',
   'VICTORY!': 'confetti',
@@ -337,25 +341,179 @@ const BURSTS: Readonly<Record<string, string>> = {
 export const burstOf = (banner: Banner): string | undefined => BURSTS[banner.word]
 // Read once each: absent until read, null once a read failed (not tried again).
 const bursts = new Map<string, Burst | null>()
-// A terminal that draws the alt instead of the picture refuses its blit; later banners then go without.
+// A terminal that draws the alt instead of the picture refuses its blit; later banners then burst in cells.
 let canDrawBurst = true
 
-const loadBurst = async ($: EngineInterface, name: string): Promise<Burst | undefined> => {
-  if (!bursts.has(name)) {
-    const dir = `${$.plugin.root}/assets/fx/${name}`
-    const burst = await $.fs
-      .read(`${dir}/meta.json`)
-      .then(async text => {
-        const meta = JSON.parse(text) as { frames: number; cells: [number, number] }
-        const frames = await Promise.all(
-          Array.from({ length: meta.frames }, async (_, n) => (await $.fs.read(`${dir}/${n}.png`, { as: 'bytes' })).base64),
-        )
-        return { frames, columns: meta.cells[0], rows: meta.cells[1] }
-      })
-      .catch(() => null)
-    bursts.set(name, burst)
+const readBurst = async ($: EngineInterface, name: string, kind: Burst['kind']): Promise<Burst> => {
+  const dir = `${$.plugin.root}/assets/fx/${name}`
+  const meta = JSON.parse(await $.fs.read(`${dir}/meta.json`)) as { frames: number; cells: [number, number] }
+  const [columns, rows] = meta.cells
+  if (kind === 'cells') {
+    const raster = JSON.parse(await $.fs.read(`${dir}/raster-${columns}x${rows}.json`)) as { frames: string[] }
+    return { kind, frames: raster.frames, columns, rows }
   }
-  return bursts.get(name) ?? undefined
+  const frames = await Promise.all(
+    Array.from({ length: meta.frames }, async (_, n) => (await $.fs.read(`${dir}/${n}.png`, { as: 'bytes' })).base64),
+  )
+  return { kind, frames, columns, rows }
+}
+
+const loadBurst = async ($: EngineInterface, name: string, kind: Burst['kind'] = canDrawBurst ? 'image' : 'cells'): Promise<Burst | undefined> => {
+  const id = `${name}:${kind}`
+  if (!bursts.has(id)) bursts.set(id, await readBurst($, name, kind).catch(() => null))
+  return bursts.get(id) ?? undefined
+}
+
+const toWords = (cells: string): Uint32Array => {
+  const bytes = Uint8Array.from(atob(cells), ch => ch.charCodeAt(0))
+  return new Uint32Array(bytes.buffer, 0, Math.floor(bytes.length / 4))
+}
+
+const fromWords = (words: Uint32Array): string => {
+  const bytes = new Uint8Array(words.buffer, words.byteOffset, words.length * 4)
+  let text = ''
+  for (let at = 0; at < bytes.length; at += 0x8000) text += String.fromCharCode(...bytes.subarray(at, at + 0x8000))
+  return btoa(text)
+}
+
+// A half-block cell's two pixels, top then bottom (undefined: the default background); other glyphs do not split.
+const halves = (cell: ArrayLike<number>): [number | undefined, number | undefined] | undefined => {
+  const color = (rgb: number) => (rgb === DEFAULT_COLOR ? undefined : rgb)
+  if (cell[0] === SPACE) return [color(cell[2]!), color(cell[2]!)]
+  if (cell[0] === UPPER_HALF) return [color(cell[1]!), color(cell[2]!)]
+  if (cell[0] === LOWER_HALF) return [color(cell[2]!), color(cell[1]!)]
+  return undefined
+}
+
+// `over` (overColumns wide) laid onto `base` (columns wide) from (left, top): a half `over` leaves empty shows the
+// base's, a blank cell keeps the base's whole, and what falls outside the base is cut.
+export const overlayCells = (base: string, columns: number, over: string, overColumns: number, left: number, top: number): string => {
+  const out = toWords(base).slice()
+  const rows = out.length / 3 / columns
+  const layer = toWords(over)
+  const overRows = layer.length / 3 / overColumns
+  for (let y = 0; y < overRows; y += 1)
+    for (let x = 0; x < overColumns; x += 1) {
+      const from = (y * overColumns + x) * 3
+      if (layer[from] === SPACE && layer[from + 2] === DEFAULT_COLOR) continue
+      const bx = left + x, by = top + y
+      if (bx < 0 || by < 0 || bx >= columns || by >= rows) continue
+      const to = (by * columns + bx) * 3
+      const a = halves(layer.subarray(from, from + 3)), b = halves(out.subarray(to, to + 3))
+      if (a === undefined || b === undefined) {
+        out.set(layer.subarray(from, from + 3), to)
+        continue
+      }
+      const upper = a[0] ?? b[0], lower = a[1] ?? b[1]
+      out.set(
+        upper === undefined && lower === undefined ? [SPACE, DEFAULT_COLOR, DEFAULT_COLOR]
+        : upper === undefined ? [LOWER_HALF, lower!, DEFAULT_COLOR]
+        : [UPPER_HALF, upper, lower ?? DEFAULT_COLOR],
+        to,
+      )
+    }
+  return fromWords(out)
+}
+
+// A burst in cells plays for at least this many ticks, each frame held longer when it has few: at two pixels a row
+// a half-second burst is gone before it is seen.
+export const MIN_CELL_TICKS = 12
+export const holdTicks = (burst: Pick<Burst, 'kind' | 'frames'>): number =>
+  burst.kind === 'cells' ? Math.max(1, Math.ceil(MIN_CELL_TICKS / burst.frames.length)) : 1
+
+// A level up in cells keeps its hero cheering in the last of the light this many ticks after the pillar has played,
+// still inside the banner's 2.5 s.
+export const HERO_LINGER_TICKS = 12
+// Every this many ticks of the linger the hero glints gold again.
+const HERO_GLINT_TICKS = 4
+
+const lingers = (burst: { name: string; burst: Pick<Burst, 'kind'> }): boolean => burst.name === 'level-up' && burst.burst.kind === 'cells'
+
+// How many ticks the burst plays in all: its frames, held, then any linger.
+export const burstTicks = (burst: { name: string; burst: Pick<Burst, 'kind' | 'frames'> }): number =>
+  burst.burst.frames.length * holdTicks(burst.burst) + (lingers(burst) ? HERO_LINGER_TICKS : 0)
+
+// Which frame the burst is on now, or the frames' length once it has played through (linger included).
+const burstFrameAt = (burst: NonNullable<typeof slime.burst>): number => {
+  const elapsed = slime.tick - burst.tick
+  if (elapsed >= burstTicks(burst)) return burst.burst.frames.length
+  return Math.min(Math.floor(elapsed / holdTicks(burst.burst)), burst.burst.frames.length - 1)
+}
+
+const HERO_GLOW = 0xfff3b0
+// How much of the pillar's colour the hero takes where the light passes over him.
+const LIT = 0.45
+
+const mixRgb = (a: number, b: number, k: number): number => {
+  const ch = (shift: number) => Math.round(((a >> shift) & 0xff) * (1 - k) + ((b >> shift) & 0xff) * k) << shift
+  return ch(16) | ch(8) | ch(0)
+}
+
+// Packed half-block cells as a pixel grid, two rows a cell (undefined: the default background); a cell of another
+// glyph counts as empty.
+const cellPixels = (cells: string, columns: number): (number | undefined)[][] => {
+  const words = toWords(cells)
+  const rows = words.length / 3 / columns
+  const grid = Array.from({ length: rows * 2 }, () => Array<number | undefined>(columns).fill(undefined))
+  for (let row = 0; row < rows; row += 1)
+    for (let x = 0; x < columns; x += 1) {
+      const pair = halves(words.subarray((row * columns + x) * 3, (row * columns + x) * 3 + 3))
+      if (pair === undefined) continue
+      grid[row * 2]![x] = pair[0]
+      grid[row * 2 + 1]![x] = pair[1]
+    }
+  return grid
+}
+
+// A pixel grid as packed half-block cells.
+const gridCells = (grid: readonly (readonly (number | undefined)[])[]): string => {
+  const columns = grid[0]?.length ?? 0
+  const rows = Math.ceil(grid.length / 2)
+  const words = new Uint32Array(columns * rows * 3)
+  for (let row = 0; row < rows; row += 1)
+    for (let x = 0; x < columns; x += 1) {
+      const top = grid[row * 2]?.[x], bottom = grid[row * 2 + 1]?.[x]
+      words.set(
+        top === undefined && bottom === undefined ? [SPACE, DEFAULT_COLOR, DEFAULT_COLOR]
+        : top === undefined ? [LOWER_HALF, bottom!, DEFAULT_COLOR]
+        : [UPPER_HALF, top, bottom ?? DEFAULT_COLOR],
+        (row * columns + x) * 3,
+      )
+    }
+  return fromWords(words)
+}
+
+// The level up's frame with its hero standing in the light: his pixels over the pillar's, tinted by the light
+// where it passes over him and `glow` of the way to gold at the peak.
+export const heroInLight = (light: string, columns: number, hero: HeroSprite, pose: HeroPose, glow: number): string => {
+  const grid = cellPixels(light, columns)
+  const sprite = hero.frames[pose]
+  const left = Math.floor((columns - HERO_WIDTH) / 2)
+  const top = grid.length - sprite.length
+  sprite.forEach((line, y) =>
+    [...line].forEach((key, x) => {
+      const own = hero.palette[key]
+      const row = grid[top + y]
+      if (own === undefined || row === undefined || left + x < 0 || left + x >= columns) return
+      const beam = row[left + x]
+      const lit = beam === undefined ? own : mixRgb(own, beam, LIT)
+      row[left + x] = glow > 0 ? mixRgb(lit, HERO_GLOW, glow) : lit
+    }),
+  )
+  return gridCells(grid)
+}
+
+// The track's cells with the burst's frame `at` (the last held) laid on; a level up in cells brings its hero, who
+// stands in the pillar of light.
+const withBurst = (track: string, burst: NonNullable<typeof slime.burst>, at: number): string => {
+  const frame = Math.max(0, Math.min(at, burst.burst.frames.length - 1))
+  const moment = burst.name === 'level-up' ? heroAt(frame, burst.burst.frames.length) : undefined
+  const light = burst.burst.frames[frame]!
+  // Past the pillar he keeps cheering, glinting now and then.
+  const lingered = slime.tick - burst.tick - burst.burst.frames.length * holdTicks(burst.burst)
+  const glint = lingered >= 0 && lingered % HERO_GLINT_TICKS === 0 ? 0.45 : 0
+  const drawn = moment === undefined ? light : heroInLight(light, burst.burst.columns, burst.hero, moment.pose, Math.max(moment.glow, glint))
+  return overlayCells(track, slime.trackWidth, drawn, burst.burst.columns, burst.left, burst.top)
 }
 
 // The burst stands on the grass just left of the banner's letters; the slime keeps clear of it, with this much
@@ -393,7 +551,7 @@ async function paint($: EngineInterface) {
   const danger = slime.isManaCritical && blinks % 2 === 1
   const landing = casting === undefined && pose === 'run3' ? hopAt(slime.tick).step : undefined
   const ground = slime.mana === undefined ? undefined : groundPixels(slime.mana, slime.trackWidth, slime.tick, slime.isWorking)
-  const cells = composeTrack(
+  let cells = composeTrack(
     slime.trackWidth,
     {
       x: slime.x,
@@ -412,23 +570,32 @@ async function paint($: EngineInterface) {
     ground,
   )
   const burst = slime.burst
-  const burstAt = burst === undefined ? undefined : slime.tick - burst.tick
+  const burstAt = burst === undefined ? undefined : burstFrameAt(burst)
   // Played out, the burst leaves the band: a redraw takes its picture away and gives the slime its room back.
   if (burst !== undefined && burstAt !== undefined && burstAt >= burst.burst.frames.length) {
     slime.burst = undefined
     $.ui.invalidate('ui.render')
   }
+  const isPlaying = burst !== undefined && burstAt !== undefined && burstAt < burst.burst.frames.length
+  // In cells the burst is part of the track; as a picture it is swapped beside it.
+  if (isPlaying && burst.burst.kind === 'cells') cells = withBurst(cells, burst, burstAt)
   const burstBlit =
-    burst === undefined || burstAt === undefined || burstAt >= burst.burst.frames.length
+    !isPlaying || burst.burst.kind !== 'image'
       ? undefined
       : $.ui
           .blit({ requestId: slime.requestId, key: 'burst', source: { png: burst.burst.frames[burstAt]! } })
           .catch(() => ({ deny: 'blit failed' }))
-          .then(shown => {
+          .then(async shown => {
             if (shown.deny === undefined || slime.burst !== burst) return
             slime.burst = undefined
-            // Refused on its first frames the picture is the terminal's to refuse: later banners go without.
-            if (burstAt <= 2) canDrawBurst = false
+            // Refused on its first frames the picture is the terminal's to refuse: this banner and later ones
+            // burst in cells, laid onto the track.
+            if (burstAt <= 2) {
+              canDrawBurst = false
+              const inCells = await loadBurst($, burst.name, 'cells')
+              // From its first frame: the picture's few refused ticks are not lost from a burst this short.
+              if (inCells !== undefined) slime.burst = { ...burst, burst: inCells, tick: slime.tick }
+            }
             $.ui.invalidate('ui.render')
           })
   if (cells === slime.shown) {
@@ -818,22 +985,31 @@ export const register: Register = on => {
       if (slime.banner?.key !== key) slime.banner = { key, tick: slime.tick }
       // A big moment's burst plays once, beside the letters, while there is room for it and the slime.
       const name = burstOf(band.banner)
-      if (name !== undefined && slime.burstPlayed !== key && canDrawBurst) {
+      if (name !== undefined && slime.burstPlayed !== key) {
         slime.burstPlayed = key
         const burst = await loadBurst($, name)
-        if (burst !== undefined && hud.areaWidth - burst.columns - 1 >= BURST_ROOM) slime.burst = { key, burst, tick: slime.tick }
+        // The hero who levels up wears the class rpg-hud rolled this session; its state is read-only here.
+        const heroClass = (await $.state.get({ plugin: 'rpg-hud', key: 'heroClass' } as never).catch(() => undefined))?.value as string | undefined
+        if (burst !== undefined && hud.areaWidth - burst.columns - 1 >= BURST_ROOM)
+          slime.burst = { key, name, burst, tick: slime.tick, left: 0, top: 0, hero: heroOf(heroClass) }
       }
       if (slime.burst !== undefined && slime.burst.key !== key) slime.burst = undefined
     }
     const burst = slime.burst
     const burstLeft = burst === undefined ? 0 : hud.areaWidth - burst.burst.columns - 1
+    // In cells it stands on the grass within the track's own rows, its top row kept.
+    if (burst !== undefined) {
+      burst.left = burstLeft
+      burst.top = Math.max(0, TRACK_ROWS - 1 - burst.burst.rows)
+    }
     slime.areaWidth = burst === undefined ? hud.areaWidth : burstLeft - 1
     slime.x = Math.min(slime.x, Math.max(0, slime.areaWidth - SLIME_WIDTH))
     slime.requestId = e.requestId
     slime.ticker ??= $.clock.every(FRAME_MS, () => void paint($))
     const pose = slimePose(slime.isWorking, (await $.clock.now()) - slime.idleSince, slime.tick, slime.waitingFor !== undefined)
     const ground = slime.mana === undefined ? undefined : groundPixels(slime.mana, trackWidth, slime.tick, slime.isWorking)
-    slime.shown = composeTrack(trackWidth, { x: slime.x, dir: slime.dir, pose, snore: 0 }, hudFrame(), ground)
+    const track = composeTrack(trackWidth, { x: slime.x, dir: slime.dir, pose, snore: 0 }, hudFrame(), ground)
+    slime.shown = burst?.burst.kind === 'cells' ? withBurst(track, burst, burstFrameAt(burst)) : track
 
     // Each label sits centred over its big number.
     let cursor = 0
@@ -854,7 +1030,7 @@ export const register: Register = on => {
       <Box flexDirection="column">
         <Text wrap="truncate">{labelPieces}</Text>
         <Raster key="track" columns={trackWidth} rows={trackRows()} cells={slime.shown} />
-        {burst && (
+        {burst?.burst.kind === 'image' && (
           // Over the label row and the slime's rows, standing on the grass.
           <Box position="absolute" top={Math.max(0, TRACK_ROWS - burst.burst.rows)} left={burstLeft}>
             <Image

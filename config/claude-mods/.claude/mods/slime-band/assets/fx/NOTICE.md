@@ -1,5 +1,7 @@
 Frames baked from pixelfx (https://github.com/patch-gg/pixelfx) by rpg-battle/tools/bake-fx.mjs:
 level-up, confetti, collect-burst, loot-beam.
+Each also as half-block Raster cells (raster-<C>x<R>.json, by rpg-battle/tools/raster-fx.mjs from those frames;
+collect-burst and confetti at --coverage 0.12) for terminals that draw no pictures.
 All four adapt Sprite Fusion's open-source pixel art VFX (https://www.spritefusion.com/pixel-art-vfx),
 Copyright (c) 2026 Hugo Duprez, MIT License.
 

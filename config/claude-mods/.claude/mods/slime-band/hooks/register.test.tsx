@@ -8,7 +8,8 @@ import { hexOf, iconOf, liquidOf } from './liquids'
 import type { ContextInfo } from '../types'
 import { HOP_MS, sceneSize, sceneSvg, walkAt } from './desktop'
 import { BANNER_MS, bannerFor } from './banner'
-import { CAST_TICKS, LISTEN_MS, NAP_AFTER_MS, TRACK_ROWS, burstOf, composeTrack, floorAt, formatTokens, hopAt, infoLine, infoSegments, slimePose, stepSlime } from './register'
+import { DEFAULT_HERO, HERO_WIDTH, HEROES, heroOf } from './hero-sprite'
+import { CAST_TICKS, LISTEN_MS, NAP_AFTER_MS, TRACK_ROWS, burstOf, composeTrack, floorAt, formatTokens, hopAt, infoLine, infoSegments, slimePose, stepSlime, burstTicks, HERO_LINGER_TICKS, heroInLight, holdTicks, MIN_CELL_TICKS } from './register'
 
 const BAND_PROPS = {
   hasSurvey: false,
@@ -797,4 +798,86 @@ test('the big moments burst beside their banner while the frames play, then the 
   await clock.advance(80 * 3)
   expect(await ui.findAll({ type: 'Image' })).toHaveLength(0)
   expect((await ui.findAll({ type: 'Text' })).map(row => row.text ?? '').join('|')).toContain('the hero grows stronger')
+})
+
+test('where the terminal draws no pictures, the burst plays in half-block cells laid onto the track', async ($, on) => {
+  const start = Date.UTC(2026, 9, 2, 13)
+  const clock = mock.clock(on, { now: start })
+  const FRAMES = 4
+  const RED = 0xff0000
+  const redFrame = btoa(String.fromCharCode(...new Uint8Array(new Uint32Array(Array.from({ length: 9 * 4 }, () => [0x2580, RED, RED]).flat()).buffer)))
+  const asked: string[] = []
+  const tracks: string[] = []
+  on('session.turns', async () => ({ value: 3 }))
+  on('state.get', async (_$, e, next) =>
+    (e as { plugin: string; key: string }).plugin === 'rpg-hud' && (e as { key: string }).key === 'flashUntil'
+      ? ({ value: { value: start + BANNER_MS, version: 1 } } as never)
+      : next(e))
+  on('fs.read', async ($$, e) => {
+    asked.push(e.path)
+    if (e.path.endsWith('raster-9x4.json')) return { value: JSON.stringify({ columns: 9, rows: 4, frames: Array.from({ length: FRAMES }, () => redFrame) }) }
+    return { value: e.as === 'bytes' ? { base64: PIXEL } : JSON.stringify({ frames: FRAMES, cells: [9, 4], fps: 12.5 }) }
+  })
+  on('ui.blit', async (_$, e) => {
+    if ('source' in e) return { value: { deny: 'the Image draws its alt here: no placeholder images' } }
+    if ((e as { key: string }).key === 'track') tracks.push((e as { cells: string }).cells)
+    return { value: {} }
+  })
+  on('ui.render', { component: 'AbovePrompt' }, async ($$, e) => {
+    const { Text } = $$.ui.resolve(e)
+    return <Text> </Text>
+  })
+  const hasRed = (cells: string) => new Uint32Array(Uint8Array.from(atob(cells), ch => ch.charCodeAt(0)).buffer).some((word, at) => at % 3 !== 0 && word === RED)
+  const ui = await $.ui.mount({ plugin: 'slime-band', surface: 'terminal', component: 'AbovePrompt', props: { ...BAND_PROPS, bodyColumns: 80 } })
+  expect(await ui.findAll({ type: 'Image' })).toHaveLength(1)
+  await clock.advance(80 * 2)
+  expect(await ui.findAll({ type: 'Image' })).toHaveLength(0)
+  expect(asked.some(path => path.endsWith('/assets/fx/level-up/raster-9x4.json'))).toBe(true)
+  const track = (await ui.findAll({ type: 'Raster' })).find(r => (r.key ?? r.props?.key) === 'track')?.props?.cells as string
+  expect(hasRed(track) || tracks.some(hasRed)).toBe(true)
+})
+
+test('a short burst in cells holds its frames longer, a picture plays a frame a tick', () => {
+  const frames = (n: number) => Array.from({ length: n }, () => '')
+  expect(holdTicks({ kind: 'cells', frames: frames(7) })).toBe(2)
+  expect(holdTicks({ kind: 'cells', frames: frames(28) })).toBe(1)
+  expect(holdTicks({ kind: 'image', frames: frames(7) })).toBe(1)
+  expect(7 * holdTicks({ kind: 'cells', frames: frames(7) })).toBeGreaterThanOrEqual(MIN_CELL_TICKS)
+})
+
+test('the level-up hero stands in the light: drawn over it, tinted where it passes over him', () => {
+  const pack = (cell: number[], n: number) => btoa(String.fromCharCode(...new Uint8Array(new Uint32Array(Array.from({ length: n }, () => cell).flat()).buffer)))
+  const colors = (cells: string) => new Set(Array.from(new Uint32Array(Uint8Array.from(atob(cells), ch => ch.charCodeAt(0)).buffer)).filter((_, at) => at % 3 !== 0))
+  const wizard = heroOf('wizard')
+  const dark = heroInLight(pack([0x20, 0x01000000, 0x01000000], 9 * 4), 9, wizard, 'stand', 0)
+  const lit = heroInLight(pack([0x2580, 0xffd23c, 0xffd23c], 9 * 4), 9, wizard, 'stand', 0)
+  // In the dark the wizard wears his own blue hat; in the gold light it is warmed.
+  expect(colors(dark).has(0x3a6fd8)).toBe(true)
+  expect(colors(lit).has(0x3a6fd8)).toBe(false)
+  expect(colors(lit).has(0xffd23c)).toBe(true)
+})
+
+test('a level up in cells lingers with its hero, inside the banner; other bursts end with their frames', () => {
+  const frames = (n: number) => Array.from({ length: n }, () => '')
+  const levelUp = burstTicks({ name: 'level-up', burst: { kind: 'cells', frames: frames(7) } })
+  expect(levelUp).toBe(7 * 2 + HERO_LINGER_TICKS)
+  // The banner shows 2.5 s at 80 ms a tick; the picture's refused ticks come first.
+  expect((levelUp + 3) * 80).toBeLessThanOrEqual(BANNER_MS)
+  expect(burstTicks({ name: 'level-up', burst: { kind: 'image', frames: frames(7) } })).toBe(7)
+  expect(burstTicks({ name: 'confetti', burst: { kind: 'cells', frames: frames(28) } })).toBe(28)
+})
+
+test("each class's hero fills its rows, uses its own palette, and an unknown class falls back to the knight", () => {
+  for (const [id, hero] of Object.entries(HEROES))
+    for (const pose of ['stand', 'cheer'] as const) {
+      const sprite = hero.frames[pose]
+      expect(sprite).toHaveLength(6)
+      for (const line of sprite) {
+        expect(line.length).toBe(HERO_WIDTH)
+        for (const key of line) if (key !== '.') expect(`${id}:${key}:${key in hero.palette}`).toBe(`${id}:${key}:true`)
+      }
+    }
+  expect(heroOf('wizard')).toBe(HEROES.wizard)
+  expect(heroOf('bard')).toBe(HEROES[DEFAULT_HERO])
+  expect(heroOf(undefined)).toBe(HEROES[DEFAULT_HERO])
 })
