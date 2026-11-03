@@ -34,11 +34,14 @@
           "id": "brand",
           "type": "block",
           "size": {
-            "px": 46
+            "px": 64
           },
           "window_drag": true,
           "content": {
-            "mod": "workspace-chrome"
+            "mod": "camp",
+            "props": {
+              "role": "crest"
+            }
           }
         },
         {
@@ -64,7 +67,10 @@
               },
               "min": 90,
               "content": {
-                "mod": "agents"
+                "mod": "camp",
+                "props": {
+                  "role": "quests"
+                }
               }
             }
           ]
@@ -126,7 +132,10 @@
                   },
                   "header": {
                     "content": {
-                      "mod": "pane"
+                      "mod": "camp",
+                      "props": {
+                        "role": "pane"
+                      }
                     },
                     "height": 30,
                     "position": "top",

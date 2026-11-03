@@ -1,19 +1,32 @@
 // The camp: That Monkey's lazy-hero interface for Herdr. One mod, several roles picked by props.role,
-// so the state, the lines and the art live in one place.
+// so the state, the lines and the art live in one place:
+//   band    the campfire along the bottom          crest   the monkey's portrait at the top of the sidebar
+//   quests  the quest board (the agents list)       pane    a wooden sign over each pane (a pane header)
 import { View, div } from "gpui-kit";
 import { props } from "herdr";
 import { Band } from "./roles/band.js";
+import { Crest } from "./roles/crest.js";
+import { Quests } from "./roles/quests.js";
+import { PaneSign } from "./roles/pane.js";
 
-const ROLES = { band: Band };
+const ROLES = { band: Band, crest: Crest, quests: Quests, pane: PaneSign };
 
 export default class Camp extends View {
-  init(p, cx) {
-    const Role = ROLES[p?.role] ?? Band;
-    this.role = new Role(cx);
+  init(_p, cx) {
+    this.cx = null;
+    this.role = null;
+  }
+
+  // The role is read from props() on first render: init's own argument doesn't carry the layout's props.
+  pick(cx, p) {
+    const role = p.role ?? (p.pane ? "pane" : "band");
+    this.role = new (ROLES[role] ?? Band)(cx);
   }
 
   render(cx) {
-    return this.role ? this.role.render(cx, props()) : div();
+    const p = props() ?? {};
+    if (!this.role) this.pick(cx, p);
+    return this.role.render(cx, p);
   }
 
   async close(cx) {

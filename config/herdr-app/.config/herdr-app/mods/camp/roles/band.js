@@ -7,10 +7,10 @@
 //   else     -> idle by the fire
 import { div, image } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { agents, spaces, theme, run, setAgentOrder } from "herdr";
+import { agents, spaces, theme, run } from "herdr";
 import { pick } from "../lines.js";
+import { ART } from "../state.js";
 
-const ART = "mods/camp/assets";
 const BG = "#151324";
 const HAPPY_MS = 3600;
 const MAX_MERCS = 5;
@@ -65,8 +65,6 @@ export class Band {
     const blocked = list.filter((a) => a.status === "blocked");
     const done = list.filter((a) => a.status === "done");
     const working = list.filter((a) => a.status === "working");
-    // agent.next / agent.prev go to the ones that need him first
-    setAgentOrder([...blocked, ...done, ...working, ...list.filter((a) => a.status === "idle")].map((a) => a.address));
 
     const urgent = blocked[0] ?? done[0];
     const monkey = div().id("monkey").flex_shrink_0().w(px(60)).h(px(60))

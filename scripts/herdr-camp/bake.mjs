@@ -24,8 +24,12 @@ const REPO = join(HERE, "../..");
 const OUT = join(REPO, "config/herdr-app/.config/herdr-app/mods/camp/assets");
 const PIXELFX = process.env.PIXELFX_DIR ?? join(homedir(), ".cache/pixelfx");
 
-// The band's background (the camp theme's `canvas`), the upscale factor, the edge fade in native px.
+// The default background (the band's: the camp theme's `canvas`), the upscale factor, the edge fade in native px.
+// An asset's `bg` overrides it: whatever the mod shows that GIF on.
 const BG = "#151324", SCALE = 4, EDGE = 6;
+const SLOT = "#1d1b2f", CHROME = "#221f38";
+const CREST = [-18, -38, 18, -12];
+const icon = (kind) => ({ fx: "camp/quest-icon", crop: [-8, -14, 8, 2], bg: SLOT, edge: 0, opts: { kind } });
 const MONKEY = [-30, -56, 30, 4];
 const BLUE_FIRE = ["#0e1a4a", "#14307a", "#1f4fb8", "#2f7cf0", "#4fa8ff", "#7fd0ff", "#b8ecff", "#e6faff", "#ffffff"];
 
@@ -36,6 +40,13 @@ export const ASSETS = {
   "monkey-happy": { fx: "camp/monkey-happy", crop: MONKEY },
   campfire: { fx: "fire/campfire", crop: [-28, -56, 28, 4], fps: 15, vignette: [0, -12], opts: { height: 16 } },
   "campfire-blue": { fx: "fire/campfire", crop: [-28, -56, 28, 4], fps: 15, vignette: [0, -12], opts: { height: 16, palette: BLUE_FIRE } },
+  "crest-idle": { fx: "camp/monkey-idle", crop: CREST, bg: CHROME, edge: 0 },
+  "crest-sleep": { fx: "camp/monkey-sleep", crop: CREST, bg: CHROME, edge: 0 },
+  "crest-alarm": { fx: "camp/monkey-alarm", crop: CREST, bg: CHROME, edge: 0 },
+  "icon-blocked": icon("blocked"),
+  "icon-done": icon("done"),
+  "icon-working": icon("working"),
+  "icon-idle": icon("idle"),
   "merc-orange": { fx: "camp/merc", crop: [-12, -24, 12, 2], opts: { palette: ["#7a3414", "#c8622a", "#f0905a", "#ffc49a"] } },
   "merc-green": { fx: "camp/merc", crop: [-12, -24, 12, 2], opts: { palette: ["#1a5a36", "#2f9a5a", "#5ad08a", "#a8f0c4"] } },
   "merc-purple": { fx: "camp/merc", crop: [-12, -24, 12, 2], opts: { palette: ["#3c2a7a", "#6a4fc8", "#a98cff", "#d8ccff"] } },
@@ -53,9 +64,8 @@ run("rsync", ["-a", join(HERE, "fx") + "/", join(PIXELFX, "src/fx") + "/"]);
 const { loadEffect, renderFrames, upscale } = await import(pathToFileURL(join(PIXELFX, "tools/lib/fxlib.mjs")).href);
 const { composite, hex } = await import(pathToFileURL(join(PIXELFX, "src/core/index.js")).href);
 
-const bg = hex(BG), bgRGB = [bg & 255, (bg >>> 8) & 255, (bg >>> 16) & 255];
-
 function bake(name, a) {
+  const bg = hex(a.bg ?? BG), bgRGB = [bg & 255, (bg >>> 8) & 255, (bg >>> 16) & 255], E = a.edge ?? EDGE;
   return loadEffect(a.fx).then((fx) => {
     const r = renderFrames(fx, { fps: a.fps, seed: a.seed, bg: "none", options: a.opts, actor: false });
     const [OX, OY] = fx.meta.origin, [x0, y0, x1, y1] = a.crop;
@@ -67,7 +77,7 @@ function bake(name, a) {
       for (let y = 0; y < h; y++)
         for (let x = 0; x < w; x++) {
           const s = ((cy + y) * r.w + cx + x) * 4, d = (y * w + x) * 4;
-          let k = Math.min(1, (Math.min(x, y, w - 1 - x, h - 1 - y) + 0.5) / EDGE);
+          let k = E ? Math.min(1, (Math.min(x, y, w - 1 - x, h - 1 - y) + 0.5) / E) : 1;
           if (a.vignette) {
             // big glows: fade out on an ellipse round the source, reaching the background before the crop edge
             const [vx, vy] = a.vignette, ex = (x + x0 + 0.5 - vx) / (w / 2), ey = (y + y0 + 0.5 - vy) / (h * 0.62);
