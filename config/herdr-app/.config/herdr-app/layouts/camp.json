@@ -56,7 +56,7 @@
               },
               "min": 90,
               "content": {
-                "mod": "spaces"
+                "mod": "camp-spaces"
               }
             },
             {
@@ -103,7 +103,7 @@
           },
           "window_drag": true,
           "content": {
-            "mod": "tabs"
+            "mod": "camp-tabs"
           }
         },
         {

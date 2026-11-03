@@ -29,6 +29,7 @@ const PIXELFX = process.env.PIXELFX_DIR ?? join(homedir(), ".cache/pixelfx");
 const BG = "#151324", SCALE = 4, EDGE = 6;
 const SLOT = "#1d1b2f", CHROME = "#221f38";
 const CREST = [-18, -38, 18, -12];
+const tent = (palette) => ({ fx: "camp/tent", crop: [-8, -14, 8, 2], bg: SLOT, edge: 0, opts: { palette } });
 const icon = (kind) => ({ fx: "camp/quest-icon", crop: [-8, -14, 8, 2], bg: SLOT, edge: 0, opts: { kind } });
 const MONKEY = [-30, -56, 30, 4];
 const BLUE_FIRE = ["#0e1a4a", "#14307a", "#1f4fb8", "#2f7cf0", "#4fa8ff", "#7fd0ff", "#b8ecff", "#e6faff", "#ffffff"];
@@ -47,6 +48,13 @@ export const ASSETS = {
   "icon-done": icon("done"),
   "icon-working": icon("working"),
   "icon-idle": icon("idle"),
+  // one tent per space color (the spaces mod's palette: ansi6 3 4 5 2 1 in the camp theme)
+  "tent-ansi6": tent(["#1f5a6a", "#3fa8b8", "#8fe0e8"]),
+  "tent-ansi3": tent(["#7a5a14", "#d8a830", "#ffe08a"]),
+  "tent-ansi4": tent(["#1d4a8a", "#3f8ad8", "#8ccdff"]),
+  "tent-ansi5": tent(["#5a2a7a", "#a85ad0", "#e0a8ff"]),
+  "tent-ansi2": tent(["#2a5a1e", "#5aa83a", "#aaf08c"]),
+  "tent-ansi1": tent(["#6a1e1a", "#c8463a", "#ff8a7f"]),
   "merc-orange": { fx: "camp/merc", crop: [-12, -24, 12, 2], opts: { palette: ["#7a3414", "#c8622a", "#f0905a", "#ffc49a"] } },
   "merc-green": { fx: "camp/merc", crop: [-12, -24, 12, 2], opts: { palette: ["#1a5a36", "#2f9a5a", "#5ad08a", "#a8f0c4"] } },
   "merc-purple": { fx: "camp/merc", crop: [-12, -24, 12, 2], opts: { palette: ["#3c2a7a", "#6a4fc8", "#a98cff", "#d8ccff"] } },

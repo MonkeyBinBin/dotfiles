@@ -2,14 +2,16 @@
 // so the state, the lines and the art live in one place:
 //   band    the campfire along the bottom          crest   the monkey's portrait at the top of the sidebar
 //   quests  the quest board (the agents list)       pane    a wooden sign over each pane (a pane header)
+//   report  戰報, the battle report dialog (opened from the band's tally)
 import { View, div } from "gpui-kit";
 import { props } from "herdr";
 import { Band } from "./roles/band.js";
 import { Crest } from "./roles/crest.js";
 import { Quests } from "./roles/quests.js";
 import { PaneSign } from "./roles/pane.js";
+import { Report } from "./roles/report.js";
 
-const ROLES = { band: Band, crest: Crest, quests: Quests, pane: PaneSign };
+const ROLES = { band: Band, crest: Crest, quests: Quests, pane: PaneSign, report: Report };
 
 export default class Camp extends View {
   init(_p, cx) {

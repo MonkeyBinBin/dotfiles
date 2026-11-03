@@ -7,7 +7,7 @@
 //   else     -> idle by the fire
 import { div, image } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { agents, spaces, theme, run } from "herdr";
+import { agents, spaces, theme, run, shared, setShared, openOverlay } from "herdr";
 import { pick } from "../lines.js";
 import { ART } from "../state.js";
 
@@ -44,6 +44,7 @@ export class Band {
     }
     this.started = true;
     if (finished) {
+      setShared("camp.wins", (shared("camp.wins") ?? 0) + 1);
       this.happyUntil = Date.now() + HAPPY_MS;
       cx.timer.after(HAPPY_MS + 50, (cx) => cx.notify());
     }
@@ -86,18 +87,20 @@ export class Band {
     const space = spaces().find((s) => s.active);
     const stat = (color, label, n) => h_flex().gap(6).items_center()
       .child(div().size(8).bg(n ? color : t.border)).child(div().text_color(n ? t.foreground : t.dim).child(`${label} ${n}`));
-    const status = v_flex().flex_shrink_0().gap(8).pr(16).text_size(12).items_end()
+    const status = v_flex().id("tally").flex_shrink_0().gap(8).px(12).py(6).text_size(12).items_end()
+      .hover((s) => s.bg(t.surface))
+      .on_click(() => openOverlay({ mod: "camp", kind: "dialog", width: 380, height: 440, props: { role: "report" } }))
       .child(h_flex().gap(14)
         .child(stat(t.blocked, "求援", blocked.length))
         .child(stat(t.done, "凱旋", done.length))
         .child(stat(t.working, "出征", working.length)))
-      .child(div().text_color(t.dim).child([space?.machine ?? "本機營地", space?.branch].filter(Boolean).join(" · ")));
+      .child(div().text_color(t.dim).child([space?.machine ?? "本機營地", space?.branch, "戰報 ›"].filter(Boolean).join(" · ")));
 
     return h_flex().id("root").size_full().bg(BG).border_t(2).border_color(t.border).items_end().gap(12).pl(12).overflow_hidden()
       .child(monkey)
       .child(fire)
       .child(v_flex().h_full().justify_center().gap(8).flex_shrink_0().child(bubble).child(mercs))
       .child(div().flex_1())
-      .child(v_flex().h_full().justify_center().child(status));
+      .child(v_flex().h_full().justify_center().pr(4).child(status));
   }
 }

@@ -16,3 +16,16 @@ for mod in "$SRC"/mods/*/; do
   rsync -a --delete --exclude gpui-kit.d.ts --exclude jsconfig.json "$mod" "$DEST/mods/$name/"
   echo "copied mods/$name"
 done
+
+# The camp's 8-bit alerts (scripts/herdr-camp/sfx.mjs), unless settings.json already names other sounds.
+node -e '
+const fs = require("fs"), file = process.argv[1];
+const s = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : {};
+s.sounds ??= { enabled: true };
+let changed = false;
+for (const k of ["done", "blocked"]) {
+  const want = `mods/camp/sounds/${k}.mp3`;
+  if (!s.sounds[k] || s.sounds[k].startsWith("mods/camp/")) changed ||= s.sounds[k] !== want, (s.sounds[k] = want);
+}
+if (changed) fs.writeFileSync(file, JSON.stringify(s, null, 2) + "\n"), console.log("settings.json: camp sounds");
+' "$DEST/settings.json"
