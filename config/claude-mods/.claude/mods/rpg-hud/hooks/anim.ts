@@ -56,7 +56,11 @@ export const anim = {
   // The encounter card's monster while on screen: the frames of the moment it plays, from the tick it began.
   // The combo's aura beside the portrait, while one burns.
   aura: undefined as { frames: string[]; shown: string } | undefined,
-  boss: undefined as { key: string; frames: string[]; ticks: number; loop: boolean; columns: number; rows: number; start: number; shown: string } | undefined,
+  // `base` is the monster's frame last painted, `shown` what is on screen: the base with any arena burst laid on.
+  boss: undefined as { key: string; frames: string[]; ticks: number; loop: boolean; columns: number; rows: number; start: number; base: string; shown: string } | undefined,
+  // A burst over the arena as half-block cells, where the terminal draws no pictures: laid onto the monster's
+  // cells from the moment (ms) it began, a frame a tick, at (left, top) in the arena.
+  bossOverlay: undefined as { at: number; frames: string[]; columns: number; left: number; top: number } | undefined,
   // Running jobs on screen, by Raster key: the march strip shown last.
   jobs: new Map<string, { shown: string }>(),
   // The map tab's overworld while on screen: its frames as Raster cells and the one shown.

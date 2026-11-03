@@ -2909,6 +2909,66 @@ test('a slain boss crumbles, then confetti falls over the arena before the panel
   expect((await texts(ui)).join('|')).toContain('CLAUDE')
 })
 
+test('a boss appears out of a portal and flies into a rage in a ring of fire, each burst once over the arena', async ($, on) => {
+  const output = 'Tests: 3 failed, 9 passed'
+  const { clock } = world(on, { tool: e => (e.tool === 'Bash' ? fail(output) : undefined) })
+  pictureWorld(on, 3)
+  const ui = await mountPane($, 'terminal', 40, 90)
+  // Long enough for the portrait's probe to find the terminal draws pictures.
+  await clock.advance(2000)
+  await $.tool.call({ tool: 'Bash', command: 'pnpm test' })
+  await clock.advance(1)
+  expect(await imageKeys(ui)).toContain('fx-boss-appear')
+  await clock.advance(400)
+  expect(await imageKeys(ui)).not.toContain('fx-boss-appear')
+  // Two calls that land nothing enrage it.
+  await clock.advance(FX_MS.appear)
+  await $.tool.call({ tool: 'Bash', command: 'pnpm test' })
+  await $.tool.call({ tool: 'Bash', command: 'pnpm test' })
+  await clock.advance(1)
+  expect(await imageKeys(ui)).toContain('fx-boss-enrage')
+  expect(await imageKeys(ui)).not.toContain('fx-boss-appear')
+  await clock.advance(400)
+  expect(await imageKeys(ui)).not.toContain('fx-boss-enrage')
+  expect((await texts(ui)).join('|')).toContain('ENRAGED')
+})
+
+test('where the terminal draws no pictures, a boss appears in a half-block portal laid over its own cells', async ($, on) => {
+  const RED = 0xff0000
+  const redCell = btoa(String.fromCharCode(...new Uint8Array(Uint32Array.of(0x2580, RED, RED).buffer)))
+  const { clock } = world(on, { tool: e => (e.tool === 'Bash' ? fail('Tests: 3 failed, 9 passed') : undefined) })
+  const asked: string[] = []
+  on('fs.read', async (_$, e) => {
+    const { path, as } = e as { path: string; as?: string }
+    asked.push(path)
+    if (/raster-\d+x\d+\.json$/.test(path)) return { value: JSON.stringify({ columns: 1, rows: 1, frames: [redCell, redCell, redCell] }) } as never
+    if (path.endsWith('meta.json')) return { value: JSON.stringify({ frames: 3, cells: [8, 3] }) } as never
+    return { value: as === 'bytes' ? { base64: PNG_1X1 } : '' } as never
+  })
+  const painted: string[] = []
+  on('ui.blit', async (_$, e) => {
+    if ('source' in e) return { value: { deny: 'the Image draws its alt here: no placeholder images' } } as never
+    if ((e as { key: string }).key === 'boss') painted.push((e as { cells: string }).cells)
+    return { value: {} }
+  })
+  const hasRed = (cells: string | undefined) => {
+    if (cells === undefined) return false
+    const words = new Uint32Array(Uint8Array.from(atob(cells), ch => ch.charCodeAt(0)).buffer)
+    return words.some((word, at) => at % 3 !== 0 && word === RED)
+  }
+  const bossCells = async () => (await ui.findAll({ type: 'Raster' })).find(r => r.key === 'boss')?.props?.cells as string | undefined
+  const ui = await mountPane($, 'terminal', 40, 90)
+  await clock.advance(2000)
+  await $.tool.call({ tool: 'Bash', command: 'pnpm test' })
+  await clock.advance(1)
+  expect(await imageKeys(ui)).not.toContain('fx-boss-appear')
+  expect(asked.some(path => /boss-appear\/raster-\d+x\d+\.json$/.test(path))).toBe(true)
+  expect(hasRed(await bossCells()) || painted.some(hasRed)).toBe(true)
+  // Played through, the monster's own cells come back.
+  await clock.advance(500)
+  expect(hasRed(painted.at(-1) ?? (await bossCells()))).toBe(false)
+})
+
 test('a summoned pet arrives in a poof, comes back in a sparkle, and a fainting one blinks before it greys', async ($, on) => {
   const { clock } = world(on)
   pictureWorld(on)

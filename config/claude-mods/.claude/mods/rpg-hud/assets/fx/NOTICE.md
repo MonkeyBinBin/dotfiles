@@ -1,7 +1,8 @@
 Frames baked from pixelfx (https://github.com/patch-gg/pixelfx) by rpg-battle's tools/bake-fx.mjs (--fps 10, one frame per
 100 ms animation tick): level-up (ui/level-up), revive (holy/resurrection), confetti (ui/confetti), poof (spawn/poof),
-sparkle (pickups/collect-burst).
-All five adapt Sprite Fusion's open-source pixel art VFX (https://www.spritefusion.com/pixel-art-vfx),
+sparkle (pickups/collect-burst), boss-appear (spawn/spawn-portal), boss-enrage (fire/fire-ring); the last two also as
+half-block Raster cells (--raster 12x5,24x10) for terminals that draw no pictures.
+All seven adapt Sprite Fusion's open-source pixel art VFX (https://www.spritefusion.com/pixel-art-vfx),
 Copyright (c) 2026 Hugo Duprez, MIT License.
 
 MIT License

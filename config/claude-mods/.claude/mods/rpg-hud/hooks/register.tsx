@@ -56,8 +56,8 @@ import { EMPTY_PROGRESS, progressOf } from './progress'
 import { MARCH_COLUMNS, addJob, endJob, jobItems, jobsSubtitle, marchCells, parseJobEnds, reconcileJobs, trimJobs } from './jobs'
 import type { JobEnd } from './jobs'
 import { blendCells, composeColors, drainCells, summarize } from './util'
-import { burstFrame, burstMs, isPlaying, loadBurst } from './fx'
-import type { Burst } from './fx'
+import { ARENA_RASTERS, burstFrame, burstMs, isPlaying, loadBurst, loadRasterBurst, overlayCells } from './fx'
+import type { Burst, BurstName } from './fx'
 import { gaugeCells, glowCells } from './gauge'
 import { HEX, RGB, rampRgb } from './palette'
 import { AURA_COLUMNS, auraFrames, auraTier, fadingAura } from './aura'
@@ -787,14 +787,27 @@ async function paintOverworld($: EngineInterface) {
 }
 
 // The encounter's monster: its moment's frames from the tick the moment began, the last held once it ends.
+// The monster's cells with the arena's burst, if one plays at `now`, laid on; the burst leaves once played through.
+const withBossOverlay = (base: string, columns: number, now: number): string => {
+  const over = anim.bossOverlay
+  if (over === undefined) return base
+  const step = Math.floor((now - over.at) / FRAME_MS)
+  if (step >= over.frames.length) anim.bossOverlay = undefined
+  if (step < 0 || step >= over.frames.length) return base
+  return overlayCells(base, columns, over.frames[step]!, over.columns, over.left, over.top)
+}
+
 async function paintBoss($: EngineInterface) {
   const monster = anim.boss
   if (monster === undefined) return
   const step = Math.floor((anim.tick - monster.start) / monster.ticks)
-  const cells = monster.frames[monster.loop ? step % monster.frames.length : Math.min(step, monster.frames.length - 1)] ?? monster.shown
+  const base = monster.frames[monster.loop ? step % monster.frames.length : Math.min(step, monster.frames.length - 1)] ?? monster.base
+  const cells = anim.bossOverlay === undefined ? base : withBossOverlay(base, monster.columns, await $.clock.now())
   if (cells === monster.shown) return
-  if (await blit($, 'boss', cells, monster.columns, monster.rows)) monster.shown = cells
-  else anim.boss = undefined
+  if (await blit($, 'boss', cells, monster.columns, monster.rows)) {
+    monster.base = base
+    monster.shown = cells
+  } else anim.boss = undefined
 }
 
 // The combo's aura: its sparks climb a step each tick.
@@ -1879,10 +1892,21 @@ export const register: Register = on => {
       duel = foe === undefined ? undefined : panelDuel(width, true)
     }
     const statsShown = !(duel !== undefined && duel.scale > 0)
+    // The arena's burst: confetti once a slain foe has crumbled, else a portal as a boss appears or a ring of fire as
+    // it flies into a rage, each over the foe while it plays and only where it fits the arena.
+    let arenaBurst: { name: BurstName; burst: Burst; at: number } | undefined
+    if (confetti !== undefined && lastFx !== null && now - lastFx.at >= CRUMBLE_MS) {
+      arenaBurst = { name: 'confetti', burst: confetti, at: lastFx.at + CRUMBLE_MS }
+    } else if (Image !== undefined && bossNow !== null && lastFx !== null && (lastFx.event === 'appear' || lastFx.event === 'enrage')) {
+      const name = lastFx.event === 'appear' ? ('boss-appear' as const) : ('boss-enrage' as const)
+      const burst = await loadBurst($, name)
+      const fits = duel !== undefined && duel.scale > 0 && burst !== undefined && duel.arenaColumns >= burst.columns && BOSS_ROWS * duel.scale >= burst.rows
+      if (fits && isPlaying(burst, now - lastFx.at)) arenaBurst = { name, burst, at: lastFx.at }
+    }
     const arenaOverlay =
-      confetti !== undefined && Image !== undefined && lastFx !== null && duel !== undefined && now - lastFx.at >= CRUMBLE_MS ? (
-        <Box key="confetti" position="absolute" bottom={0} left={Math.floor((duel.arenaColumns - confetti.columns) / 2)}>
-          {burstImage(Image, 'fx-confetti', confetti, lastFx.at + CRUMBLE_MS, now)}
+      arenaBurst !== undefined && Image !== undefined && duel !== undefined ? (
+        <Box key={arenaBurst.name} position="absolute" bottom={0} left={Math.floor((duel.arenaColumns - arenaBurst.burst.columns) / 2)}>
+          {burstImage(Image, `fx-${arenaBurst.name}`, arenaBurst.burst, arenaBurst.at, now)}
         </Box>
       ) : undefined
     // Pets out in the background join the fight; one just back throws a shot, its moment ending in a redraw.
@@ -1909,10 +1933,25 @@ export const register: Register = on => {
       const key = `${foe.kind}:${fightFx?.event ?? 'idle'}:${fightFx?.at ?? 0}:${scale}:${arenaColumns}:${rage}:${party.key}`
       if (anim.boss?.key !== key) {
         const played = bossCells(foe.kind, fightFx?.event, scale, fightFx?.event === 'hit' ? fightFx.damage : 0, arenaColumns, rage, party)
-        anim.boss = { key, ...played, columns: arenaColumns, rows: BOSS_ROWS * scale, start: anim.tick, shown: played.frames[0] ?? '' }
+        const first = played.frames[0] ?? ''
+        anim.boss = { key, ...played, columns: arenaColumns, rows: BOSS_ROWS * scale, start: anim.tick, base: first, shown: first }
       }
+      // No pictures here: a boss appearing or flying into a rage bursts in half-block cells over its own.
+      const moment = lastFx !== null && (lastFx.event === 'appear' || lastFx.event === 'enrage') && canDrawImage === false ? lastFx : undefined
+      if (moment === undefined) {
+        anim.bossOverlay = undefined
+      } else if (anim.bossOverlay?.at !== moment.at) {
+        const size = ARENA_RASTERS.find(([columns, rows]) => columns <= arenaColumns && rows <= BOSS_ROWS * scale)
+        const raster = size === undefined ? undefined : await loadRasterBurst($, moment.event === 'appear' ? 'boss-appear' : 'boss-enrage', size[0], size[1])
+        anim.bossOverlay =
+          raster === undefined || now - moment.at >= raster.frames.length * FRAME_MS
+            ? undefined
+            : { at: moment.at, frames: raster.frames, columns: raster.columns, left: Math.floor((arenaColumns - raster.columns) / 2), top: BOSS_ROWS * scale - raster.rows }
+      }
+      anim.boss.shown = withBossOverlay(anim.boss.base, arenaColumns, now)
     } else {
       anim.boss = undefined
+      anim.bossOverlay = undefined
     }
     // A combo of ten or more burns as an aura beside the portrait; a broken one's aura fades out.
     const comboNow = await read($, combo)
