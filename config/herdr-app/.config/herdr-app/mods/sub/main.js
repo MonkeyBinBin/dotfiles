@@ -4,14 +4,16 @@
 //   sonar  the sonar scope under it: a blip per agent, and the crew's counts
 //   deck   the bottom hull edge: the spaces as compartment plates, Settings
 //   pane   a porthole header over each pane
+//   log    the captain's log dialog (opened from the nameplate)
 import { View } from "gpui-kit";
 import { props } from "herdr";
 import { Sea } from "./roles/sea.js";
 import { Sonar } from "./roles/sonar.js";
 import { Deck } from "./roles/deck.js";
 import { PaneHeader } from "./roles/pane.js";
+import { CaptainsLog } from "./roles/log.js";
 
-const ROLES = { sea: Sea, sonar: Sonar, deck: Deck, pane: PaneHeader };
+const ROLES = { sea: Sea, sonar: Sonar, deck: Deck, pane: PaneHeader, log: CaptainsLog };
 
 export default class Sub extends View {
   init() {

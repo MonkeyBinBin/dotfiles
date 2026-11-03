@@ -1,6 +1,6 @@
 // The sub's tab bar along the top hull edge: Herdr's tabs mod (cloned from 0.1.12), each tab a stencil plate
 // riveted on the hull (the shown one brass, the rest steel) with its status lamp, + and the side panel buttons as
-// plates too, and the boat's nameplate at the right: 那個猴子. Behaviour is unchanged: select, drag to move,
+// plates too, and the boat's nameplate at the right: 那個猴子 (click: the captain's log). Behaviour is unchanged: select, drag to move,
 // double-click to rename, right-click menu, + menu, side panel buttons remembered per space.
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
@@ -104,7 +104,10 @@ export default class Tabs extends View {
         }).child(plate(h_flex().h_full().px(8).gap(5).items_center().child(svg(icon).size(14)).child(label), { lit: on }));
     };
     // plates riveted straight on the hull; the nameplate at the right end
+    // the nameplate opens the captain's log
     const nameplate = div().id("nameplate").flex_none().h(32).text_size(14).text_color(INK.brass)
+      .on_mouse_down("left", stop)
+      .on_click(() => openOverlay({ mod: "sub", kind: "dialog", width: 680, height: 460, frame: "none", props: { role: "log" } }))
       .child(plate(h_flex().h_full().px(16).gap(6).items_center().child("那個猴子"), { lit: true }));
     return h_flex().size_full().min_w(0).pl(lightsPadding).gap(8).items_center()
       .on_mouse_up("left", () => { this.pressed = null; })

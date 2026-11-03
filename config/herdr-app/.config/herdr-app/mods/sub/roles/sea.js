@@ -5,11 +5,12 @@
 //   working  hanging at its depth
 //   idle     parked down on the seabed
 // That Monkey stands in the hatch of his own sub at the top right: alarmed when one is blocked, cheering for a
-// moment when one surfaces with loot, dozing while the crew works, else watching the sea.
+// moment when one surfaces with loot, dozing while the crew works, else watching the sea. Every sub that
+// surfaces is entered in the captain's log (shared "sub.log", "sub.dives"; the log role reads them).
 // Click a sub (or its tag) to go to it; right-click to pin it. The order the column reads in is agent.next's.
 import { div, image, Background, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { agents, run, setAgentOrder } from "herdr";
+import { agents, run, setAgentOrder, shared, setShared } from "herdr";
 import { framed } from "../kit/frame.js";
 import { ART, INK, RANK, WORD, RULER, STATUS_INK, toolOf, toolName, titleOf, since, tabsById, underSince, depthOf, minutesUnder, contacts } from "../state.js";
 
@@ -21,6 +22,7 @@ const CHROME = 48 + 48 + 8 + 296 + 36;
 // a layer filling its (relative) parent with a top-to-bottom gradient
 const RECT = () => PathBuilder.fill().move_to("0%", "0%").line_to("100%", "0%").line_to("100%", "100%").line_to("0%", "100%").close().build();
 const gradient = (from, to) => window.paint_path(RECT(), Background.linear_gradient(180, from, to)).absolute().top(0).left(0).size_full();
+const LOG_MAX = 20;
 const ROW = 44, SUB_W = 52, SUB_H = 40, LOOT_H = 60, CAPTAIN = [196, 140], HAPPY_MS = 3600;
 
 export class Sea {
@@ -32,16 +34,21 @@ export class Sea {
     cx.timer.every(30000, (cx) => cx.notify());
   }
 
-  // Agents that just surfaced with loot make him cheer; seeded on the first render so a restart doesn't.
+  // Agents that just surfaced with loot make him cheer and go in the log; seeded on the first render so a
+  // restart doesn't.
   watch(list, cx) {
-    let surfaced = false;
+    const surfaced = [];
     for (const a of list) {
       const was = this.prev.get(a.address);
-      if (this.started && a.status === "done" && was && was !== "done") surfaced = true;
+      if (this.started && a.status === "done" && was && was !== "done") surfaced.push(a);
       this.prev.set(a.address, a.status);
     }
     this.started = true;
-    if (surfaced) {
+    if (surfaced.length) {
+      const dives = shared("sub.dives") ?? 0;
+      const entries = surfaced.map((a, i) => ({ n: dives + i + 1, title: titleOf(a), tool: toolName(a), app: toolOf(a), space: a.space_name, at: Date.now() }));
+      setShared("sub.dives", dives + surfaced.length);
+      setShared("sub.log", [...entries.reverse(), ...(shared("sub.log") ?? [])].slice(0, LOG_MAX));
       this.happyUntil = Date.now() + HAPPY_MS;
       cx.timer.after(HAPPY_MS + 50, (cx) => cx.notify());
     }
