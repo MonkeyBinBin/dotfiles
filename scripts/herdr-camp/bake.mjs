@@ -61,6 +61,9 @@ const SUB_ASSETS = {
   "sea-surface": { fx: "sub/sea", crop: [0, 0, 176, 40], mod: "sub", edge: 0, opts: { kind: "surface" } },
   "sea-seabed": { fx: "sub/sea", crop: [0, 0, 176, 30], mod: "sub", edge: 0, opts: { kind: "seabed" } },
   fish: sub("sub/sea", [0, 0, 24, 16], { opts: { kind: "fish" } }),
+  // the pane header's signals: a turning red beacon (blocked), rising bubbles (working)
+  beacon: sub("sub/signal", [0, 0, 14, 16], { opts: { kind: "beacon" } }),
+  bubbles: sub("sub/signal", [0, 0, 48, 16], { opts: { kind: "bubbles" }, fps: 12 }),
   jelly: sub("sub/sea", [0, 0, 20, 18], { opts: { kind: "jelly" } }),
 };
 

@@ -1,5 +1,5 @@
 // What the whole sub is up to, shared by every role.
-import { spaces } from "herdr";
+import { spaces, openOverlay, closeOverlay, run } from "herdr";
 
 export const ART = "mods/sub/assets";
 // Status order: who needs the person first.
@@ -60,4 +60,28 @@ export function hash(s) {
   let h = 2166136261;
   for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
   return h >>> 0;
+}
+
+/** The periscope: a floating window over the work (drag it anywhere; it reopens where it was dropped) showing
+ *  one agent's live terminal under a brass bar, so the person can watch it without leaving their tab. Opening
+ *  another replaces it in place. */
+let scopeId = null;
+export function periscope(address) {
+  scopeId = openOverlay({
+    kind: "window", key: "periscope", width: 760, height: 480,
+    layout: {
+      type: "column", border: { width: 4, color: "#c89c48" }, radius: 16, background: "#03150f",
+      children: [
+        { type: "block", size: { px: 36 }, content: { mod: "sub", props: { role: "scope", terminal: address } } },
+        { type: "block", content: { terminal: address } },
+      ],
+    },
+  });
+}
+
+/** Goes to an agent (a double-click), putting the periscope away first. */
+export function goTo(address) {
+  if (scopeId) closeOverlay(scopeId);
+  scopeId = null;
+  run("agent.focus", { terminal: address });
 }

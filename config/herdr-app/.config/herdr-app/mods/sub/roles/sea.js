@@ -7,12 +7,13 @@
 // That Monkey stands in the hatch of his own sub at the top right: alarmed when one is blocked, cheering for a
 // moment when one surfaces with loot, dozing while the crew works, else watching the sea. Every sub that
 // surfaces is entered in the captain's log (shared "sub.log", "sub.dives"; the log role reads them).
-// Click a sub (or its tag) to go to it; right-click to pin it. The order the column reads in is agent.next's.
+// Click a sub (or its tag) to watch it through the periscope (a floating window with its live terminal);
+// double-click to go to it; right-click to pin it. The order the column reads in is agent.next's.
 import { div, image, Background, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { agents, run, setAgentOrder, shared, setShared } from "herdr";
 import { framed } from "../kit/frame.js";
-import { ART, INK, RANK, WORD, RULER, STATUS_INK, toolOf, toolName, titleOf, since, tabsById, underSince, depthOf, minutesUnder, contacts } from "../state.js";
+import { ART, INK, RANK, WORD, RULER, STATUS_INK, toolOf, toolName, titleOf, since, tabsById, periscope, goTo, underSince, depthOf, minutesUnder, contacts } from "../state.js";
 
 // The scenery strips, baked at 4x and shown at 2x: sky 64, surface 40, seabed 30 native px, all 176 wide.
 const W = 352, SKY = 128, SURFACE = 80, SEABED = 60, WATERLINE = SKY + 4;
@@ -62,7 +63,7 @@ export class Sea {
   }
 
   go(a) {
-    return () => run("agent.focus", { terminal: a.address });
+    return (e) => (e?.click_count === 2 ? goTo(a.address) : periscope(a.address));
   }
   pin(a) {
     return (_e, cx) => {

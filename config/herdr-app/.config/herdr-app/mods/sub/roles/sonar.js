@@ -1,11 +1,11 @@
 // The sonar: a round scope in a brass ring, the sweep turning, a blip per agent. Each contact sits on its own
 // bearing (from its address, so it stays put) at a range by how long it has been under; surfaced ones come
-// in close, parked ones lie out at the rim. Beside it a steel plate with the crew's counts. Click a blip to go.
+// in close, parked ones lie out at the rim. Beside it a steel plate with the crew's counts. Click a blip for the periscope, double-click to go.
 import { div, image } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { agents, run } from "herdr";
 import { framed } from "../kit/frame.js";
-import { ART, INK, WORD, STATUS_INK, tabsById, depthOf, minutesUnder, contacts, hash } from "../state.js";
+import { ART, INK, WORD, STATUS_INK, tabsById, depthOf, minutesUnder, contacts, hash, periscope, goTo } from "../state.js";
 
 // the scope GIF: 140 native px, shown at 280; its screen's radius is 60 native px
 const SCOPE = 280, C = SCOPE / 2, R = 120;
@@ -23,7 +23,7 @@ export class Sonar {
       const x = Math.round(C + Math.sin(bearing) * r), y = Math.round(C - Math.cos(bearing) * r);
       const right = x > C + 30;
       return div().id(`b-${a.address}`).absolute().left(x - 20).top(y - 20).size(40)
-        .on_click(() => run("agent.focus", { terminal: a.address }))
+        .on_click((e) => (e?.click_count === 2 ? goTo(a.address) : periscope(a.address)))
         .child(image(`${ART}/blip-${a.status}.gif`).absolute().left(0).top(0).size(40))
         .when(a.focused, (el) => el.child(image(`${ART}/blip-focus.gif`).absolute().left(0).top(0).size(40)))
         .child(div().absolute().top(2).when(right, (el) => el.right(30)).when(!right, (el) => el.left(30))
