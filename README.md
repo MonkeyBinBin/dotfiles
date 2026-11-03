@@ -284,7 +284,8 @@ dotfiles**——否則 cmux 更新格式時 repo 內的手寫版本會悄悄失�
 #### Claude Code Mods
 
 `claude-mods` 套件收錄 `config/claude-mods/.claude/mods/<mod>/`，由 `CLAUDE_CODE_PLUGIN_DIRS`
-（`settings.json.example` 的 `env`，經 `sync-ai-cli-settings.sh` 合併）載入。目前收錄 `rpg-hud`、
+（`config/zsh/zshrc.d/01-env.zsh` export）載入。不放在 `settings.json` 的 `env`，因為那裡會蓋掉 shell
+的值；在 Herdr app 裡（有 `HC_TERMINAL_ID`）不 export，mods 不載入。目前收錄 `rpg-hud`、
 `slime-band`、`skill-bar`。
 
 此套件**刻意不用** `--no-folding`：plugin loader 讀 `hooks/hooks.json` 時不跟隨 symlink，且 module
@@ -292,7 +293,7 @@ realpath 落在 plugin 目錄外會被判為 path traversal，逐檔 symlink 會
 `~/.claude/mods/<mod>` 是指向 repo 的目錄 symlink，engine 產生的 `.claude-plugin/types/` 會寫進 repo
 （已 gitignore）。
 
-新增 mod：在 `config/claude-mods/.claude/mods/` 建目錄、把路徑加進 `settings.json.example` 的
+新增 mod：在 `config/claude-mods/.claude/mods/` 建目錄、把路徑加進 `01-env.zsh` 的
 `CLAUDE_CODE_PLUGIN_DIRS`，再跑 `./scripts/stow-wrap.sh claude claude-mods`。驗證用
 `claude plugin validate ~/.claude/mods/<mod>` 與 `claude plugin test ~/.claude/mods/<mod>`。
 
