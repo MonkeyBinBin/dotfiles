@@ -24,6 +24,8 @@ const CHROME = 48 + 48 + 8 + 296 + 36;
 const RECT = () => PathBuilder.fill().move_to("0%", "0%").line_to("100%", "0%").line_to("100%", "100%").line_to("0%", "100%").close().build();
 const gradient = (from, to) => window.paint_path(RECT(), Background.linear_gradient(180, from, to)).absolute().top(0).left(0).size_full();
 const LOG_MAX = 20;
+// the swimmers' lanes, top to bottom of the water (0..1)
+const LANES = [["school", 0.08], ["turtle", 0.32], ["puffer", 0.6]];
 const ROW = 44, SUB_W = 52, SUB_H = 40, LOOT_H = 60, CAPTAIN = [196, 140], HAPPY_MS = 3600;
 
 export class Sea {
@@ -126,9 +128,19 @@ export class Sea {
       .child(image(`${ART}/sea-surface.gif`).w(W).h(SURFACE).flex_none())
       .child(div().relative().w(W).flex_1().child(gradient(WATER_TOP, WATER_DEEP)))
       .child(image(`${ART}/sea-seabed.gif`).w(W).h(SEABED).flex_none());
+    // sea life, behind the crew: swimmers cross their lanes and turn round off-screen (the GIFs carry it all),
+    // the jelly drifts, garden eels stand out of their burrows in the sand, the crab scuttles along the seabed,
+    // the seahorse bobs by the kelp
+    const water = (f) => Math.round(WATERLINE + 40 + f * (H - SEABED - WATERLINE - 64));
     const life = [
-      image(`${ART}/fish.gif`).absolute().left(232).top(Math.round(SKY + (H - SKY) * 0.38)).w(48).h(32),
-      image(`${ART}/jelly.gif`).absolute().left(300).top(Math.round(SKY + (H - SKY) * 0.66)).w(40).h(36),
+      ...LANES.map(([name, f]) => image(`${ART}/${name}.gif`).absolute().left(0).top(water(f)).w(W).h(48)),
+      div().absolute().left(250).top(water(0.55)).loop("left", { from: 220, to: 290, period: 9000 })
+        .child(div().relative().loop("top", { from: 0, to: 26, period: 5200 }).child(image(`${ART}/jelly.gif`).w(40).h(36))),
+      // the colony's burrows sit on the seabed strip's sand (its top 40 px down; the GIF's burrows 82 px down)
+      image(`${ART}/garden-eels.gif`).absolute().left(84).top(H - SEABED + 40 - 82).w(144).h(84),
+      image(`${ART}/crab.gif`).absolute().top(H - 52).w(48).h(32).loop("left", { from: 60, to: 230, period: 14000 }),
+      div().absolute().left(300).top(H - SEABED - 30).loop("top", { from: H - SEABED - 34, to: H - SEABED - 22, period: 3400 })
+        .child(image(`${ART}/seahorse.gif`).w(32).h(48)),
     ];
     // the ruler: minutes under
     const ruler = RULER.map((m) => {
