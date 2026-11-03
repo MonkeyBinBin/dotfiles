@@ -11,7 +11,7 @@
 | `ghostty`     | Ghostty 終端模擬器設定                         | `~/.config/ghostty/config`                        |
 | `cmux`        | Cmux 終端機設定                                | `~/.config/cmux/`                                 |
 | `herdr`       | Herdr 終端多工器設定（tmux 風格按鍵、gruvbox） | `~/.config/herdr/config.toml`                     |
-| `claude`      | Claude Code 系統提示 + output styles + hooks 範本 + RPG status line | `~/.claude/CLAUDE.md`、`~/.claude/output-styles/`、`~/.claude/rpg-statusline.sh` |
+| `claude`      | Claude Code 系統提示 + output styles + hooks 範本 + status line | `~/.claude/CLAUDE.md`、`~/.claude/output-styles/`、`~/.claude/statusline.sh` |
 | `claude-mods` | Claude Code mods（hooks plugin：pane、band 等） | `~/.claude/mods/<mod>/` → 目錄 symlink |
 | `codex`       | Codex CLI 系統提示                             | `~/.codex/AGENTS.md`                              |
 | `hammerspoon` | Hammerspoon macOS 自動化                       | `~/.hammerspoon/`                                 |
@@ -242,13 +242,14 @@ dotfiles**——否則 cmux 更新格式時 repo 內的手寫版本會悄悄失�
 > （`/tmp/cmux.sock` → `~/.local/state/cmux/cmux-<uid>.sock`）而靜默失效。既然 cmux 已內建整合，
 > 該腳本與其所屬的 `bin` 套件已一併移除。細節見 `cmux docs agents`。
 
-#### Claude Code RPG status line（`rpg-statusline.sh`）
+#### Claude Code status line（`statusline.sh`）
 
-`claude` 套件含 `~/.claude/rpg-statusline.sh`（stow symlink），風格對齊 `claude-mods` 的遊戲 UI。
+`claude` 套件含 `~/.claude/statusline.sh`（stow symlink），以清楚易讀為主，不走遊戲風格。
 `settings.json.example` 的 `statusLine` 指向它，`merge-settings.jq` 會以範本覆蓋本機 `statusLine`。
 
-- 單行排列，依 `COLUMNS` 以段為單位自動換行：model + effort 星等、⚡ fast mode、目錄 / 分支 / ✎ dirty / 增刪行數 / PR、資源條、session 時長
-- 資源條顯示剩餘量：`MP` 為 context window（與 rpg-hud 人物面板的 MP 同義、同變色門檻），`⌛5h` / `⌛7d` 為用量限額並附重置日期時間，`⛁ cap` 為 spend limit（僅 gateway）
+- 第一行：model + effort、fast mode、目錄 / 分支 / 增刪行數 / PR、context 用量、session 時長
+- 第二行：帳號用量限額 `5h` / `7d`（附重置時刻與倒數）與 `spend`（spend limit，僅 gateway）
+- 長條與百分比顯示已用量，70% 轉琥珀色、90% 轉紅色；每行依 `COLUMNS` 以段為單位自動換行
 - `refreshInterval: 2`：調整視窗寬度不會觸發 status line 更新，靠每 2 秒重跑讓換行跟上新寬度
 - 全部資料取自 stdin JSON，不讀 credentials、不連網；turn、token、變更檔數交給 `slime-band`，不重複顯示
 - 停用：刪除 `~/.claude/settings.json` 的 `statusLine`，並從 `settings.json.example` 移除，否則下次 `stow-wrap.sh claude` 會加回
