@@ -42,6 +42,7 @@ const SUB_ASSETS = {
   ...Object.fromEntries(Object.entries(MINISUB).flatMap(([tool, palette]) => [
     [`minisub-${tool}`, sub("sub/minisub", [-14, -12, 12, 8], { opts: { palette } })],
     [`minisub-${tool}-loot`, sub("sub/minisub", [-14, -12, 12, 18], { opts: { palette, loot: true } })],
+    [`minisub-${tool}-moss`, sub("sub/minisub", [-14, -12, 12, 18], { opts: { palette, moss: true } })],
   ])),
   sonar: sub("sub/sonar", [-70, -70, 70, 70]),
   ...Object.fromEntries(["blocked", "done", "working", "idle", "focus"].map((kind) => [`blip-${kind}`, sub("sub/blip", [-10, -10, 10, 10], { opts: { kind } })])),
@@ -57,6 +58,10 @@ const SUB_ASSETS = {
   "garden-eels": sub("sub/critters", [0, 0, 72, 42], { opts: { kind: "garden" } }),
   crab: sub("sub/critters", [0, 0, 24, 16], { opts: { kind: "crab" }, fps: 8 }),
   seahorse: sub("sub/critters", [0, 0, 16, 24], { opts: { kind: "seahorse" } }),
+  // round a mini-sub: the pressure warning (under too long), the splash and the flare when it surfaces
+  pressure: sub("sub/alert", [-20, -24, 20, 14], { opts: { kind: "pressure" } }),
+  splash: sub("sub/alert", [-20, -24, 20, 4], { opts: { kind: "splash" } }),
+  flare: sub("sub/alert", [-20, -40, 20, 4], { opts: { kind: "flare" } }),
   // the pane header's signals: a turning red beacon (blocked), rising bubbles (working)
   beacon: sub("sub/signal", [0, 0, 14, 16], { opts: { kind: "beacon" } }),
   bubbles: sub("sub/signal", [0, 0, 48, 16], { opts: { kind: "bubbles" }, fps: 12 }),

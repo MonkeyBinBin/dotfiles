@@ -42,6 +42,14 @@ export const tabsById = () => new Map(spaces().flatMap((s) => s.tabs.map((tb) =>
 /** When the agent went under: its tab's working_since, else when its status last changed. */
 export const underSince = (a, tabs) => tabs.get(a.tab)?.working_since ?? tabs.get(a.tab)?.changed_at;
 
+// Under this long a working sub is under pressure (the warning ring); parked this long it overgrows (minutes).
+export const PRESSURE_MIN = 30, MOSS_MIN = 60;
+/** Minutes since an idle agent's tab last changed: how long it has been parked. */
+export const minutesParked = (a, tabs, now = Date.now()) => {
+  const at = tabs.get(a.tab)?.changed_at;
+  return at ? (now - at) / 60000 : 0;
+};
+
 /** 0 at the surface .. 1 at the seabed, for minutes under: log-scaled, an hour reaches the bottom. */
 export const RULER = [1, 5, 15, 30, 60];
 export const depthOf = (min) => Math.max(0, Math.min(1, Math.log1p(Math.max(0, min)) / Math.log1p(60)));
@@ -84,4 +92,9 @@ export function goTo(address) {
   if (scopeId) closeOverlay(scopeId);
   scopeId = null;
   run("agent.focus", { terminal: address });
+}
+
+/** A sub's right-click menu, at the pointer: periscope, go to, pin, rename its tab, close it. */
+export function subMenu(address) {
+  openOverlay({ mod: "sub", kind: "popup", width: 190, height: 184, frame: "none", props: { role: "menu", terminal: address } });
 }

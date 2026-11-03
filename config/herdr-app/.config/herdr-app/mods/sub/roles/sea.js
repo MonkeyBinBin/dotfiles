@@ -7,13 +7,15 @@
 // That Monkey stands in the hatch of his own sub at the top right: alarmed when one is blocked, cheering for a
 // moment when one surfaces with loot, dozing while the crew works, else watching the sea. Every sub that
 // surfaces is entered in the captain's log (shared "sub.log", "sub.dives"; the log role reads them).
+// Under 30 minutes and more, a sub is under pressure: an amber warning ring turns round it. Parked an hour and
+// more, it overgrows with barnacles and weed. One that just surfaced throws up a splash and fires a gold flare.
 // Click a sub (or its tag) to watch it through the periscope (a floating window with its live terminal);
-// double-click to go to it; right-click to pin it. The order the column reads in is agent.next's.
+// double-click to go to it; right-click for its menu (periscope, go, pin, rename, close). The order the column reads in is agent.next's.
 import { div, image, Background, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { agents, run, setAgentOrder, shared, setShared } from "herdr";
 import { framed } from "../kit/frame.js";
-import { ART, INK, RANK, WORD, RULER, STATUS_INK, toolOf, toolName, titleOf, since, tabsById, periscope, goTo, underSince, depthOf, minutesUnder, contacts } from "../state.js";
+import { ART, INK, RANK, WORD, RULER, STATUS_INK, toolOf, toolName, titleOf, since, tabsById, periscope, goTo, subMenu, underSince, depthOf, minutesUnder, minutesParked, contacts, PRESSURE_MIN, MOSS_MIN } from "../state.js";
 
 // The scenery strips, baked at 4x and shown at 2x: sky 64, surface 40, seabed 30 native px, all 176 wide.
 const W = 352, SKY = 128, SURFACE = 80, SEABED = 60, WATERLINE = SKY + 4;
@@ -23,7 +25,7 @@ const CHROME = 48 + 48 + 8 + 296 + 36;
 // a layer filling its (relative) parent with a top-to-bottom gradient
 const RECT = () => PathBuilder.fill().move_to("0%", "0%").line_to("100%", "0%").line_to("100%", "100%").line_to("0%", "100%").close().build();
 const gradient = (from, to) => window.paint_path(RECT(), Background.linear_gradient(180, from, to)).absolute().top(0).left(0).size_full();
-const LOG_MAX = 20;
+const LOG_MAX = 20, SPLASH_MS = 2400;
 // the swimmers' lanes, top to bottom of the water (0..1)
 const LANES = [["school", 0.08], ["turtle", 0.32], ["puffer", 0.6]];
 const ROW = 44, SUB_W = 52, SUB_H = 40, LOOT_H = 60, CAPTAIN = [196, 140], HAPPY_MS = 3600;
@@ -33,6 +35,7 @@ export class Sea {
     this.prev = new Map(); // agent address -> last status seen
     this.started = false;
     this.happyUntil = 0;
+    this.surfacing = new Map(); // address -> until when its splash and flare show
     // the depths and clocks move with time
     cx.timer.every(30000, (cx) => cx.notify());
   }
@@ -48,6 +51,8 @@ export class Sea {
     }
     this.started = true;
     if (surfaced.length) {
+      for (const a of surfaced) this.surfacing.set(a.address, Date.now() + SPLASH_MS);
+      cx.timer.after(SPLASH_MS + 50, (cx) => cx.notify());
       const dives = shared("sub.dives") ?? 0;
       const entries = surfaced.map((a, i) => ({ n: dives + i + 1, title: titleOf(a), tool: toolName(a), app: toolOf(a), space: a.space_name, at: Date.now() }));
       setShared("sub.dives", dives + surfaced.length);
@@ -69,7 +74,7 @@ export class Sea {
   }
   pin(a) {
     return (_e, cx) => {
-      run("terminal.pin", { terminal: a.address, pinned: !a.pinned });
+      subMenu(a.address);
       cx.stop_propagation();
     };
   }
@@ -87,18 +92,21 @@ export class Sea {
       .child(arm({ bottom: 0, left: 0 }, ["b", "l"])).child(arm({ bottom: 0, right: 0 }, ["b", "r"]));
   }
 
-  // an agent's tag: contact number, title, status word; tool · space · clock under it
-  tag(a, id, tabs, w, compact) {
-    const clock = a.status === "idle" ? "" : since(a.status === "working" ? underSince(a, tabs) : tabs.get(a.tab)?.changed_at);
+  // an agent's tag: contact number, title, status word; tool · space · clock under it. `alert`: under pressure
+  // or overgrown, which changes its word and clock
+  tag(a, id, tabs, w, compact, alert) {
+    const clock = a.status === "idle" ? (alert ? `${since(tabs.get(a.tab)?.changed_at)} idle` : "") : since(a.status === "working" ? underSince(a, tabs) : tabs.get(a.tab)?.changed_at);
+    const word = alert === "pressure" ? ["PRESSURE", "#ffb055"] : alert === "moss" ? ["OVERGROWN", "#7aaa5a"] : [WORD[a.status], STATUS_INK[a.status]];
     const title = a.status === "blocked" ? INK.redSoft : a.status === "idle" ? INK.seaDim : INK.sea;
     const line1 = h_flex().gap(8).items_center()
       .child(div().flex_none().text_color(INK.seaId).child(id))
       .child(div().flex_1().min_w(0).truncate().text_color(title).child(titleOf(a)))
       .when(a.pinned, (el) => el.child(div().flex_none().text_color(INK.gold).child("PIN")))
-      .child(div().flex_none().text_color(STATUS_INK[a.status]).child(WORD[a.status]));
-    const tagEl = v_flex().relative().w(w).gap(4).text_size(12)
+      .child(div().flex_none().text_color(word[1]).child(word[0]));
+    // on a dark, see-through backing so passing sea life never muddles the text
+    const tagEl = v_flex().relative().w(w).gap(4).text_size(12).px(4).py(1).mx(-4).bg("#03151fa8")
       .child(line1)
-      .when(!compact, (el) => el.child(div().pl(26).truncate().text_color(INK.seaDim)
+      .when(!compact, (el) => el.child(div().pl(26).truncate().text_color(alert === "pressure" ? "#ffb055" : INK.seaDim)
         .child([toolName(a), a.space_name, clock].filter(Boolean).join(" · "))));
     return a.focused ? tagEl.child(this.brackets(w, compact ? 14 : 32)) : tagEl;
   }
@@ -109,7 +117,8 @@ export class Sea {
     const vh = window.viewport_size?.().height ?? 900;
     const H = Math.max(SKY + SURFACE + SEABED, vh - CHROME);
 
-    const done = list.filter((a) => a.status === "done");
+    // surfaced ones, the latest up first (so a fresh splash is never past the three shown)
+    const done = list.filter((a) => a.status === "done").sort((p, q) => (tabs.get(q.tab)?.changed_at ?? 0) - (tabs.get(p.tab)?.changed_at ?? 0));
     const under = list.filter((a) => a.status !== "done");
     // where each one under wants to hang (row top), then nudged apart so tags never overlap
     const top = WATERLINE + 30, bottom = H - 34;
@@ -145,17 +154,24 @@ export class Sea {
     // the ruler: minutes under
     const ruler = RULER.map((m) => {
       const y = Math.round(yOf(depthOf(m)) + ROW / 2);
-      return h_flex().absolute().left(0).top(y - 7).gap(4).items_center().text_size(12).text_color(INK.ruler).opacity(0.75)
-        .child(div().w(m % 15 ? 6 : 10).h(2).bg(INK.ruler)).child(`${m}m`);
+      // the gauge's red zone: from the pressure line down
+      const c = m >= PRESSURE_MIN ? "#ffb055" : INK.ruler;
+      return h_flex().absolute().left(0).top(y - 7).gap(4).items_center().text_size(12).text_color(c).opacity(0.75)
+        .child(div().w(m % 15 ? 6 : 10).h(2).bg(c)).child(`${m}m`);
     });
 
     // the captain, his hatch at the waterline on the right
     const captain = image(`${ART}/captain-${this.mood(list)}.gif`).absolute().top(WATERLINE - 132).left(W - 168).w(CAPTAIN[0]).h(CAPTAIN[1]);
 
-    // surfaced subs bobbing at the waterline, their tags in the sky
+    // surfaced subs bobbing at the waterline, their tags in the sky; one just up throws a splash and a flare
+    for (const [k, until] of this.surfacing) if (until < now) this.surfacing.delete(k);
     const surfaced = done.slice(0, 3).map((a, i) => div().id(`s-${a.address}`).absolute().left(10 + i * 50).top(WATERLINE - 28)
       .on_click(this.go(a)).on_mouse_down("right", this.pin(a))
       .child(image(`${ART}/minisub-${toolOf(a)}-loot.gif`).w(SUB_W).h(LOOT_H)));
+    const bursts = done.slice(0, 3).flatMap((a, i) => this.surfacing.has(a.address) ? [
+      image(`${ART}/splash.gif`).absolute().left(10 + i * 50 + 28 - 40).top(WATERLINE - 48).w(80).h(56),
+      image(`${ART}/flare.gif`).absolute().left(10 + i * 50 + 28 - 40).top(WATERLINE - 84).w(80).h(88),
+    ] : []);
     const sky = v_flex().absolute().left(12).top(10).w(196).gap(6)
       .child(div().text_size(12).text_color("#9ab8ff").child(`SURFACED · ${done.length}`))
       .children(done.slice(0, 2).map((a) => div().id(`st-${a.address}`).on_click(this.go(a)).on_mouse_down("right", this.pin(a))
@@ -170,16 +186,21 @@ export class Sea {
     });
     const subs = want.map(({ a, y }) => {
       const s = compact ? 0.6 : 1;
+      const alert = a.status === "working" && minutesUnder(a, tabs, now) >= PRESSURE_MIN ? "pressure"
+        : a.status === "idle" && minutesParked(a, tabs, now) >= MOSS_MIN ? "moss" : null;
+      const look = alert === "moss" ? image(`${ART}/minisub-${toolOf(a)}-moss.gif`).w(SUB_W * s).h(LOOT_H * s)
+        : image(`${ART}/minisub-${toolOf(a)}.gif`).w(SUB_W * s).h(SUB_H * s);
       return div().id(`u-${a.address}`).absolute().left(28).top(Math.round(y)).w(W - 36).h(row)
         .on_click(this.go(a)).on_mouse_down("right", this.pin(a))
         .when(a.status === "blocked", (el) => el.child(image(`${ART}/blip-blocked.gif`).absolute().left(0).top(-10).size(56)))
-        .child(image(`${ART}/minisub-${toolOf(a)}.gif`).absolute().left(2).top(compact ? -4 : 0).w(SUB_W * s).h(SUB_H * s))
-        .child(div().absolute().left(58).top(compact ? 2 : 4).child(this.tag(a, ids.get(a.address), tabs, W - 36 - 66, compact)));
+        .when(alert === "pressure" && !compact, (el) => el.child(image(`${ART}/pressure.gif`).absolute().left(-12).top(-28).w(80).h(76)))
+        .child(div().absolute().left(2).top(compact ? -4 : 0).child(look))
+        .child(div().absolute().left(58).top(compact ? 2 : 4).child(this.tag(a, ids.get(a.address), tabs, W - 36 - 66, compact, alert)));
     });
 
     const sea = div().relative().size_full().overflow_hidden()
       .child(scene).children(life).children(ruler).children(flares)
-      .child(captain).children(surfaced).child(sky).children(subs)
+      .child(captain).children(surfaced).children(bursts).child(sky).children(subs)
       .when(!list.length, (el) => el.child(div().absolute().left(0).w(W).top(Math.round(H * 0.55)).flex().justify_center()
         .text_size(12).text_color(INK.seaDim).child("No crew out. Calm seas.")));
     return framed("bezel", sea, { fill: WATER_DEEP });
