@@ -4,7 +4,7 @@
 // Go link, then the log entries of the latest subs home (shared "sub.log", written by the sea). Esc closes it.
 import { div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { agents, run, shared, closeOverlay } from "herdr";
+import { agents, run, shared, setShared, closeOverlay } from "herdr";
 import { framed } from "../kit/frame.js";
 import { sprite } from "../kit/sprite.js";
 import { INK, WORD, toolOf, toolName, titleOf, since } from "../state.js";
@@ -21,6 +21,10 @@ function rank(dives) {
 }
 
 export class CaptainsLog {
+  close() {
+    setShared("sub.log.open", null);
+  }
+
   heading(label, color = INK.mid) {
     return v_flex().gap(4)
       .child(div().text_color(color).child(label))

@@ -1,9 +1,11 @@
 // The Changes panel, in the sub's materials: Herdr's changes mod (cloned from 0.1.12), with a second mode.
 //   WORKING  what's uncommitted, its diff, and a commit box: behaviour as in the original
 //   COMMITS  what's been committed, reviewed like a pull request (review.js)
+// pane.go brings the keyboard here: in WORKING, j/k or arrows go through the files showing each one's diff.
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, Scrollbar, v_virtual_list } from "gpui-base";
-import { spaces, panes, focused, exec, readTextFile, watchFolder, settings } from "herdr";
+import { spaces, panes, focused, exec, readTextFile, watchFolder, settings, nextCommand } from "herdr";
+import { Cursor } from "./kit/cursor.js";
 import { framed } from "./kit/frame.js";
 import { INK, READ, clip, counts, diffRow, diffRows, diffWidth, key as keyPlate, pathLabel, plate, well } from "./chrome.js";
 import { Review } from "./review.js";
@@ -31,6 +33,14 @@ export default class Changes extends View {
     this.input.on("submit", (_e, cx) => this.commit(cx));
     this.input.on("focus", (_e, cx) => { this.typing = true; cx.notify(); });
     this.input.on("blur", (_e, cx) => { this.typing = false; cx.notify(); });
+    this.cursor = new Cursor(); this.walking = false;
+    cx.spawn(async (cx) => {
+      for (;;) {
+        if (await nextCommand() !== "focus") continue;
+        this.handle.focus(); this.walking = true;
+        cx.notify();
+      }
+    });
     this.refresh(cx);
     cx.timer.every(10000, (cx) => this.refresh(cx));
   }
@@ -156,6 +166,18 @@ export default class Changes extends View {
     cx.notify();
   }
 
+  // true when the key was this panel's: the cursor is the open file, so moving shows the next diff
+  walk(k, cx) {
+    if (this.mode !== "working" || this.typing || !this.files.length) return false;
+    if (k !== "j" && k !== "k" && k !== "down" && k !== "up") return false;
+    const at = this.files.findIndex((f) => f.path === this.open);
+    this.cursor.at = at;
+    this.cursor.move(k === "j" || k === "down" ? 1 : -1, this.files.length);
+    const next = this.files[this.cursor.at];
+    if (next.path !== this.open) this.pick(next.path, cx);
+    return true;
+  }
+
   // the steel plate along the top: the two modes, and how much has changed
   header(cx) {
     const add = this.files.reduce((n, f) => n + f.add, 0), del = this.files.reduce((n, f) => n + f.del, 0);
@@ -171,11 +193,16 @@ export default class Changes extends View {
 
   working() {
     const enabled = Boolean(this.message.trim() && this.root && !this.busy && !this.loading);
-    const list = v_flex().id("changes-list").size_full().overflow_y_scrollbar().p(4).children(this.files.map((f) =>
+    const walking = this.walking && this.handle.is_focused();
+    const rows = this.files.map((f) =>
       h_flex().id(`change-${f.path}`).h(26).flex_none().px(6).gap(8).items_center().cursor_pointer()
         .when(this.open === f.path, (e) => e.bg(INK.pick)).hover((s) => s.bg(INK.hover)).on_click((_e, cx) => this.pick(f.path, cx))
         .child(div().w(12).flex_none().text_size(11).text_color(STATUS_INK[f.status]).child(f.status))
-        .child(pathLabel(f.path)).child(counts(f.add, f.del))))
+        .child(pathLabel(f.path)).child(counts(f.add, f.del)));
+    if (walking) this.cursor.at = this.files.findIndex((f) => f.path === this.open);
+    const list = v_flex().id(walking ? "changes-list-walk" : "changes-list").size_full().when(!walking, (e) => e.overflow_y_scrollbar()).when(walking, (e) => e.overflow_hidden()).p(4)
+      .on_size_change((size) => { this.cursor.height = size.height - 8; })
+      .children(walking ? this.cursor.window(rows) : rows)
       .when(!this.files.length, (e) => e.child(div().p(6).text_color(INK.dim).child(this.error || (this.loading ? "Loading changes…" : this.root ? "No uncommitted changes" : "No folder"))));
     const diff = div().relative().size_full().font_family(settings().font_family ?? "JetBrains Mono").text_size(11)
       .child(div().id("changes-diff-x").size_full().overflow_x_scrollbar()
@@ -199,8 +226,13 @@ export default class Changes extends View {
     if (key() !== this.context) this.refresh(cx);
     return v_flex().id("changes").relative().size_full().min_h(0).gap(6).p(6).rounded(12).overflow_hidden().bg("#0b1c20").text_size(12).track_focus(this.handle)
       .on_key_down((e, cx) => {
-        if (e.key === "escape" && (this.typing || this.review.typing)) { this.typing = false; this.review.typing = false; this.handle.focus(); cx.stop_propagation(); cx.notify(); }
+        if (e.key === "escape" && (this.typing || this.review.typing)) { this.typing = false; this.review.typing = false; this.handle.focus(); cx.stop_propagation(); cx.notify(); return; }
+        if (e.modifiers.control || e.modifiers.platform || e.modifiers.alt) return;
+        this.walking = true;
+        if (this.walk(e.key, cx)) { cx.stop_propagation(); cx.notify(); }
       })
+      .on_mouse_down("left", (_e, cx) => { this.walking = false; cx.notify(); })
+      .on_scroll_wheel((_e, cx) => { if (this.walking) { this.walking = false; cx.notify(); } })
       .child(this.header(cx))
       .children(this.mode === "working" ? this.working() : this.review.render(cx));
   }

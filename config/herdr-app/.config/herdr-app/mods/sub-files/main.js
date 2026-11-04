@@ -1,8 +1,10 @@
 // The Files panel, in the sub's materials: Herdr's files mod (cloned from 0.1.12), behaviour unchanged. A lazy file browser
-// for the focused pane's folder, with bounded read-only previews.
+// for the focused pane's folder, with bounded read-only previews. pane.go brings the keyboard here: j/k or arrows walk
+// the tree, enter or l opens, h closes a folder or goes to its parent, and h or esc leaves a preview.
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Editor, EditorState } from "gpui-base";
-import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, window } from "herdr";
+import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, window, nextCommand } from "herdr";
+import { Cursor } from "./kit/cursor.js";
 import { engraved } from "./kit/metal.js";
 import { INK, key as keyPlate, plate, well } from "./kit/panel.js";
 
@@ -37,6 +39,14 @@ export default class Files extends View {
   init(_props, cx) {
     this.saved = new Map();
     this.entries = new Map(); this.folders = new Set(); this.pending = new Set(); this.marks = {};
+    this.handle = cx.focus_handle(); this.cursor = new Cursor(); this.flat = []; this.walking = false;
+    cx.spawn(async cx => {
+      for (;;) {
+        if (await nextCommand() !== "focus") continue;
+        this.handle.focus(); this.walking = true;
+        cx.notify();
+      }
+    });
     this.refresh(cx);
     cx.timer.every(10000, cx => this.refresh(cx));
   }
@@ -142,18 +152,45 @@ export default class Files extends View {
     });
   }
 
-  rows(prefix, depth, out) {
+  // true when the key was this panel's
+  walk(k, cx) {
+    if (this.file) {
+      if (k !== "escape" && k !== "h" && k !== "left") return false;
+      this.show(null);
+      return true;
+    }
+    const row = this.flat[this.cursor.at];
+    if (k === "j" || k === "down") this.cursor.move(1, this.flat.length);
+    else if (k === "k" || k === "up") this.cursor.move(-1, this.flat.length);
+    else if (!row) return false;
+    else if (k === "enter" || k === "l" || k === "right") {
+      if (!row.dir) this.show(row.path, cx);
+      else if (!this.folders.has(row.path)) this.toggle(row.path, cx);
+    } else if (k === "h" || k === "left") {
+      if (row.dir && this.folders.has(row.path)) this.toggle(row.path, cx);
+      else {
+        const parent = row.path.split("/").slice(0, -1).join("/");
+        const at = this.flat.findIndex(r => r.path === parent);
+        if (at >= 0) this.cursor.at = at;
+      }
+    } else return false;
+    return true;
+  }
+
+  rows(prefix, depth, out, walking) {
     if (out.length >= TOTAL || depth > 40) return out;
     for (const entry of this.entries.get(prefix) ?? []) {
       if (out.length >= TOTAL) break;
       const path = prefix ? `${prefix}/${entry.name}` : entry.name, open = this.folders.has(path), mark = this.marks[`${this.root}/${path}`];
+      this.flat.push({ path, dir: entry.dir });
       out.push(h_flex().id(`file-${path}`).h(26).flex_none().pl(6 + depth * 16).pr(6).gap(7).items_center().cursor_pointer().hover(s => s.bg(INK.hover))
+        .when(walking && out.length === this.cursor.at, el => el.bg(INK.pick))
         .on_click((_e, cx) => entry.dir ? this.toggle(path, cx) : this.show(path, cx))
         .child(entry.dir ? svg(`mods/files/chevron-${open ? "down" : "right"}.svg`).size(12).flex_none().text_color(INK.dim) : div().w(12).flex_none())
         .child(svg(`mods/files/${entry.dir ? "folder" : "file"}.svg`).size(14).flex_none().text_color(entry.dir ? INK.gold : INK.dim))
         .child(div().flex_1().min_w(0).truncate().text_color(entry.dir ? INK.mid : INK.hi).child(entry.name))
         .when(Boolean(mark), el => el.child(div().text_size(11).text_color(mark === "A" ? INK.add : mark === "D" || mark === "U" ? INK.del : INK.gold).child(mark))));
-      if (entry.dir && open) this.rows(path, depth + 1, out);
+      if (entry.dir && open) this.rows(path, depth + 1, out, walking);
     }
     return out;
   }
@@ -161,12 +198,26 @@ export default class Files extends View {
   render(cx) {
     if (key() !== this.context?.key) this.refresh(cx);
     const message = (text) => div().p(6).text_size(12).text_color(INK.dim).child(text);
+    const walking = this.walking && this.handle.is_focused();
+    this.flat = [];
+    const rows = this.rows("", 0, [], walking);
     const body = this.file
       ? (this.code ? Editor.new(this.code).size_full() : message(this.fileError || "Loading file…"))
-      : v_flex().id("files-tree").size_full().overflow_y_scrollbar().children(this.rows("", 0, []))
+      : v_flex().id(walking ? "files-tree-walk" : "files-tree").size_full().when(!walking, el => el.overflow_y_scrollbar()).when(walking, el => el.overflow_hidden())
+        .on_size_change((size) => { this.cursor.height = size.height; })
+        .children(walking ? this.cursor.window(rows) : rows)
         .when(Boolean(this.error) || !this.entries.get("")?.length, el => el.child(message(this.error || (this.loading ? "Loading files…" : this.root ? "No files" : "No folder"))))
         .when(this.limited, el => el.child(message("File list limited to 500 entries per folder and 5,000 total")));
-    return v_flex().id("files").relative().size_full().min_h(0).gap(6).p(6).rounded(12).overflow_hidden().bg("#0b1c20").text_size(12)
+    return v_flex().id("files").relative().size_full().min_h(0).gap(6).p(6).rounded(12).overflow_hidden().bg("#0b1c20").text_size(12).track_focus(this.handle)
+      .on_key_down((e, cx) => {
+        if (e.modifiers.control || e.modifiers.platform || e.modifiers.alt) return;
+        this.walking = true;
+        if (!this.walk(e.key, cx)) return;
+        cx.stop_propagation();
+        cx.notify();
+      })
+      .on_mouse_down("left", (_e, cx) => { this.walking = false; cx.notify(); })
+      .on_scroll_wheel((_e, cx) => { if (this.walking) { this.walking = false; cx.notify(); } })
       .child(plate(h_flex().size_full().gap(8).items_center()
         .when(Boolean(this.file), el => el.child(keyPlate("files-back", "←", false, 30, (cx) => { this.show(null); cx.notify(); })))
         .child(div().flex_none().pl(4).child(engraved("FILES")))

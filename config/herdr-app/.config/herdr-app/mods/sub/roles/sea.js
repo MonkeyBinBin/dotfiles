@@ -11,7 +11,7 @@
 // more, it overgrows with barnacles and weed. One that just surfaced throws up a splash and fires a gold flare.
 // Click a sub (or its tag) to watch it through the periscope (a floating window with its live terminal);
 // double-click to go to it; right-click for its menu (periscope, go, pin, rename, close). The order the column reads in is agent.next's.
-import { div, image, Background, PathBuilder } from "gpui-kit";
+import { div, image, svg, Background, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { agents, run, setAgentOrder, shared, setShared } from "herdr";
 import { battleLight, onAlert } from "../kit/battle-light.js";
@@ -42,6 +42,11 @@ const RAYS = [[0, 7300, 0.55], [1, 9100, 0.4], [2, 6100, 0.5], [3, 11300, 0.35]]
 const BUBBLE_EVERY = [6000, 15000], BUBBLES = 7;
 // the subs hang right of the ruler's labels
 const SUB_X = 62, ROW = 44, SUB_W = 52, SUB_H = 40, LOOT_H = 60, CAPTAIN = [196, 140], HAPPY_MS = 3600;
+const TOOL_ICON = 14;
+// The agent's icon from the app's program table, or null when it has none: a one-color glyph or a picture.
+const toolIcon = (p, color) => !p?.icon ? null
+  : p.tint ? svg(p.icon).size(TOOL_ICON).flex_none().text_color(color)
+  : image(p.icon).size(TOOL_ICON).flex_none();
 
 export class Sea {
   constructor(cx) {
@@ -175,7 +180,7 @@ export class Sea {
       .child(arm({ bottom: 0, left: 0 }, ["b", "l"])).child(arm({ bottom: 0, right: 0 }, ["b", "r"]));
   }
 
-  // an agent's tag: contact number, title, status word; tool · space · clock under it. `alert`: under pressure
+  // an agent's tag: contact number, title, status word; its tool's icon (else its name), space, clock under it. `alert`: under pressure
   // or overgrown, which changes its word and clock
   tag(a, id, tabs, w, compact, alert) {
     const clock = a.status === "idle" ? (alert ? `${since(tabs.get(a.tab)?.changed_at)} idle` : "") : since(a.status === "working" ? underSince(a, tabs) : tabs.get(a.tab)?.changed_at);
@@ -189,8 +194,12 @@ export class Sea {
     // on a dark, see-through backing so passing sea life never muddles the text
     const tagEl = v_flex().relative().w(w).gap(4).text_size(12).px(6).py(3).mx(-6).bg("#03151fe6")
       .child(line1)
-      .when(!compact, (el) => el.child(div().pl(14).truncate().text_color(alert === "pressure" ? "#ffb055" : INK.seaDim)
-        .child([toolName(a), a.space_name, clock].filter(Boolean).join(" · "))));
+      .when(!compact, (el) => {
+        const color = alert === "pressure" ? "#ffb055" : INK.seaDim, icon = toolIcon(a.program, color);
+        return el.child(h_flex().pl(14).gap(6).items_center().text_color(color)
+          .when(Boolean(icon), (row) => row.child(icon))
+          .child(div().flex_1().min_w(0).truncate().child([icon ? null : toolName(a), a.space_name, clock].filter(Boolean).join(" · "))));
+      });
     return a.focused ? tagEl.child(this.brackets()) : tagEl;
   }
 

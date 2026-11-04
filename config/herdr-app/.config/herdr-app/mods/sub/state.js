@@ -58,10 +58,7 @@ export const minutesUnder = (a, tabs, now = Date.now()) => {
   return at ? (now - at) / 60000 : 0;
 };
 
-/** Contact numbers, C1.., in the order the agents were made, so a sub keeps its number. */
-export function contacts(list) {
-  return new Map([...list].sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0)).map((a, i) => [a.address, `C${i + 1}`]));
-}
+export { contacts } from "./kit/contacts.js";
 
 /** A small stable hash of a string, for each contact's bearing on the scope. */
 export function hash(s) {

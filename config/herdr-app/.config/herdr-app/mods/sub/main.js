@@ -24,6 +24,10 @@ export default class Sub extends View {
     this.role = null;
   }
 
+  async close() {
+    this.role?.close?.();
+  }
+
   // The role is read from props() on first render: init's own argument doesn't carry the layout's props.
   render(cx) {
     const p = props() ?? {};

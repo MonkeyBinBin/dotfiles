@@ -1,13 +1,15 @@
 // The sub's tab bar along the top hull edge: Herdr's tabs mod (cloned from 0.1.12), each tab a stencil plate
 // riveted on the hull (the shown one brass, the rest steel) with its status lamp, + and the side panel buttons as
 // plates too, and a brass porthole badge at the right end (click: the captain's log). Behaviour is unchanged: select, drag to move,
-// double-click to rename, right-click menu, + menu, side panel buttons remembered per space.
+// double-click to rename, right-click menu, + menu, side panel buttons remembered per space. An unnamed tab goes by its
+// agent's title. Key commands (keys.json): sub-tabs.files, .changes, .log and .agent1-9, which goes to contact C1-C9.
 import { View, div, image, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { battleLight, onAlert } from "./kit/battle-light.js";
+import { byContact } from "./kit/contacts.js";
 import { framed } from "./kit/frame.js";
 import { sprite } from "./kit/sprite.js";
-import { spaces, panes, run, openOverlay, theme, window, layout, settings } from "herdr";
+import { agents, spaces, panes, run, openOverlay, closeOverlay, shared, setShared, theme, window, layout, settings, nextCommand } from "herdr";
 
 const ART = "mods/sub/assets";
 // the side panels the sub always offers (the app's own "workspace.panels" comes from its welcome screen)
@@ -26,9 +28,35 @@ function find(node, id) {
 }
 
 export default class Tabs extends View {
-  init() {
+  init(_props, cx) {
     this.pressed = null;
     this.panels = JSON.parse(localStorage.getItem("panels") ?? "{}");
+    cx.spawn(async () => {
+      for (;;) this.command(await nextCommand());
+    });
+  }
+
+  command(c) {
+    if (PANELS.includes(c)) return this.togglePanel(c);
+    if (c === "log") return this.toggleLog();
+    const contact = /^agent([1-9])$/.exec(c);
+    const agent = contact && byContact(agents())[Number(contact[1]) - 1];
+    if (agent) run("agent.focus", { terminal: agent.address });
+  }
+
+  togglePanel(id) {
+    const root = layout(), panel = find(root, "panel");
+    if (panel && !panel.hidden && find(root, "panel-body")?.active === id) return run("layout.hide", { id: "panel" });
+    run("layout.select", { stack: "panel-body", child: id });
+    run("layout.show", { id: "panel" });
+  }
+
+  // Open while the log says so (it clears "sub.log.open" as it goes, Esc included). The id must also be this run's: shared
+  // state outlives the app, and a quit may not get to clear it.
+  toggleLog() {
+    if (this.log && shared("sub.log.open") === this.log) return closeOverlay(this.log);
+    this.log = openOverlay({ mod: "sub", kind: "dialog", width: 680, height: 460, frame: "none", props: { role: "log" } });
+    setShared("sub.log.open", this.log);
   }
 
   // The side panel is remembered per space: switching shows that space's choice
@@ -69,9 +97,13 @@ export default class Tabs extends View {
       .on_mouse_down("left", stop).on_click(action)
       .child(plate(div().w(30).h_full().flex().items_center().justify_center().child(label)));
     const item = (c, i) => {
-      const program = panes().find(p => p.tab === c.id && p.program?.agent)?.program ?? panes().find(p => p.tab === c.id)?.program;
-      // an unnamed tab goes by its program (Herdr numbers them otherwise, and the plate shows the number already)
-      const name = c.named === false || /^tb\d+$/.test(c.name) || c.name === String(i + 1) ? program?.name ?? "Terminal" : c.name;
+      const agentPane = panes().find(p => p.tab === c.id && p.program?.agent);
+      const program = agentPane?.program ?? panes().find(p => p.tab === c.id)?.program;
+      // An unnamed tab goes by its agent's title, then its program (Herdr numbers them otherwise, and the plate shows the
+      // number already). The + menu names a tab after the agent it starts, which says no more than its program does.
+      const generic = c.named === false || /^tb\d+$/.test(c.name) || c.name === String(i + 1)
+        || c.name === program?.name || c.name.startsWith(`${program?.name} (`);
+      const name = generic ? agentPane?.title || program?.name || "Terminal" : c.name;
       // a stencil plate with its number; the shown tab is the brass one
       return div().id(`tab-${c.id}`).flex_none().h(30).text_size(12)
         .text_color(c.active ? INK.brass : INK.steel).hover(s => s.text_color(c.active ? INK.brass : INK.steelHi))
@@ -102,15 +134,12 @@ export default class Tabs extends View {
       const on = panel && !panel.hidden && body?.active === id;
       return div().id(`panel-${id}`).flex_none().h(30).text_size(12).text_color(on ? INK.brass : INK.steel)
         .hover(s => s.text_color(on ? INK.brass : INK.steelHi)).on_mouse_down("left", stop)
-        .on_click(() => {
-          if (on) run("layout.hide", { id: "panel" });
-          else { run("layout.select", { stack: "panel-body", child: id }); run("layout.show", { id: "panel" }); }
-        }).child(plate(h_flex().h_full().px(12).gap(6).items_center().child(svg(icon).size(14)).child(label), { lit: on }));
+        .on_click(() => this.togglePanel(id)).child(plate(h_flex().h_full().px(12).gap(6).items_center().child(svg(icon).size(14)).child(label), { lit: on }));
     };
     // plates riveted straight on the hull; at the right end a brass porthole badge, the captain's log
     const logBadge = div().id("log-badge").tooltip("Captain's log").flex_none().size(36).opacity(0.92).hover(s => s.opacity(1)).active(s => s.opacity(0.75))
       .on_mouse_down("left", stop)
-      .on_click(() => openOverlay({ mod: "sub", kind: "dialog", width: 680, height: 460, frame: "none", props: { role: "log" } }))
+      .on_click(() => this.toggleLog())
       .child(image(`${ART}/log-badge.png`).size_full());
     return h_flex().relative().size_full().min_w(0).pl(lightsPadding).gap(8).items_center()
       .when(onAlert(), el => el.child(battleLight()))

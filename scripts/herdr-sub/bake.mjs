@@ -88,7 +88,7 @@ const SUB_ASSETS = {
   "toggle-down": sub("sub/console", [0, 0, 7, 14], { png: true, opts: { kind: "toggle-down" } }),
   ...Object.fromEntries(["stop", "ahead", "emergency"].map((order) => [`telegraph-${order}`, sub("sub/console", [0, 0, 36, 20], { opts: { kind: `telegraph-${order}` }, ...(order === "emergency" ? sheet(2, 2) : still) })])),
   // behind the conversation (layouts/sub.json): pixel art, enlarged here so the pixels stay square when it's stretched
-  "deep-sea-pixel": { fx: "sub/abyss", crop: [0, 0, 256, 96], mod: "sub", png: true, edge: 0, scale: 6 },
+  "window-view": { fx: "sub/viewport", crop: [0, 0, 1280, 480], mod: "sub", png: true, edge: 0, scale: 2 },
   jelly: sub("sub/sea", [0, 0, 20, 18], { opts: { kind: "jelly" }, ...sheet(12, 2) }),
 };
 

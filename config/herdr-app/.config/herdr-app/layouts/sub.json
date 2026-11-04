@@ -27,7 +27,7 @@
         {
           "id": "main",
           "type": "block",
-          "background": { "image": "mods/sub/assets/deep-sea-pixel.png", "fit": "cover" },
+          "background": { "image": "mods/sub/assets/window-view.png", "fit": "cover" },
           "radius": 16,
           "content": {
             "tab": "active",

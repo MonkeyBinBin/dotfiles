@@ -1,0 +1,6 @@
+{
+  "programs": {
+    "claude-continue": { "name": "Claude Code (continue)", "icon": "icons/claude.svg", "tile": "#1c1d21", "color": "#ffffff", "run": ["claude", "-c"] },
+    "claude-resume": { "name": "Claude Code (resume)", "icon": "icons/claude.svg", "tile": "#1c1d21", "color": "#ffffff", "run": ["claude", "--resume"] }
+  }
+}
