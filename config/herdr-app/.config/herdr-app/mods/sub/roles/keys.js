@@ -48,7 +48,20 @@ function label(action) {
   return (arg ? `${words} ${arg}` : words).replace(/^./, (c) => c.toUpperCase());
 }
 
-/** The bindings in force in the shown layout, each { keys, action, label }, with numbered runs folded. */
+/** The rows a filter keeps. Whole words win, so "pane" finds the pane commands and not "Files panel"; failing those, the start of a
+ *  word, so "pan" finds both; failing those, anywhere, which is what finds a typed ⌘. */
+function matching(rows, filter) {
+  const terms = filter.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (!terms.length) return rows;
+  const words = (r) => `${r.label} ${r.action} ${r.raw}`.toLowerCase().split(/[^a-z0-9]+/);
+  const whole = rows.filter((r) => terms.every((t) => words(r).includes(t)));
+  if (whole.length) return whole;
+  const starts = rows.filter((r) => terms.every((t) => words(r).some((w) => w.startsWith(t))));
+  if (starts.length) return starts;
+  return rows.filter((r) => terms.every((t) => `${r.label} ${r.keys}`.toLowerCase().includes(t)));
+}
+
+/** The bindings in force in the shown layout, each { keys, raw, action, label }, with numbered runs folded. */
 function inForce(layout) {
   const all = keys(), own = all.filter((k) => k.section === `layout:${layout}`), taken = new Set(own.map((k) => k.keys));
   const rows = [...own, ...all.filter((k) => k.section === "global" && !taken.has(k.keys)), ...all.filter((k) => k.section === "terminal")];
@@ -56,7 +69,7 @@ function inForce(layout) {
   for (const k of rows) {
     // cmd-3 -> tab.select:3, cmd-alt-3 -> sub-tabs.agent3: the same digit at the end of both
     const digit = /([1-9])$/.exec(k.keys)?.[1], action = digit && k.action.endsWith(digit) ? k.action.slice(0, -1) : null;
-    if (!action) { out.push({ keys: glyphs(k.keys), action: k.action, label: label(k.action) }); continue; }
+    if (!action) { out.push({ keys: glyphs(k.keys), raw: k.keys, action: k.action, label: label(k.action) }); continue; }
     const run = runs.get(action) ?? { digits: [], base: k.keys.slice(0, -1), action };
     if (!runs.has(action)) { runs.set(action, run); out.push(run); }
     run.digits.push(Number(digit));
@@ -64,7 +77,7 @@ function inForce(layout) {
   return out.map((r) => {
     if (!r.digits) return r;
     const a = Math.min(...r.digits), b = Math.max(...r.digits), span = a === b ? `${a}` : `${a}-${b}`;
-    return { keys: `${glyphs(`${r.base}x`).slice(0, -1)}${span}`, action: r.action, label: `${label(r.action)}${span}` };
+    return { keys: `${glyphs(`${r.base}x`).slice(0, -1)}${span}`, raw: r.base, action: r.action, label: `${label(r.action)}${span}` };
   });
 }
 
@@ -91,8 +104,7 @@ export class KeyList {
   }
 
   render() {
-    const f = this.filter.trim().toLowerCase(), left = new Set();
-    const rows = inForce(shared("layout") ?? "sub").filter((r) => !f || r.label.toLowerCase().includes(f) || r.keys.toLowerCase().includes(f) || r.action.toLowerCase().includes(f));
+    const left = new Set(), rows = matching(inForce(shared("layout") ?? "sub"), this.filter);
     const groups = GROUPS.map(([name, re]) => {
       const mine = rows.filter((r) => !left.has(r) && re.test(r.action));
       mine.forEach((r) => left.add(r));

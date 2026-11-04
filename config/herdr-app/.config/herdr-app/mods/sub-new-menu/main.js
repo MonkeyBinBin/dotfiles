@@ -56,7 +56,7 @@ export default class NewMenu extends View {
     const space = spaces().find(s => s.active);
     const installed = this.agents.filter(a => a.installed);
     const choices = [...installed, ...this.agents.filter(a => !a.installed).slice(0, 2)];
-    return v_flex().min_h(0).w_full().h(Math.min(491, 150 + Math.max(1, choices.length) * 28)).bg(GLASS).border(2).border_color(EDGE).p(4).text_size(12)
+    return v_flex().min_h(0).w_full().h(Math.min(491, 170 + Math.max(1, choices.length) * 28)).bg(GLASS).border(2).border_color(EDGE).p(4).text_size(12)
       .id("new-menu").track_focus(this.handle)
       .on_key_down((e) => {
         if (e.modifiers.control || e.modifiers.platform || e.modifiers.alt) return;
