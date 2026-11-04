@@ -7,7 +7,7 @@ import { h_flex, v_flex } from "gpui-base";
 import { agents, run, shared, setShared, closeOverlay } from "herdr";
 import { framed } from "../kit/frame.js";
 import { sprite } from "../kit/sprite.js";
-import { INK, WORD, toolOf, toolName, titleOf, since } from "../state.js";
+import { INK, WORD, escortsOf, toolOf, toolName, titleOf, since } from "../state.js";
 
 // ranks by subs brought home
 const RANKS = [[0, "Ensign"], [5, "Lieutenant"], [15, "Commander"], [40, "Captain"], [100, "Admiral"]];
@@ -55,7 +55,8 @@ export class CaptainsLog {
   render(_cx, p) {
     const list = agents(), overlay = p.overlay;
     const dives = shared("sub.dives") ?? 0, log = shared("sub.log") ?? [], r = rank(dives);
-    const blocked = list.filter((a) => a.status === "blocked"), done = list.filter((a) => a.status === "done");
+    // an agent with an escort calling for help is listed too: Go takes the person to it
+    const blocked = list.filter((a) => a.status === "blocked" || escortsOf(a.address).some((e) => e.status === "blocked")), done = list.filter((a) => a.status === "done");
     const working = list.filter((a) => a.status === "working").length;
     const stat = (label, value, color = INK.hi) => h_flex().justify_between()
       .child(div().text_color(INK.dim).child(label)).child(div().text_color(color).child(value));

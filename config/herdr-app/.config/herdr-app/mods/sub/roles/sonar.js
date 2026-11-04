@@ -10,7 +10,7 @@ import { battleLight, onAlert } from "../kit/battle-light.js";
 import { framed } from "../kit/frame.js";
 import { engraved, metal } from "../kit/metal.js";
 import { sprite } from "../kit/sprite.js";
-import { ART, INK, WORD, STATUS_INK, tabsById, depthOf, minutesUnder, contacts, hash, periscope, goTo, subMenu } from "../state.js";
+import { ART, INK, WORD, STATUS_INK, tabsById, depthOf, minutesUnder, contacts, hash, periscope, goTo, subMenu, sosEscorts } from "../state.js";
 
 // the scope: 140 native px, shown at 280; its screen's radius is 60 native px
 const SCOPE = 280, C = SCOPE / 2, R = 120, SWEEP_MS = 3000, LABEL = "#4f9f76";
@@ -30,9 +30,10 @@ export class Sonar {
     });
   }
 
-  // the periscope on the next sub in a state, round and round; oldest first
+  // the periscope on the next sub in a state, round and round; oldest first, then any escorts calling for help
   next(status) {
-    const list = agents().filter((a) => a.status === status).sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
+    const all = agents(), list = all.filter((a) => a.status === status).sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
+    if (status === "blocked") list.push(...sosEscorts(all));
     if (!list.length) return;
     const i = (this.turn[status] ?? 0) % list.length;
     this.turn[status] = i + 1;
@@ -70,7 +71,7 @@ export class Sonar {
       .child(div().text_color(LABEL).child(label)).child(div().text_color(n ? color : LABEL).child(String(n)));
     // a steel panel like the console's, its engraved label over a sunken readout
     const rows = framed("well", v_flex().size_full().justify_between().px(6).py(4).text_size(12)
-      .child(line(WORD.blocked, count("blocked"), INK.red, "blocked"))
+      .child(line(WORD.blocked, count("blocked") + sosEscorts(list).length, INK.red, "blocked"))
       .child(line(WORD.done, count("done"), INK.gold, "done"))
       .child(line(WORD.working, count("working"), INK.mid, "working"))
       .child(line(WORD.idle, count("idle"), INK.idle, "idle"))

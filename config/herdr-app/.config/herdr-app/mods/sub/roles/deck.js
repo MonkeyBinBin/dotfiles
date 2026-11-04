@@ -3,8 +3,8 @@
 //   COMPARTMENTS  a toggle plate per space, thrown and brass when shown: its status lamp, its name, a pip per agent
 //                 aboard in that agent's status color, a smaller one after it per escort; + for a new space. Click to go
 //                 there, right-click for its menu
-//   TELEGRAPH     the engine order: EMERGENCY with one blocked, AHEAD with one working, else STOP
-//   ALARMS        dark until they trip: SOS (blocked), LOOT (done), PRES (under pressure), MOSS (overgrown), and CLASH: agents
+//   TELEGRAPH     the engine order: EMERGENCY with one blocked (an escort counts), AHEAD with one working, else STOP
+//   ALARMS        dark until they trip: SOS (blocked, escorts too), LOOT (done), PRES (under pressure), MOSS (overgrown), and CLASH: agents
 //                 at work in one checkout on one branch. Click it for a new worktree; its tooltip says who
 //   SYSTEMS       Settings (a gold dot when an update is ready), Add machine
 import { div, image, svg } from "gpui-kit";
@@ -15,7 +15,7 @@ import { framed } from "../kit/frame.js";
 import { clashes } from "../kit/clash.js";
 import { engraved, metal, PAINT } from "../kit/metal.js";
 import { sprite } from "../kit/sprite.js";
-import { ART, INK, RANK, STATUS_INK, tabsById, minutesUnder, minutesParked, contacts, escortsOf, PRESSURE_MIN, MOSS_MIN } from "../state.js";
+import { ART, INK, RANK, STATUS_INK, tabsById, minutesUnder, minutesParked, contacts, escortsOf, sosEscorts, PRESSURE_MIN, MOSS_MIN } from "../state.js";
 
 const CONTENT = 44, MAX_PIPS = 8;
 const AMBER = "#ffb055", WEED = "#7aaa5a", VIOLET = "#c8a0ff";
@@ -84,7 +84,7 @@ export class Deck {
 
   telegraph(list) {
     const count = (st) => list.filter((a) => a.status === st).length;
-    const sos = count("blocked"), diving = count("working");
+    const sos = count("blocked") + sosEscorts(list).length, diving = count("working");
     const [order, word, color, detail] = sos ? ["emergency", "EMERGENCY", INK.red, `${sos} SOS`]
       : diving ? ["ahead", "AHEAD", INK.mid, `${diving} DIVING`]
       : ["stop", "ALL STOP", INK.idle, "AT REST"];
@@ -124,7 +124,7 @@ export class Deck {
     const pressure = list.filter((a) => a.status === "working" && minutesUnder(a, tabs, now) >= PRESSURE_MIN).length;
     const moss = list.filter((a) => a.status === "idle" && minutesParked(a, tabs, now) >= MOSS_MIN).length;
     return h_flex().gap(4).child(v_flex().gap(2)
-      .child(h_flex().gap(4).child(this.alarm("SOS", count("blocked"), INK.red, true)).child(this.alarm("LOOT", count("done"), INK.gold)))
+      .child(h_flex().gap(4).child(this.alarm("SOS", count("blocked") + sosEscorts(list).length, INK.red, true)).child(this.alarm("LOOT", count("done"), INK.gold)))
       .child(h_flex().gap(4).child(this.alarm("PRES", pressure, AMBER)).child(this.alarm("MOSS", moss, WEED))))
       .child(this.clash(list, cx));
   }

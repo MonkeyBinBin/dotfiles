@@ -4,7 +4,7 @@
 //   blocked  a red flare trail up to the surface, a pulsing ring round it
 //   working  hanging at its depth, an hour down it hovers just over the seabed
 //   idle     parked down on the sand
-// That Monkey stands in the hatch of his own sub at the top right: alarmed when one is blocked, cheering for a
+// That Monkey stands in the hatch of his own sub at the top right: alarmed when one or an escort is blocked, cheering for a
 // moment when one surfaces with loot, dozing while the crew works, else watching the sea. Every sub that
 // surfaces is entered in the captain's log (shared "sub.log", "sub.dives"; the log role reads them).
 // Under 30 minutes and more, a sub is under pressure: an amber warning ring turns round it. Parked an hour and
@@ -20,7 +20,7 @@ import { battleLight, onAlert } from "../kit/battle-light.js";
 import { framed } from "../kit/frame.js";
 import { sprite } from "../kit/sprite.js";
 import { facingRight, motionOf, position, rand, route, walk } from "../swim.js";
-import { ART, INK, RANK, WORD, RULER, STATUS_INK, toolOf, toolName, titleOf, since, tabsById, periscope, goTo, subMenu, underSince, depthOf, minutesUnder, minutesParked, contacts, escortsOf, PRESSURE_MIN, MOSS_MIN } from "../state.js";
+import { ART, INK, RANK, WORD, RULER, STATUS_INK, toolOf, toolName, titleOf, since, tabsById, periscope, goTo, subMenu, underSince, depthOf, minutesUnder, minutesParked, contacts, escortsOf, sosEscorts, PRESSURE_MIN, MOSS_MIN } from "../state.js";
 
 // The scenery strips, baked at 4x and shown at 2x: sky 64, surface 40, seabed 30 native px, all 176 wide.
 const W = 352, SKY = 128, SURFACE = 80, SEABED = 60, WATERLINE = SKY + 4;
@@ -155,7 +155,7 @@ export class Sea {
   }
 
   mood(list) {
-    if (list.some((a) => a.status === "blocked")) return "alarm";
+    if (list.some((a) => a.status === "blocked") || sosEscorts(list).length) return "alarm";
     if (Date.now() < this.happyUntil) return "happy";
     if (list.some((a) => a.status === "working")) return "sleep";
     return "idle";

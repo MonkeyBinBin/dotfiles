@@ -54,7 +54,7 @@ const SUB_ASSETS = {
   ])),
   // the scope without its sweep, the boat to lay over the sweep; the sweep itself is vector, see bakeSweep
   sonar: sub("sub/sonar", [-70, -70, 70, 70], { png: true, opts: { part: "scope" } }),
-  "sonar-boat": sub("sub/sonar", [-5, -4, 5, 2], { png: true, opts: { part: "boat" } }),
+  "sonar-boat": sub("sub/sonar", [-5, -4, 5, 2], { png: true, mirror: true, opts: { part: "boat" } }),
   ...Object.fromEntries(["blocked", "done", "working", "idle", "focus"].map((kind) => [`blip-${kind}`, sub("sub/blip", [-10, -10, 10, 10], { opts: { kind }, ...(kind === "idle" ? still : sheet(14)) })])),
   ...Object.fromEntries(["blocked", "done", "working", "idle"].map((kind) => [`lamp-${kind}`, sub("sub/lamp", [-5, -5, 5, 5], { opts: { kind }, ...(kind === "blocked" ? sheet(2, 2) : still) })])),
   "sea-sky": { fx: "sub/sea", crop: [0, 0, 176, 64], mod: "sub", edge: 0, opts: { kind: "sky" }, ...sheet(4, 6) },

@@ -1,5 +1,5 @@
 // What the whole sub is up to, shared by every role.
-import { agents, focused, panes, spaces, terminals, openOverlay, closeOverlay, run, setShared } from "herdr";
+import { agents, focused, spaces, openOverlay, closeOverlay, run, setShared } from "herdr";
 
 export const ART = "mods/sub/assets";
 // Status order: who needs the person first.
@@ -15,14 +15,6 @@ export const INK = {
 };
 export const STATUS_INK = { blocked: INK.red, done: INK.gold, working: INK.mid, idle: INK.idle };
 
-/** "claude" | "codex" | "gemini" | "other": the mini-sub's livery. */
-export function toolOf(a) {
-  const app = `${a.app ?? ""} ${a.program?.key ?? ""} ${a.program?.name ?? ""}`.toLowerCase();
-  if (app.includes("claude")) return "claude";
-  if (app.includes("codex")) return "codex";
-  if (app.includes("gemini")) return "gemini";
-  return "other";
-}
 export const toolName = (a) => a.program?.name ?? a.app ?? "agent";
 export const titleOf = (a) => a.title || a.program?.name || a.address;
 
@@ -60,28 +52,7 @@ export const minutesUnder = (a, tabs, now = Date.now()) => {
 
 export { contacts } from "./kit/contacts.js";
 
-const ESCORT_LABEL = "cc.sub.";
-
-/** An agent's escorts, the helpers it has out that aren't in agents(): `{ key, name, status, tool, since?, address? }`.
- *  - Claude Code's in-process subagents aren't terminals, so its hooks report them as labels on its terminal
- *    (config/claude/.config/claude/herdr-subagents.sh): no `address`, nothing to look at, always working.
- *  - Terminals it started with `hc run` and that have no pane, and theirs, with an `address` for the periscope. A
- *    helper never reads as done: that news is its parent's. */
-export function escortsOf(address, all = terminals(), shown = new Set(panes().map((p) => p.terminal))) {
-  const me = all.find((t) => t.address === address);
-  const inProcess = Object.entries(me?.labels ?? {}).filter(([k]) => k.startsWith(ESCORT_LABEL)).map(([k, v]) => {
-    const at = v.lastIndexOf("@");
-    return { key: k, name: v.slice(0, at) || "agent", status: "working", tool: "claude", since: Number(v.slice(at + 1)) * 1000 };
-  });
-  const started = all.filter((t) => t.parent === address && t.state === "live" && !shown.has(t.address)).flatMap((t) => [
-    {
-      key: t.address, address: t.address, name: t.name || t.template || t.program?.name || t.address, tool: toolOf(t),
-      status: t.status === "error" ? "blocked" : t.status === "done" ? "idle" : t.status,
-    },
-    ...escortsOf(t.address, all, shown),
-  ]);
-  return [...inProcess, ...started];
-}
+export { toolOf, escortsOf, sosEscorts } from "./kit/escorts.js";
 
 /** A small stable hash of a string, for each contact's bearing on the scope. */
 export function hash(s) {
