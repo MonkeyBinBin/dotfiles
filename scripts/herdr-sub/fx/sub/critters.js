@@ -47,7 +47,8 @@ function lane(t, o, margin, laps = 1) {
 function school(p, t, o) {
   const { x, dir, ph } = lane(t, o, 14, 2), FISH = R("#c86a1a", "#ffb84a", "#ffd25a");
   [[0, 12, 0], [-8, 7, 1], [-7, 16, 2]].forEach(([dx, y, i]) => {
-    const q = pen(p, x + dir * dx, y + Math.round(Math.sin((ph * 6 + i * 0.3) * TAU) * 1), dir);
+    // 4.5: centres the three of them on the pivot, so turning round doesn't shift them sideways
+    const q = pen(p, x + dir * (dx + 4.5), y + Math.round(Math.sin((ph * 6 + i * 0.3) * TAU) * 1), dir);
     const fin = Math.floor(ph * 40 + i) % 2;
     q.rect(-2, -1, 5, 3, FISH[1]); q.rect(-1, -2, 3, 1, FISH[2]); q.rect(-1, 1, 3, 1, FISH[0]);
     q.px(2, -1, FISH[2]); q.px(2, 0, INK);
@@ -55,27 +56,45 @@ function school(p, t, o) {
   });
 }
 
-// a colony of splendid garden eels (横帶園鰻) in the sand: each pokes up out of its burrow, banded orange and
-// white, leaning into the current and swaying with it; now and then one ducks down into its hole and rises again
-const GARDEN = [[8, 0.0, 26], [19, 0.37, 22], [31, 0.71, 28], [44, 0.18, 20], [56, 0.55, 25], [66, 0.86, 23]];
+// a colony of splendid garden eels (横帶園鰻) in the sand: slim S-curved bodies, banded gold and white, rising out of
+// their burrows and bowing their heads into the current; now and then one ducks down into its hole and rises again.
+// [burrow x, loop offset, length, which way it faces, far back (dimmer, drawn first)]
+const GARDEN = [[20, 0.62, 18, -1, true], [46, 0.29, 17, -1, true], [12, 0.0, 28, -1], [25, 0.37, 23, -1], [37, 0.71, 32, -1], [53, 0.18, 22, 1], [65, 0.55, 27, -1]];
 function garden(p, t) {
-  const ph = wrap(t, D) / D, ORANGE = R("#a8401a", "#f07a2a", "#ffb070"), WHITE_BAND = R("#c8b8a8", "#fff6e8"), SAND = R("#4a5a4e", "#6a7a6a", "#8a9a86");
+  const ph = wrap(t, D) / D, SAND = R("#4a5a4e", "#6a7a6a", "#8a9a86");
+  const NEAR = { gold: R("#b87a14", "#f0b428", "#ffdc64"), white: R("#c8c0b0", "#fff8ea", "#ffffff") };
+  const FAR = { gold: R("#6a5a2a", "#8a7a3e", "#a8965a"), white: R("#6a7a78", "#8a9a98", "#a0aeac") };
   const BASE = 38;
-  for (const [bx, off, full] of GARDEN) {
+  for (const [bx, off, full, dir, far] of GARDEN) {
+    const { gold, white } = far ? FAR : NEAR;
     // how far out: mostly up, one dip into the burrow per loop, easing down and back
     const u = (ph + off) % 1, dip = u < 0.12 ? Math.sin((u / 0.12) * Math.PI) : 0;
-    const h = Math.round(full * (1 - dip * 0.95));
-    const sway = (k) => Math.sin(ph * TAU * 4 + off * 9 - k * 2.2) * 2.4 * k ** 1.4 + k ** 2 * 2.5;
-    for (let y = 0; y < h; y++) {
-      const k = y / full, x = bx + sway(k), band = Math.floor((h - y) / 3) % 2;
-      const C = band ? WHITE_BAND : ORANGE;
-      p.px(Math.round(x) - 1, BASE - y, C[0]); p.px(Math.round(x), BASE - y, C[1]); p.px(Math.round(x) + 1, BASE - y, band ? C[1] : C[2]);
+    const h = full * (1 - dip * 0.95);
+    // walk the spine from the burrow: leaning back a little low down, bending over more and more towards the head
+    const sway = Math.sin(ph * TAU * 4 + off * 9);
+    let x = bx, y = BASE, tx = 0, ty = -1;
+    for (let s = 0; s < h; s += 0.4) {
+      const k = s / full, bend = dir * (-0.22 + 1.15 * k ** 2.6) + sway * 0.14 * k;
+      tx = Math.sin(bend);
+      ty = -Math.cos(bend);
+      x += tx * 0.4;
+      y += ty * 0.4;
+      // bands counted from the head, so they slide into the burrow with it: gold, then a thin white
+      const C = (h - s) % 6 < 2 ? white : gold;
+      for (const n of [-1, -0.5, 0, 0.5, 1]) p.px(Math.round(x - ty * n), Math.round(y + tx * n), C[n * dir < 0 ? 2 : n * dir > 0 ? 0 : 1]);
     }
     if (h > 3) {
-      // the head, bent into the current: a round snout, a big eye
-      const k = h / full, hx = Math.round(bx + sway(k)), hy = BASE - h;
-      for (const [dx, dy, c] of [[-1, 0, ORANGE[1]], [0, 0, ORANGE[2]], [1, 0, ORANGE[1]], [2, 0, ORANGE[1]], [-1, -1, ORANGE[1]], [0, -1, ORANGE[2]], [1, -1, ORANGE[2]], [2, -1, ORANGE[1]], [3, 0, ORANGE[0]], [0, -2, ORANGE[1]], [1, -2, ORANGE[1]]]) p.px(hx + dx, hy + dy, c);
-      p.px(1 + hx, hy - 1, WHITE); p.px(2 + hx, hy - 1, INK);
+      // the head: a rounded wedge along the spine's last heading, the eye on its upper side
+      const up = tx >= 0 ? 1 : -1, ux = ty * up, uy = -tx * up;
+      for (let a = 0; a <= 3; a += 0.3) {
+        const cx = x + tx * a, cy = y + ty * a, r = 2.2 - a * 0.4;
+        for (let i = Math.floor(cx - r); i <= cx + r; i++) for (let j = Math.floor(cy - r); j <= cy + r; j++) {
+          if (Math.hypot(i - cx, j - cy) <= r) p.px(i, j, j < cy ? gold[2] : gold[1]);
+        }
+      }
+      const ex = x + tx * 1.2 + ux * 0.4, ey = y + ty * 1.2 + uy * 0.4;
+      if (!far) p.px(Math.round(ex - tx), Math.round(ey - ty), WHITE);
+      p.px(Math.round(ex), Math.round(ey), INK);
     }
     // the burrow: a dark hole in a little sand mound
     p.px(bx - 3, BASE + 1, SAND[1]); p.px(bx + 3, BASE + 1, SAND[1]);
@@ -86,7 +105,8 @@ function garden(p, t) {
 
 function turtle(p, t, o) {
   const { x, dir, ph } = lane(t, o, 20, 1), SHELL = R("#2a4a1e", "#4a7a2a", "#7aaa3a", "#a8d86a"), SKIN = R("#4a7a5a", "#7ab88a", "#b8e8c0");
-  const q = pen(p, x, 12 + Math.round(Math.sin(ph * TAU * 3)), dir), stroke = Math.sin(ph * TAU * 12);
+  // -2: centres it on the pivot, head and all, so turning round doesn't shift it sideways
+  const q = pen(p, x - dir * 2, 12 + Math.round(Math.sin(ph * TAU * 3)), dir), stroke = Math.sin(ph * TAU * 12);
   // flippers paddling, behind the shell
   q.rect(1 + Math.round(stroke * 2), 3, 4, 2, SKIN[0]); q.rect(-6, 3 - Math.round(stroke), 3, 2, SKIN[0]);
   q.rect(2 - Math.round(stroke * 2), -5, 4, 2, SKIN[1]);
@@ -141,7 +161,8 @@ function seahorse(p, t) {
 }
 
 function shark(p, t, o) {
-  const q = pen(p, 20, 12, o.dir ?? 1), C = R("#2a3a44", "#54707e", "#8aa4ae", "#dce8ea"), wag = Math.floor(t * 8) % 2 ? 2 : -2;
+  // tail to snout is -20..15: centred in its 44 px frame, so turning round doesn't shift it sideways
+  const dir = o.dir ?? 1, q = pen(p, 22 + dir * 2.5, 12, dir), C = R("#2a3a44", "#54707e", "#8aa4ae", "#dce8ea"), wag = Math.floor(t * 8) % 2 ? 2 : -2;
   for (let i = -15; i <= 12; i++) {
     const k = (i + 15) / 27, half = Math.max(1, 5 * Math.sin(Math.PI * k ** 0.7));
     for (let j = -half; j <= half; j++) q.px(-i, j, j > half * 0.35 ? C[3] : j < -half * 0.3 ? C[1] : C[2]);

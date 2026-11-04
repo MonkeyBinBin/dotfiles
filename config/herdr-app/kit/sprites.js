@@ -109,22 +109,6 @@ export const SPRITES = {
     "n": 6,
     "period": 4800
   },
-  "school-r": {
-    "n": 14,
-    "period": 2800
-  },
-  "school-l": {
-    "n": 14,
-    "period": 2800
-  },
-  "turtle-r": {
-    "n": 14,
-    "period": 2800
-  },
-  "turtle-l": {
-    "n": 14,
-    "period": 2800
-  },
   "puffer-r": {
     "n": 20,
     "period": 8000
@@ -132,10 +116,6 @@ export const SPRITES = {
   "puffer-l": {
     "n": 20,
     "period": 8000
-  },
-  "garden-eels": {
-    "n": 14,
-    "period": 8400
   },
   "crab": {
     "n": 2,
@@ -173,17 +153,9 @@ export const SPRITES = {
     "n": 2,
     "period": 2000
   },
-  "shark-r": {
-    "n": 4,
-    "period": 1600
-  },
   "angler-r": {
     "n": 6,
     "period": 2400
-  },
-  "shark-l": {
-    "n": 4,
-    "period": 1600
   },
   "angler-l": {
     "n": 6,
@@ -200,5 +172,41 @@ export const SPRITES = {
   "sea-water": {
     "n": 12,
     "period": 4800
+  },
+  "shoal-r": {
+    "n": 14,
+    "period": 2800
+  },
+  "shoal-l": {
+    "n": 14,
+    "period": 2800
+  },
+  "sea-turtle-r": {
+    "n": 14,
+    "period": 2800
+  },
+  "sea-turtle-l": {
+    "n": 14,
+    "period": 2800
+  },
+  "reef-shark-r": {
+    "n": 4,
+    "period": 1600
+  },
+  "reef-shark-l": {
+    "n": 4,
+    "period": 1600
+  },
+  "eel-colony": {
+    "n": 14,
+    "period": 8400
+  },
+  "splash": {
+    "n": 14,
+    "period": 2333
+  },
+  "flare": {
+    "n": 14,
+    "period": 2333
   }
 };

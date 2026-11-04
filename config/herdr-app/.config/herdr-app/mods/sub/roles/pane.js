@@ -25,14 +25,14 @@ const trail = (legs, dy, pace) => legs.map((l) => ({ ...l, y: l.y + dy, ms: l.ms
 const SCENES = {
   chase: (W, right) => {
     const fleeing = route(W, 80, right, { speed: 780, steps: 7, rise: 12, turns: 0.12, easing: "ease-out" });
-    return [{ name: "school", w: 80, h: 48, legs: fleeing }, { name: "shark", w: 88, h: 48, legs: trail(fleeing, 2, 3.2), after: 1000 }];
+    return [{ name: "shoal", w: 80, h: 48, legs: fleeing }, { name: "reef-shark", w: 88, h: 48, legs: trail(fleeing, 2, 3.2), after: 1000 }];
   },
   school: (W, right) => {
     const legs = route(W, 80, right, { speed: 280, steps: 7, rise: 10, turns: 0.3 });
-    return [{ name: "school", w: 80, h: 48, legs, rock: 3 }, { name: "school", w: 80, h: 48, legs: trail(legs, 5, 1.04), after: 1300, rock: 3, opacity: 0.55 }];
+    return [{ name: "shoal", w: 80, h: 48, legs, rock: 3 }, { name: "shoal", w: 80, h: 48, legs: trail(legs, 5, 1.04), after: 1300, rock: 3, opacity: 0.55 }];
   },
   sub: (W) => [{ tool: true, w: 52, h: 40, legs: route(W, 52, true, { speed: 240, steps: 6, rise: 7, stops: 0.25 }), rock: 2 }],
-  turtle: (W, right) => [{ name: "turtle", w: 80, h: 48, legs: route(W, 80, right, { speed: 120, steps: 6, rise: 9, turns: 0.2, stops: 0.2 }), rock: 3 }],
+  turtle: (W, right) => [{ name: "sea-turtle", w: 80, h: 48, legs: route(W, 80, right, { speed: 120, steps: 6, rise: 9, turns: 0.2, stops: 0.2 }), rock: 3 }],
   puffer: (W, right) => [{ name: "puffer", w: 80, h: 48, legs: route(W, 80, right, { speed: 200, steps: 6, rise: 8, turns: 0.3, stops: 0.5 }) }],
   angler: (W, right) => [{ name: "angler", w: 80, h: 48, legs: route(W, 80, right, { speed: 120, steps: 7, rise: 6, stops: 0.4, lunges: 0.25 }), rock: 2 }],
   whale: (W, right) => [{ name: "great-whale", w: 240, h: 48, opacity: 0.95, legs: route(W, 240, right, { speed: 90, steps: 4, rise: 3 }) }],

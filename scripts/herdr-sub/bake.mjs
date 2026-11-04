@@ -61,22 +61,22 @@ const SUB_ASSETS = {
   fish: sub("sub/sea", [0, 0, 24, 16], { opts: { kind: "fish" } }),
   // sea life: swimmers finning on the spot, one sheet per way they face (the mod moves them across their lanes);
   // crab and seahorse stay put too (the mod drifts them)
-  ...Object.fromEntries([["school", 14, 1], ["turtle", 14, 1], ["puffer", 20, 2]].flatMap(([kind, count, stride]) => [["r", 1], ["l", -1]].map(([face, dir]) =>
-    [`${kind}-${face}`, sub("sub/critters", [0, 0, 40, 24], { opts: { kind, still: true, dir }, ...sheet(count, stride) })]))),
+  ...Object.fromEntries([["shoal", "school", 14, 1], ["sea-turtle", "turtle", 14, 1], ["puffer", "puffer", 20, 2]].flatMap(([name, kind, count, stride]) => [["r", 1], ["l", -1]].map(([face, dir]) =>
+    [`${name}-${face}`, sub("sub/critters", [0, 0, 40, 24], { opts: { kind, still: true, dir }, ...sheet(count, stride) })]))),
   // for the pane header's scenes
   ...Object.fromEntries([["r", 1], ["l", -1]].flatMap(([face, dir]) => [
-    [`shark-${face}`, sub("sub/critters", [0, 0, 44, 24], { opts: { kind: "shark", dir }, ...sheet(4, 2) })],
+    [`reef-shark-${face}`, sub("sub/critters", [0, 0, 44, 24], { opts: { kind: "shark", dir }, ...sheet(4, 2) })],
     [`angler-${face}`, sub("sub/critters", [0, 0, 40, 24], { opts: { kind: "angler", dir }, ...sheet(6, 2) })],
     [`great-whale-${face}`, sub("sub/critters", [0, 0, 120, 24], { opts: { kind: "humpback", dir }, ...sheet(8, 2) })],
   ])),
-  "garden-eels": sub("sub/critters", [0, 0, 72, 42], { opts: { kind: "garden" }, ...sheet(14, 3) }),
+  "eel-colony": sub("sub/critters", [0, 0, 72, 42], { opts: { kind: "garden" }, ...sheet(14, 3) }),
   crab: sub("sub/critters", [0, 0, 24, 16], { opts: { kind: "crab" }, fps: 8, ...sheet(2) }),
   seahorse: sub("sub/critters", [0, 0, 16, 24], { opts: { kind: "seahorse" }, ...sheet(13, 2) }),
-  // round a mini-sub: the pressure warning (under too long); the splash and the flare when it surfaces play once
-  // and don't reverse, so those stay GIFs
+  // round a mini-sub: the pressure warning (under too long); the splash and the flare when it surfaces (the mod
+  // shows them for one way of the sheet's there-and-back, so they play once)
   pressure: sub("sub/alert", [-20, -24, 20, 14], { opts: { kind: "pressure" }, ...sheet(14) }),
-  splash: sub("sub/alert", [-20, -24, 20, 4], { opts: { kind: "splash" } }),
-  flare: sub("sub/alert", [-20, -40, 20, 4], { opts: { kind: "flare" } }),
+  splash: sub("sub/alert", [-20, -24, 20, 4], { opts: { kind: "splash" }, ...sheet(14) }),
+  flare: sub("sub/alert", [-20, -40, 20, 4], { opts: { kind: "flare" }, ...sheet(14) }),
   // the pane header's signals: a turning red beacon (blocked), rising bubbles (working)
   beacon: sub("sub/signal", [0, 0, 14, 16], { opts: { kind: "beacon" }, ...sheet(14) }),
   bubbles: sub("sub/signal", [0, 0, 48, 16], { opts: { kind: "bubbles" }, fps: 12, ...sheet(14) }),

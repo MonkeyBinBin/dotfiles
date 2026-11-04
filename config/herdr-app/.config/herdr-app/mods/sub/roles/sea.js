@@ -2,8 +2,8 @@
 // tool's livery; the longer it has been under, the deeper it hangs (the ruler on the left reads minutes).
 //   done     surfaced at the waterline, a loot crate in tow, listed in the sky
 //   blocked  a red flare trail up to the surface, a pulsing ring round it
-//   working  hanging at its depth
-//   idle     parked down on the seabed
+//   working  hanging at its depth, an hour down it hovers just over the seabed
+//   idle     parked down on the sand
 // That Monkey stands in the hatch of his own sub at the top right: alarmed when one is blocked, cheering for a
 // moment when one surfaces with loot, dozing while the crew works, else watching the sea. Every sub that
 // surfaces is entered in the captain's log (shared "sub.log", "sub.dives"; the log role reads them).
@@ -28,11 +28,12 @@ const CHROME = 48 + 96 + 8 + 296 + 36;
 // a layer filling its (relative) parent with a top-to-bottom gradient
 const RECT = () => PathBuilder.fill().move_to("0%", "0%").line_to("100%", "0%").line_to("100%", "100%").line_to("0%", "100%").close().build();
 const gradient = (from, to) => window.paint_path(RECT(), Background.linear_gradient(180, from, to)).absolute().top(0).left(0).size_full();
-const LOG_MAX = 20, SPLASH_MS = 2400;
+// A sprite plays there and back: given twice as long, and taken away at the far end, it plays once.
+const LOG_MAX = 20, SPLASH_MS = 1800;
 // the swimmers, top to bottom of the water: `lane` (0..1), how they swim (swim.js route), ms before the first crossing
 const SWIMMERS = [
-  { name: "school", lane: 0.12, speed: 46, steps: 4, rise: 20, turns: 0.25, stops: 0.1, wait: 0 },
-  { name: "turtle", lane: 0.4, speed: 22, steps: 3, rise: 12, turns: 0.1, stops: 0.3, wait: 6000 },
+  { name: "shoal", lane: 0.12, speed: 46, steps: 4, rise: 20, turns: 0.25, stops: 0.1, wait: 0 },
+  { name: "sea-turtle", lane: 0.4, speed: 22, steps: 3, rise: 12, turns: 0.1, stops: 0.3, wait: 6000 },
   { name: "puffer", lane: 0.66, speed: 28, steps: 4, rise: 14, turns: 0.35, stops: 0.5, wait: 14000 },
 ];
 const SWIM_W = 80, SWIM_H = 48;
@@ -40,7 +41,7 @@ const SWIM_W = 80, SWIM_H = 48;
 const RAYS = [[0, 7300, 0.55], [1, 9100, 0.4], [2, 6100, 0.5], [3, 11300, 0.35]];
 const BUBBLE_EVERY = [6000, 15000], BUBBLES = 7;
 // the subs hang right of the ruler's labels
-const SUB_X = 40, ROW = 44, SUB_W = 52, SUB_H = 40, LOOT_H = 60, CAPTAIN = [196, 140], HAPPY_MS = 3600;
+const SUB_X = 62, ROW = 44, SUB_W = 52, SUB_H = 40, LOOT_H = 60, CAPTAIN = [196, 140], HAPPY_MS = 3600;
 
 export class Sea {
   constructor(cx) {
@@ -203,8 +204,9 @@ export class Sea {
     const done = list.filter((a) => a.status === "done").sort((p, q) => (tabs.get(q.tab)?.changed_at ?? 0) - (tabs.get(p.tab)?.changed_at ?? 0));
     const under = list.filter((a) => a.status !== "done");
     // where each one under wants to hang (row top), then nudged apart so tags never overlap
-    const top = WATERLINE + 30, bottom = H - 34;
-    const yOf = (f) => top + f * (bottom - top - ROW);
+    // (the bottom of the depth scale stays a row above the sand, which is for the parked)
+    const top = WATERLINE + 30, bottom = H - 16;
+    const yOf = (f) => top + f * (bottom - top - 2 * ROW);
     const want = under.map((a) => ({ a, y: a.status === "idle" ? bottom - ROW : yOf(depthOf(minutesUnder(a, tabs, now))) }))
       .sort((p, q) => p.y - q.y || RANK[p.a.status] - RANK[q.a.status]);
     const room = bottom - top, row = want.length * ROW > room ? Math.max(22, Math.floor(room / want.length)) : ROW;
@@ -236,7 +238,7 @@ export class Sea {
           .transition("left", motion).transition("top", motion).child(sprite("jelly", 40, 36))];
       })(),
       // the colony's burrows sit on the seabed strip's sand (its top 40 px down; the sprite's burrows 82 px down)
-      sprite("garden-eels", 144, 84).absolute().left(84).top(H - SEABED + 40 - 82),
+      sprite("eel-colony", 144, 84).absolute().left(84).top(H - SEABED + 40 - 82),
       ...(() => {
         const now = position(this.crab) ?? this.crab.from;
         return [div().id("crab").absolute().top(H - 52).left(Math.round(now.x)).transition("left", motionOf(now)).child(sprite("crab", 48, 32))];
@@ -260,7 +262,7 @@ export class Sea {
       // the gauge's red zone: from the pressure line down
       const c = m >= PRESSURE_MIN ? "#ffb055" : INK.ruler;
       return h_flex().absolute().left(0).top(y - 7).gap(4).items_center().text_size(12).text_color(c).opacity(0.75)
-        .child(div().w(m % 15 ? 6 : 10).h(2).bg(c)).child(`${m}m`);
+        .child(div().w(m % 15 ? 6 : 10).h(2).bg(c)).child(`${m} min`);
     });
 
     // the captain, his hatch at the waterline on the right
@@ -271,10 +273,9 @@ export class Sea {
     const surfaced = done.slice(0, 3).map((a, i) => div().id(`s-${a.address}`).absolute().left(10 + i * 50).top(WATERLINE - 28)
       .on_click(this.go(a)).on_mouse_down("right", this.pin(a))
       .child(sprite(`minisub-${toolOf(a)}-loot`, SUB_W, LOOT_H)));
-    const bursts = done.slice(0, 3).flatMap((a, i) => this.surfacing.has(a.address) ? [
-      image(`${ART}/splash.gif`).absolute().left(10 + i * 50 + 28 - 40).top(WATERLINE - 48).w(80).h(56),
-      image(`${ART}/flare.gif`).absolute().left(10 + i * 50 + 28 - 40).top(WATERLINE - 84).w(80).h(88),
-    ] : []);
+    const burst = (name, a, i, top, h) => div().id(`${name}-${a.address}-${this.surfacing.get(a.address)}`).absolute().left(10 + i * 50 + 28 - 40).top(top)
+      .child(sprite(name, 80, h, { period: SPLASH_MS * 2 }));
+    const bursts = done.slice(0, 3).flatMap((a, i) => this.surfacing.has(a.address) ? [burst("splash", a, i, WATERLINE - 48, 56), burst("flare", a, i, WATERLINE - 84, 88)] : []);
     const sky = v_flex().absolute().left(16).top(14).w(192).gap(6)
       .child(div().text_size(12).text_color("#9ab8ff").child(`SURFACED · ${done.length}`))
       .children(done.slice(0, 2).map((a) => div().id(`st-${a.address}`).on_click(this.go(a)).on_mouse_down("right", this.pin(a))
