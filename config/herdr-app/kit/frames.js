@@ -103,5 +103,91 @@ export const FRAMES = {
       "#7a5a22ff",
       "#1e1406ff"
     ]
+  },
+  "panel": {
+    "art": "mods/sub/assets",
+    "cx": 6,
+    "cy": 6,
+    "fill": "#3a474b",
+    "top": [
+      "#05090bff",
+      "#7f9296ff",
+      "#3a474bff",
+      "#3a474bff",
+      "#3a474bff",
+      "#3a474bff"
+    ],
+    "bottom": [
+      "#3a474bff",
+      "#3a474bff",
+      "#3a474bff",
+      "#3a474bff",
+      "#1a2326ff",
+      "#05090bff"
+    ],
+    "left": [
+      "#05090bff",
+      "#7f9296ff",
+      "#3a474bff",
+      "#3a474bff",
+      "#3a474bff",
+      "#3a474bff"
+    ],
+    "right": [
+      "#3a474bff",
+      "#3a474bff",
+      "#3a474bff",
+      "#3a474bff",
+      "#1a2326ff",
+      "#05090bff"
+    ]
+  },
+  "key": {
+    "art": "mods/sub/assets",
+    "cx": 3,
+    "cy": 3,
+    "fill": "#566a6e",
+    "top": [
+      "#05090bff",
+      "#a8bcbeff",
+      "#566a6eff"
+    ],
+    "bottom": [
+      "#566a6eff",
+      "#253033ff",
+      "#05090bff"
+    ],
+    "left": [
+      "#05090bff",
+      "#a8bcbeff",
+      "#566a6eff"
+    ],
+    "right": [
+      "#566a6eff",
+      "#253033ff",
+      "#05090bff"
+    ]
+  },
+  "well": {
+    "art": "mods/sub/assets",
+    "cx": 2,
+    "cy": 2,
+    "fill": "#041012",
+    "top": [
+      "#05090bff",
+      "#010405ff"
+    ],
+    "bottom": [
+      "#65787cff",
+      "#05090bff"
+    ],
+    "left": [
+      "#05090bff",
+      "#010405ff"
+    ],
+    "right": [
+      "#65787cff",
+      "#05090bff"
+    ]
   }
 };

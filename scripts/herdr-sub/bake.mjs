@@ -10,11 +10,15 @@
 // ffmpeg. `alpha` keeps transparency instead (PNG, or a GIF with one transparent color). The mod shows each at
 // half its size: on a 2x screen that's 1:1, and on a 1x screen the even downscale keeps the pixels crisp.
 //
+// Anything that must keep moving while the window is unfocused is a `sheet` instead of a GIF (GIFs only advance with
+// focus): `count` frames, every `stride`th, side by side in one PNG, played there and back by kit/sprite.js. The
+// frame count and period go into kit/sprites.js.
+//
 // pixelfx (https://github.com/patch-gg/pixelfx, MIT) is cloned to $PIXELFX_DIR (default ~/.cache/pixelfx);
 // the sources in fx/ are synced into it first.
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -30,47 +34,71 @@ const BG = "#03150f", SCALE = 4, EDGE = 6;
 
 // Nine-slice frame kits: corner PNGs into the mod's assets, each side's color profile into the shared kit/frames.js.
 const FRAME_SETS = [
-  { fx: "sub/frame", mod: "sub", kinds: ["brass", "steel", "bezel"] },
+  { fx: "sub/frame", mod: "sub", kinds: ["brass", "steel", "bezel", "panel", "key", "well"] },
 ];
 
 // The sub: everything sits on its own background (alpha), except the sea's opaque scenery strips and the hull.
 const sub = (fx, crop, extra = {}) => ({ fx, crop, mod: "sub", alpha: true, edge: 0, ...extra });
+const still = { sheet: { count: 1, stride: 1 } }, sheet = (count, stride = 1) => ({ sheet: { count, stride } });
 const MINISUB = { claude: ["#a8502a", "#e8875a", "#ffb48a", "#ffe0c8"], codex: ["#5a5a6a", "#a8a8b8", "#d8d8e0", "#ffffff"], gemini: ["#3a50a8", "#6a90e8", "#a8c8ff", "#e0ecff"], other: ["#4a2a7a", "#8a5ad0", "#c0a0ff", "#ece0ff"] };
 const SUB_ASSETS = {
   hull: { fx: "sub/hull", crop: [0, 0, 720, 450], mod: "sub", png: true, edge: 0 },
-  ...Object.fromEntries(["idle", "alarm", "happy", "sleep"].map((mood) => [`captain-${mood}`, sub("sub/captain", [-46, -66, 52, 4], { opts: { mood } })])),
+  ...Object.fromEntries(["idle", "alarm", "happy", "sleep"].map((mood) => [`captain-${mood}`, sub("sub/captain", [-46, -66, 52, 4], { opts: { mood }, ...sheet(15, 2) })])),
   ...Object.fromEntries(Object.entries(MINISUB).flatMap(([tool, palette]) => [
-    [`minisub-${tool}`, sub("sub/minisub", [-14, -12, 12, 8], { opts: { palette } })],
-    [`minisub-${tool}-loot`, sub("sub/minisub", [-14, -12, 12, 18], { opts: { palette, loot: true } })],
-    [`minisub-${tool}-moss`, sub("sub/minisub", [-14, -12, 12, 18], { opts: { palette, moss: true } })],
+    [`minisub-${tool}`, sub("sub/minisub", [-14, -12, 12, 8], { opts: { palette }, ...sheet(8) })],
+    [`minisub-${tool}-loot`, sub("sub/minisub", [-14, -12, 12, 18], { opts: { palette, loot: true }, ...sheet(8) })],
+    [`minisub-${tool}-moss`, sub("sub/minisub", [-14, -12, 12, 18], { opts: { palette, moss: true }, ...sheet(14) })],
   ])),
-  sonar: sub("sub/sonar", [-70, -70, 70, 70]),
-  ...Object.fromEntries(["blocked", "done", "working", "idle", "focus"].map((kind) => [`blip-${kind}`, sub("sub/blip", [-10, -10, 10, 10], { opts: { kind } })])),
-  ...Object.fromEntries(["blocked", "done", "working", "idle"].map((kind) => [`lamp-${kind}`, sub("sub/lamp", [-5, -5, 5, 5], { opts: { kind } })])),
-  "sea-sky": { fx: "sub/sea", crop: [0, 0, 176, 64], mod: "sub", edge: 0, opts: { kind: "sky" } },
-  "sea-surface": { fx: "sub/sea", crop: [0, 0, 176, 40], mod: "sub", edge: 0, opts: { kind: "surface" } },
-  "sea-seabed": { fx: "sub/sea", crop: [0, 0, 176, 30], mod: "sub", edge: 0, opts: { kind: "seabed" } },
+  // the scope without its sweep, the boat to lay over the sweep; the sweep itself is vector, see bakeSweep
+  sonar: sub("sub/sonar", [-70, -70, 70, 70], { png: true, opts: { part: "scope" } }),
+  "sonar-boat": sub("sub/sonar", [-5, -4, 5, 2], { png: true, opts: { part: "boat" } }),
+  ...Object.fromEntries(["blocked", "done", "working", "idle", "focus"].map((kind) => [`blip-${kind}`, sub("sub/blip", [-10, -10, 10, 10], { opts: { kind }, ...(kind === "idle" ? still : sheet(14)) })])),
+  ...Object.fromEntries(["blocked", "done", "working", "idle"].map((kind) => [`lamp-${kind}`, sub("sub/lamp", [-5, -5, 5, 5], { opts: { kind }, ...(kind === "blocked" ? sheet(2, 2) : still) })])),
+  "sea-sky": { fx: "sub/sea", crop: [0, 0, 176, 64], mod: "sub", edge: 0, opts: { kind: "sky" }, ...sheet(4, 6) },
+  "sea-water": { fx: "sub/sea", crop: [0, 0, 176, 40], mod: "sub", edge: 0, opts: { kind: "surface" }, ...sheet(12, 2) },
+  ...Object.fromEntries([0, 1, 2, 3].map((n) => [`sea-ray-${n}`, sub("sub/sea", [0, 0, 176, 90], { png: true, opts: { kind: "ray", n } })])),
+  "sea-seabed": { fx: "sub/sea", crop: [0, 0, 176, 30], mod: "sub", edge: 0, opts: { kind: "seabed" }, ...sheet(6, 4) },
   fish: sub("sub/sea", [0, 0, 24, 16], { opts: { kind: "fish" } }),
-  // sea life: swimmers cross a column-wide lane and back; crab and seahorse stay put (the mod drifts them)
-  school: sub("sub/critters", [0, 0, 176, 24], { opts: { kind: "school", offset: 0.1 } }),
-  turtle: sub("sub/critters", [0, 0, 176, 24], { opts: { kind: "turtle", offset: 0.55 } }),
-  puffer: sub("sub/critters", [0, 0, 176, 24], { opts: { kind: "puffer", offset: 0.3 } }),
-  "garden-eels": sub("sub/critters", [0, 0, 72, 42], { opts: { kind: "garden" } }),
-  crab: sub("sub/critters", [0, 0, 24, 16], { opts: { kind: "crab" }, fps: 8 }),
-  seahorse: sub("sub/critters", [0, 0, 16, 24], { opts: { kind: "seahorse" } }),
-  // round a mini-sub: the pressure warning (under too long), the splash and the flare when it surfaces
-  pressure: sub("sub/alert", [-20, -24, 20, 14], { opts: { kind: "pressure" } }),
+  // sea life: swimmers finning on the spot, one sheet per way they face (the mod moves them across their lanes);
+  // crab and seahorse stay put too (the mod drifts them)
+  ...Object.fromEntries([["school", 14, 1], ["turtle", 14, 1], ["puffer", 20, 2]].flatMap(([kind, count, stride]) => [["r", 1], ["l", -1]].map(([face, dir]) =>
+    [`${kind}-${face}`, sub("sub/critters", [0, 0, 40, 24], { opts: { kind, still: true, dir }, ...sheet(count, stride) })]))),
+  // for the pane header's scenes
+  ...Object.fromEntries([["r", 1], ["l", -1]].flatMap(([face, dir]) => [
+    [`shark-${face}`, sub("sub/critters", [0, 0, 44, 24], { opts: { kind: "shark", dir }, ...sheet(4, 2) })],
+    [`angler-${face}`, sub("sub/critters", [0, 0, 40, 24], { opts: { kind: "angler", dir }, ...sheet(6, 2) })],
+    [`great-whale-${face}`, sub("sub/critters", [0, 0, 120, 24], { opts: { kind: "humpback", dir }, ...sheet(8, 2) })],
+  ])),
+  "garden-eels": sub("sub/critters", [0, 0, 72, 42], { opts: { kind: "garden" }, ...sheet(14, 3) }),
+  crab: sub("sub/critters", [0, 0, 24, 16], { opts: { kind: "crab" }, fps: 8, ...sheet(2) }),
+  seahorse: sub("sub/critters", [0, 0, 16, 24], { opts: { kind: "seahorse" }, ...sheet(13, 2) }),
+  // round a mini-sub: the pressure warning (under too long); the splash and the flare when it surfaces play once
+  // and don't reverse, so those stay GIFs
+  pressure: sub("sub/alert", [-20, -24, 20, 14], { opts: { kind: "pressure" }, ...sheet(14) }),
   splash: sub("sub/alert", [-20, -24, 20, 4], { opts: { kind: "splash" } }),
   flare: sub("sub/alert", [-20, -40, 20, 4], { opts: { kind: "flare" } }),
   // the pane header's signals: a turning red beacon (blocked), rising bubbles (working)
-  beacon: sub("sub/signal", [0, 0, 14, 16], { opts: { kind: "beacon" } }),
-  bubbles: sub("sub/signal", [0, 0, 48, 16], { opts: { kind: "bubbles" }, fps: 12 }),
-  jelly: sub("sub/sea", [0, 0, 20, 18], { opts: { kind: "jelly" } }),
+  beacon: sub("sub/signal", [0, 0, 14, 16], { opts: { kind: "beacon" }, ...sheet(14) }),
+  bubbles: sub("sub/signal", [0, 0, 48, 16], { opts: { kind: "bubbles" }, fps: 12, ...sheet(14) }),
+  // the control console: its brushed metal, a space's toggle switch, the engine order telegraph (emergency blinks)
+  "metal-slab": { fx: "sub/metal", crop: [0, 0, 640, 48], mod: "sub", png: true, edge: 0, opts: { tone: "slab" } },
+  "metal-panel": { fx: "sub/metal", crop: [0, 0, 640, 48], mod: "sub", png: true, edge: 0, opts: { tone: "panel" } },
+  "log-badge": sub("sub/console", [0, 0, 18, 18], { png: true, opts: { kind: "log-badge" } }),
+  "toggle-up": sub("sub/console", [0, 0, 7, 14], { png: true, opts: { kind: "toggle-up" } }),
+  "toggle-down": sub("sub/console", [0, 0, 7, 14], { png: true, opts: { kind: "toggle-down" } }),
+  ...Object.fromEntries(["stop", "ahead", "emergency"].map((order) => [`telegraph-${order}`, sub("sub/console", [0, 0, 36, 20], { opts: { kind: `telegraph-${order}` }, ...(order === "emergency" ? sheet(2, 2) : still) })])),
+  // behind the conversation (layouts/sub.json): pixel art, enlarged here so the pixels stay square when it's stretched
+  "deep-sea-pixel": { fx: "sub/abyss", crop: [0, 0, 256, 96], mod: "sub", png: true, edge: 0, scale: 6 },
+  jelly: sub("sub/sea", [0, 0, 20, 18], { opts: { kind: "jelly" }, ...sheet(12, 2) }),
 };
 
 export const ASSETS = {
   ...SUB_ASSETS,
 };
+
+// What kit/sprite.js needs per sheet; a partial bake keeps the rest.
+const SPRITES_FILE = join(REPO, "config/herdr-app/kit/sprites.js");
+const sprites = existsSync(SPRITES_FILE) ? JSON.parse(readFileSync(SPRITES_FILE, "utf8").match(/SPRITES = (\{[\s\S]*\});/)[1]) : {};
 
 function run(cmd, args, opts = {}) {
   const r = spawnSync(cmd, args, { stdio: ["pipe", "inherit", "inherit"], maxBuffer: 1 << 30, ...opts });
@@ -128,12 +156,26 @@ function bake(name, a) {
             out[d + 3] = 255;
           }
         }
-      return Buffer.from(upscale(out, w, h, SCALE).buffer);
+      return Buffer.from(upscale(out, w, h, a.scale ?? SCALE).buffer);
     });
+    if (a.sheet) {
+      const { count, stride } = a.sheet, W = w * SCALE, H = h * SCALE;
+      if ((count - 1) * stride >= r.n) throw new Error(`${name}: wants frame ${(count - 1) * stride} of ${r.n}`);
+      const out = new Uint8ClampedArray(W * count * H * 4);
+      for (let i = 0; i < count; i++) {
+        const f = frames[i * stride];
+        for (let y = 0; y < H; y++) out.set(f.subarray(y * W * 4, (y + 1) * W * 4), (y * W * count + i * W) * 4);
+      }
+      const file = join(outOf(a), `${name}.png`);
+      writeFileSync(file, encodePNG(W * count, H, out));
+      sprites[name] = { n: count, period: Math.round((2000 * count * stride) / r.fps) };
+      console.log(`${name.padEnd(20)} ${String(count).padStart(3)} sheet  ${W * count}x${H}  ${(statSync(file).size / 1024).toFixed(0)} KB`);
+      return;
+    }
     if (a.png) {
       const file = join(outOf(a), `${name}.png`);
-      writeFileSync(file, encodePNG(w * SCALE, h * SCALE, new Uint8ClampedArray(frames[0].buffer, frames[0].byteOffset, frames[0].byteLength)));
-      console.log(`${name.padEnd(14)}   1 frame   ${w}x${h} -> ${w * SCALE}x${h * SCALE}  ${(statSync(file).size / 1024).toFixed(0)} KB  ${relative(REPO, file)}`);
+      writeFileSync(file, encodePNG(w * (a.scale ?? SCALE), h * (a.scale ?? SCALE), new Uint8ClampedArray(frames[0].buffer, frames[0].byteOffset, frames[0].byteLength)));
+      console.log(`${name.padEnd(14)}   1 frame   ${w}x${h} -> ${w * (a.scale ?? SCALE)}x${h * (a.scale ?? SCALE)}  ${(statSync(file).size / 1024).toFixed(0)} KB  ${relative(REPO, file)}`);
       return;
     }
     const file = join(outOf(a), `${name}.gif`);
@@ -142,7 +184,7 @@ function bake(name, a) {
     const vf = a.alpha
       ? "split[a][b];[a]palettegen=max_colors=255:reserve_transparent=1:stats_mode=full[p];[b][p]paletteuse=dither=none:alpha_threshold=128"
       : "split[a][b];[a]palettegen=max_colors=255:stats_mode=full[p];[b][p]paletteuse=dither=none";
-    run("ffmpeg", ["-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgba", "-s", `${w * SCALE}x${h * SCALE}`, "-r", String(r.fps), "-i", "-",
+    run("ffmpeg", ["-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgba", "-s", `${w * (a.scale ?? SCALE)}x${h * (a.scale ?? SCALE)}`, "-r", String(r.fps), "-i", "-",
       "-vf", vf, ...(a.alpha ? ["-gifflags", "-offsetting-transdiff"] : []), "-loop", "0", file],
       { input: Buffer.concat(frames) });
     console.log(`${name.padEnd(14)} ${String(r.n).padStart(3)} frames  ${w}x${h} -> ${w * SCALE}x${h * SCALE}  ${(statSync(file).size / 1024).toFixed(0)} KB  ${relative(REPO, file)}`);
@@ -185,7 +227,25 @@ async function bakeFrames() {
     `export const FRAMES = ${JSON.stringify(kits, null, 2)};\n`);
 }
 
+// The sonar sweep: masks the mod tints and turns (only an svg can spin), pointing straight up at rest. SVG has no
+// conic gradient, and side by side slices show their seams, so the trail is a stack of faint wedges that all start at
+// the arm and reach back further and further: the layers add up to `fade` with nothing between them to see. It starts
+// clear of the boat at the center: a spinning svg paints over the mod's images whatever their order.
+function bakeSweep() {
+  const R = 60, BOAT = 7, SPAN = 100, at = (r, deg) => `${(Math.sin((deg * Math.PI) / 180) * r).toFixed(2)} ${(-Math.cos((deg * Math.PI) / 180) * r).toFixed(2)}`;
+  const fade = (deg) => 0.8 * (1 - deg / SPAN) ** 1.8;
+  const wedge = (to, o) => `<path d="M${at(BOAT, 0)}L${at(R, 0)}A${R} ${R} 0 0 0 ${at(R, -to)}L${at(BOAT, -to)}A${BOAT} ${BOAT} 0 0 1 ${at(BOAT, 0)}Z" fill="#fff" fill-opacity="${o.toFixed(4)}"/>`;
+  let trail = "";
+  for (let deg = SPAN; deg > 0; deg--) trail += wedge(deg, 1 - (1 - fade(deg - 1)) / (1 - fade(deg)));
+  const svg = (body) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="-70 -70 140 140" width="280" height="280">${body}</svg>\n`;
+  writeFileSync(join(MODS, "sub/assets/sonar-trail.svg"), svg(trail));
+  writeFileSync(join(MODS, "sub/assets/sonar-arm.svg"), svg(`<path d="M${at(BOAT, 1.2)}L${at(R, 1.2)}L${at(R, -1.2)}L${at(BOAT, -1.2)}Z" fill="#fff"/>`));
+}
+
 mkdirSync(join(MODS, "sub", "assets"), { recursive: true });
 const pick = process.argv.slice(2);
 for (const [name, a] of Object.entries(ASSETS)) if (!pick.length || pick.includes(name)) await bake(name, a);
 if (!pick.length || pick.includes("frames")) await bakeFrames();
+if (!pick.length || pick.includes("sonar")) bakeSweep();
+writeFileSync(SPRITES_FILE, "// Generated by scripts/herdr-sub/bake.mjs: don't edit, re-bake.\n// Per sprite sheet: its frame count and the milliseconds for there and back.\n" +
+  `export const SPRITES = ${JSON.stringify(sprites, null, 2)};\n`);

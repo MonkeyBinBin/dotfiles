@@ -1,6 +1,7 @@
 // The sea column's scenery, in pieces the mod stacks (`kind`), all 176 px wide (the column's inside):
 //   sky      the night over the surface: dithered bands, stars, a moon
-//   surface  the waterline, waves rolling, and the first fathoms with light rays slanting down
+//   surface  the waterline heaving, and the first fathoms
+//   ray      one shaft of light slanting down through the water (`n`), for the mod to fade in and out
 //   seabed   sand, rocks and kelp along the bottom
 //   fish     a little school of orange fish, finning in place (alpha)
 //   jelly    a pink jellyfish, pulsing (alpha)
@@ -12,7 +13,7 @@ export const meta = {
   name: "Sea column",
   desc: "Scenery for the sub's sea column: night sky, rolling surface with light rays, seabed with kelp, fish, a jellyfish.",
   tags: ["sub", "background", "loop"],
-  size: [176, 64],
+  size: [176, 90],
   origin: [0, 0],
   duration: 2.4,
   loop: true,
@@ -21,11 +22,11 @@ export const meta = {
   options: { kind: "sky" },
 };
 
-export const W = 176, SKY_H = 64, SURFACE_H = 40, SEABED_H = 30;
+export const W = 176, SKY_H = 64, SURFACE_H = 40, SEABED_H = 30, RAY_H = 90;
 export const WATER_TOP = "#0c4a66", WATER_DEEP = "#03151f";
 const D = meta.duration;
 const SKY = ["#081028", "#0c1838", "#12244a"].map(hex), STAR = hex("#c8d8ff"), MOON = hex("#f0f4ff");
-const WAVE = [hex("#d8f4ff"), hex("#8ad8ff"), hex("#2a88aa")], WATER = ["#0f5674", "#0e5270", "#0c4a66"].map(hex), RAY = hex("#1a6a88");
+const WAVE = [hex("#d8f4ff"), hex("#8ad8ff"), hex("#2a88aa")], WATER = ["#0f5674", "#0e5270", "#0c4a66"].map(hex), RAY = hex("#3a9ab8");
 
 function sky(p, ph) {
   for (let y = 0; y < SKY_H; y++)
@@ -47,23 +48,35 @@ function sky(p, ph) {
   p.glow(146, 13, 14, MOON, 0.12);
 }
 
+// The waterline heaves up and down on the spot: played there and back, a wave that travelled would run backward.
 function surface(p, ph) {
+  const swell = (x) => Math.sin(x * 0.35) * Math.cos(ph * TAU) + Math.sin(x * 0.13 + 1) * Math.sin(ph * TAU) * 0.8;
   for (let y = 0; y < SURFACE_H; y++)
     for (let x = 0; x < W; x++) {
-      const wy = 2 + Math.round(Math.sin(x * 0.35 + ph * TAU) * 1);
+      const wy = 2 + Math.round(swell(x));
       let c;
       if (y < wy) c = SKY[2];
-      else if (y === wy) c = (x + Math.floor(ph * 20)) % 9 < 2 ? WAVE[0] : WAVE[1];
+      else if (y === wy) c = (x * 7) % 9 < 2 && Math.sin(x + ph * TAU) > -0.2 ? WAVE[0] : WAVE[1];
       else if (y === wy + 1) c = WAVE[2];
       else {
         const f = (y - wy) / (SURFACE_H - wy);
         c = WATER[f < 0.35 ? 0 : f < 0.7 ? 1 : 2];
-        // light rays slanting down, drifting, dithered out with depth
-        const ray = (x + y * 0.5 + ph * 46) % 46;
-        if (ray < 5 && f < 0.9 && ((x + y) % 2 || f < 0.4)) c = RAY;
       }
       p.px(x, y, c);
     }
+}
+
+// One shaft of light slanting down from the surface (`n`), dithering away with depth. The mod fades each in and out.
+function ray(p, _ph, o) {
+  const [x0, wide] = [[18, 9], [62, 6], [101, 11], [146, 7]][o.n];
+  for (let y = 0; y < RAY_H; y++) {
+    const f = y / RAY_H, from = x0 - y * 0.42, across = wide * (1 + f * 0.9);
+    for (let x = Math.floor(from); x < from + across; x++) {
+      if (x < 0 || x >= W) continue;
+      const keep = f < 0.2 || (f < 0.55 ? (x + y) % 2 === 0 : f < 0.8 ? x % 2 === 0 && y % 2 === 0 : x % 4 === 0 && y % 4 === 0);
+      if (keep) p.px(x, y, RAY);
+    }
+  }
 }
 
 function seabed(p, ph) {
@@ -127,5 +140,5 @@ function jelly(p, ph) {
 
 export function draw(p, t, o) {
   const ph = wrap(t, D) / D;
-  ({ sky, surface, seabed, fish, jelly })[o.kind](p, ph);
+  ({ sky, surface, ray, seabed, fish, jelly })[o.kind](p, ph, o);
 }

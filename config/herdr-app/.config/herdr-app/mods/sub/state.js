@@ -1,5 +1,5 @@
 // What the whole sub is up to, shared by every role.
-import { spaces, openOverlay, closeOverlay, run } from "herdr";
+import { agents, focused, spaces, openOverlay, closeOverlay, run, setShared } from "herdr";
 
 export const ART = "mods/sub/assets";
 // Status order: who needs the person first.
@@ -70,11 +70,28 @@ export function hash(s) {
   return h >>> 0;
 }
 
+/** The pane an agent is in, if the person can see it right now: in the shown tab, and not behind a zoomed pane. */
+function paneOnScreen(address) {
+  const a = agents().find((x) => x.address === address), now = focused();
+  if (a?.tab !== now.tab) return null;
+  return tabsById().get(a.tab)?.zoomed && a.pane !== now.pane ? null : a.pane;
+}
+
 /** The periscope: a floating window over the work (drag it anywhere; it reopens where it was dropped) showing
  *  one agent's live terminal under a brass bar, so the person can watch it without leaving their tab. Opening
- *  another replaces it in place. */
+ *  another replaces it in place. A terminal has one size, so a window onto one already on screen would squeeze it
+ *  there too: that agent's pane takes the focus and flashes its header instead (the pane role reads "sub.flash"). */
 let scopeId = null;
+export const FLASH_MS = 1200;
 export function periscope(address) {
+  const pane = paneOnScreen(address);
+  if (pane) {
+    if (scopeId) closeOverlay(scopeId);
+    scopeId = null;
+    run("pane.focus", { pane });
+    setShared("sub.flash", { pane, until: Date.now() + FLASH_MS });
+    return;
+  }
   scopeId = openOverlay({
     kind: "window", key: "periscope", width: 760, height: 480,
     layout: {

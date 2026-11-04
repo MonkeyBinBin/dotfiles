@@ -2,11 +2,12 @@
 // with its status lamp, contact number, title, tool and status; GO TO jumps to its pane (or keeps it as a tab
 // when it has none) and closes the periscope, x closes it. Drag the bar to move the window.
 // Props: { terminal, overlay }.
-import { div, image, svg } from "gpui-kit";
+import { div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { agents, terminals, panes, run, closeOverlay } from "herdr";
 import { framed } from "../kit/frame.js";
-import { ART, INK, WORD, titleOf, toolName, contacts } from "../state.js";
+import { sprite } from "../kit/sprite.js";
+import { INK, WORD, titleOf, toolName, contacts } from "../state.js";
 
 const TEXT = "#2a1a06", FAINT = "#6a4c1a";
 
@@ -24,9 +25,9 @@ export class Scope {
     const status = a?.status ?? k?.status ?? "idle";
     const home = panes().some((x) => x.terminal === terminal);
     const title = a ? titleOf(a) : k?.name || k?.program?.name || terminal;
-    return framed("brass", h_flex().size_full().px(10).gap(10).items_center().text_size(12).text_color(TEXT)
+    return framed("brass", h_flex().size_full().px(16).gap(10).items_center().text_size(12).text_color(TEXT)
       .child(div().flex_none().text_color(FAINT).child("PERISCOPE"))
-      .child(image(`${ART}/lamp-${status}.gif`).size(10).flex_none())
+      .child(sprite(`lamp-${status}`, 10).flex_none())
       .when(Boolean(a), (el) => el.child(div().flex_none().text_color(FAINT).child(contacts(list).get(terminal))))
       .child(div().flex_1().min_w(0).truncate().child(title))
       .when(Boolean(a), (el) => el.child(div().flex_none().text_color(FAINT).child(`${toolName(a)} · ${a.space_name}`)))

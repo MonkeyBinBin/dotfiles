@@ -1,10 +1,14 @@
 // The sea column's wildlife (`kind`). Swimmers cross a lane as wide as the column (176 px) and back, turning
-// round off-screen, so the mod only stacks the lanes; the others stay put and the mod drifts them.
+// round off-screen; `still` keeps one finning on the spot, facing `dir`, for the mod to move. The others stay put and
+// the mod drifts them.
 //   school   three little orange fish finning along together            (lane)
 //   turtle   a sea turtle paddling slowly                                (lane)
 //   puffer   a pufferfish that puffs up into a spiky ball now and then   (lane)
 //   crab     a red crab scuttling on the spot (the mod walks it sideways along the seabed)
 //   seahorse a seahorse bobbing upright, curled tail, a fluttering fin
+//   shark    a shark, tail beating (still: the mod moves it)
+//   angler   an anglerfish with a blinking lure (still)
+//   humpback a humpback whale, its tail stock and flukes beating slowly (still, 120 px long)
 //   garden   a colony of splendid garden eels (横帶園鰻) standing out of their burrows in the sand, swaying
 // `offset` (0..1) shifts where a swimmer is in its loop, so lanes don't move in step.
 
@@ -35,6 +39,7 @@ const pen = (p, cx, cy, dir) => ({
 
 // where a swimmer is: across the lane and back once per loop (`laps` times), off-screen at both ends
 function lane(t, o, margin, laps = 1) {
+  if (o.still) return { x: 20, dir: o.dir ?? 1, ph: (wrap(t, D) / D) * laps };
   const u = (wrap(t, D) / D * laps + (o.offset ?? 0)) % 1, k = u < 0.5 ? u * 2 : 2 - u * 2;
   return { x: -margin + k * (W + 2 * margin), dir: u < 0.5 ? 1 : -1, ph: (wrap(t, D) / D) * laps };
 }
@@ -135,6 +140,62 @@ function seahorse(p, t) {
   q.px(-3, -4, C[3]); q.px(-4, -3 + fin, C[2]); q.px(-3, -2, C[2]);
 }
 
+function shark(p, t, o) {
+  const q = pen(p, 20, 12, o.dir ?? 1), C = R("#2a3a44", "#54707e", "#8aa4ae", "#dce8ea"), wag = Math.floor(t * 8) % 2 ? 2 : -2;
+  for (let i = -15; i <= 12; i++) {
+    const k = (i + 15) / 27, half = Math.max(1, 5 * Math.sin(Math.PI * k ** 0.7));
+    for (let j = -half; j <= half; j++) q.px(-i, j, j > half * 0.35 ? C[3] : j < -half * 0.3 ? C[1] : C[2]);
+  }
+  // the dorsal fin, the pectoral fin, a beating tail; eye and gills up front
+  [[0, -6], [1, -6], [-1, -6], [0, -7], [1, -7], [1, -8], [1, -9]].forEach(([x, y]) => q.px(x, y, C[0]));
+  [[5, 4], [4, 5], [3, 6], [4, 6]].forEach(([x, y]) => q.px(x, y, C[0]));
+  for (let i = 0; i < 6; i++) { q.px(-15 - i, -1 - i + wag * 0.5, C[1]); q.px(-15 - i, 1 + Math.round(i * 0.5) + wag * 0.5, C[0]); }
+  q.px(11, -2, INK); q.px(7, -1, C[0]); q.px(6, 0, C[0]);
+  for (let x = 9; x <= 13; x += 2) q.px(x, 2, WHITE);
+}
+
+function angler(p, t, o) {
+  const q = pen(p, 20, 13, o.dir ?? 1), C = R("#1e3e46", "#31606a", "#528a94"), lit = wrap(t, 1.2) < 0.6;
+  q.disc(0, 0, 7, (nx, ny) => (ny < -0.3 ? C[2] : ny > 0.4 ? C[0] : C[1]));
+  // a tail fin, a gaping jaw of teeth, a pale eye
+  for (let i = 0; i < 4; i++) { q.px(-8 - i, -i, C[1]); q.px(-8 - i, i, C[1]); }
+  for (let x = 2; x <= 7; x += 2) { q.px(x, 2, WHITE); q.px(x + 1, 4, WHITE); }
+  q.rect(2, 3, 6, 1, INK);
+  q.px(3, -3, hex("#d8f0a0")); q.px(4, -3, INK);
+  // the lure on its stalk, arching forward
+  [[1, -8], [2, -9], [3, -10], [5, -10], [7, -9], [8, -8]].forEach(([x, y]) => q.px(x, y, C[2]));
+  q.disc(9, -7, 1.6, lit ? hex("#f8ffa0") : hex("#6a7a30"));
+  if (lit) p.glow(20 + (o.dir ?? 1) * 9, 6, 6, hex("#f8ffa0"), 0.5);
+}
+
+function humpback(p, t, o) {
+  const q = pen(p, 60, 11, o.dir ?? 1), C = R("#1e3448", "#34566e", "#5a84a0", "#8fb4c8"), PALE = R("#c4d6da", "#eef6f6"), LINE = hex("#14222e");
+  // the tail bends more the further back, the rest of the body holds still
+  const wave = Math.sin((t * TAU) / 3.2 - Math.PI / 2), bend = (x) => (x < -6 ? wave * ((-6 - x) / 44) ** 2 * 4 : 0);
+  for (let x = -44; x <= 54; x++) {
+    const k = (54 - x) / 98, half = 1.2 + 8 * Math.sin(Math.PI * k ** 0.62) * (1 - k * 0.2), mid = bend(x);
+    for (let y = -half; y <= half; y++) {
+      const ny = y / half, groove = Math.round(y) % 2 === 0, pale = 0.3 + Math.max(0, 12 - x) / 34; // the white belly narrows away toward the tail
+      q.px(x, y + mid, ny < -0.62 ? C[0] : ny < -0.12 ? C[1] : ny < pale - 0.14 ? C[2] : ny < pale ? C[3] : PALE[groove ? 0 : 1]);
+    }
+  }
+  // barnacles on the head, the mouth's long curve, the eye
+  [[48, -3], [44, -5], [50, -1], [40, -5], [46, -2]].forEach(([x, y]) => q.px(x, y, C[3]));
+  for (let x = 30; x <= 53; x++) q.px(x, 2 - (x - 30) * 0.04 + ((x - 30) / 23) ** 2, LINE);
+  q.px(32, 0, WHITE); q.px(33, 0, INK);
+  // the dorsal fin far back, the long pectoral fin swept down and back
+  const backAt = (x) => { const k = (54 - x) / 98; return -(1.2 + 8 * Math.sin(Math.PI * k ** 0.62) * (1 - k * 0.2)); };
+  for (let i = 0; i < 6; i++) for (let h = 0; h <= (6 - i) * 0.5; h++) q.px(-12 - i, backAt(-12 - i) - h + bend(-12 - i), C[0]);
+  for (let i = 0; i < 13; i++) for (let w = 0; w < 6 - i * 0.34; w++) q.px(24 - i - w, 5 + i * 0.52, w < 1 ? C[3] : w < 3 ? C[1] : C[0]);
+  // the flukes spread at the end of the tail stock
+  const end = bend(-44);
+  for (let i = 0; i < 14; i++) for (let w = 0; w <= i * 0.5; w++) {
+    const c = w < 1 ? C[2] : C[0];
+    q.px(-44 - i, end + wave * i * 0.35 - i * 0.72 + w, c);
+    q.px(-44 - i, end + wave * i * 0.35 + i * 0.72 - w, c);
+  }
+}
+
 export function draw(p, t, o) {
-  ({ school, turtle, puffer, crab, seahorse, garden })[o.kind](p, t, o);
+  ({ school, turtle, puffer, crab, seahorse, garden, shark, angler, humpback })[o.kind](p, t, o);
 }

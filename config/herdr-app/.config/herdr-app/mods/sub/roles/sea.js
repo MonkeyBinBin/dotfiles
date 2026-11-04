@@ -14,21 +14,33 @@
 import { div, image, Background, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { agents, run, setAgentOrder, shared, setShared } from "herdr";
+import { battleLight, onAlert } from "../kit/battle-light.js";
 import { framed } from "../kit/frame.js";
+import { sprite } from "../kit/sprite.js";
+import { facingRight, motionOf, position, rand, route, walk } from "../swim.js";
 import { ART, INK, RANK, WORD, RULER, STATUS_INK, toolOf, toolName, titleOf, since, tabsById, periscope, goTo, subMenu, underSince, depthOf, minutesUnder, minutesParked, contacts, PRESSURE_MIN, MOSS_MIN } from "../state.js";
 
 // The scenery strips, baked at 4x and shown at 2x: sky 64, surface 40, seabed 30 native px, all 176 wide.
 const W = 352, SKY = 128, SURFACE = 80, SEABED = 60, WATERLINE = SKY + 4;
 const WATER_TOP = "#0c4a66", WATER_DEEP = "#03151f";
 // The layout round it (layouts/sub.json): bars, the gap, the sonar under it, this frame's own border.
-const CHROME = 48 + 48 + 8 + 296 + 36;
+const CHROME = 48 + 96 + 8 + 296 + 36;
 // a layer filling its (relative) parent with a top-to-bottom gradient
 const RECT = () => PathBuilder.fill().move_to("0%", "0%").line_to("100%", "0%").line_to("100%", "100%").line_to("0%", "100%").close().build();
 const gradient = (from, to) => window.paint_path(RECT(), Background.linear_gradient(180, from, to)).absolute().top(0).left(0).size_full();
 const LOG_MAX = 20, SPLASH_MS = 2400;
-// the swimmers' lanes, top to bottom of the water (0..1)
-const LANES = [["school", 0.08], ["turtle", 0.32], ["puffer", 0.6]];
-const ROW = 44, SUB_W = 52, SUB_H = 40, LOOT_H = 60, CAPTAIN = [196, 140], HAPPY_MS = 3600;
+// the swimmers, top to bottom of the water: `lane` (0..1), how they swim (swim.js route), ms before the first crossing
+const SWIMMERS = [
+  { name: "school", lane: 0.12, speed: 46, steps: 4, rise: 20, turns: 0.25, stops: 0.1, wait: 0 },
+  { name: "turtle", lane: 0.4, speed: 22, steps: 3, rise: 12, turns: 0.1, stops: 0.3, wait: 6000 },
+  { name: "puffer", lane: 0.66, speed: 28, steps: 4, rise: 14, turns: 0.35, stops: 0.5, wait: 14000 },
+];
+const SWIM_W = 80, SWIM_H = 48;
+// the light from above: each shaft breathes at its own pace, how bright at most
+const RAYS = [[0, 7300, 0.55], [1, 9100, 0.4], [2, 6100, 0.5], [3, 11300, 0.35]];
+const BUBBLE_EVERY = [6000, 15000], BUBBLES = 7;
+// the subs hang right of the ruler's labels
+const SUB_X = 40, ROW = 44, SUB_W = 52, SUB_H = 40, LOOT_H = 60, CAPTAIN = [196, 140], HAPPY_MS = 3600;
 
 export class Sea {
   constructor(cx) {
@@ -36,8 +48,78 @@ export class Sea {
     this.started = false;
     this.happyUntil = 0;
     this.surfacing = new Map(); // address -> until when its splash and flare show
+    this.swimmers = SWIMMERS.map((s) => ({ ...s, trip: 0, right: Math.random() < 0.5, leg: -1, legs: null }));
+    for (const s of this.swimmers) cx.timer.after(s.wait + 100, (cx) => this.swim(cx, s));
+    this.jelly = { from: { x: 270, y: 0 }, legs: [], leg: -1 };
+    this.crab = { from: { x: 140, y: 0 }, legs: [], leg: -1 };
+    this.pulse(cx);
+    this.scuttle(cx);
+    this.vent = null;
+    this.vents = 0;
+    this.nextVent(cx);
     // the depths and clocks move with time
     cx.timer.every(30000, (cx) => cx.notify());
+  }
+
+  // One crossing, then a while out of sight before coming back the other way. A new id per trip: it starts from its
+  // mark at once, with no transition across the water.
+  swim(cx, s) {
+    s.right = !s.right;
+    s.trip += 1;
+    s.legs = route(W, SWIM_W, s.right, { ...s, back: [24, 60] });
+    s.from = { x: s.right ? -SWIM_W - 10 : W + 10, y: 0 };
+    s.leg = -1;
+    cx.notify();
+    walk(cx, s, (cx) => cx.timer.after(rand(3000, 9000), (cx) => this.swim(cx, s)));
+  }
+
+  // The jelly's way of getting about: a quick push up as its bell squeezes, then a long slow sink, drifting all the while.
+  pulse(cx) {
+    const j = this.jelly, was = position(j) ?? j.from;
+    j.from = { x: was.x, y: was.y };
+    let { x, y } = j.from;
+    j.legs = [];
+    for (let i = 0; i < 4; i++) {
+      x = Math.max(36, Math.min(W - 80, x + rand(-24, 24)));
+      y = Math.max(-90, Math.min(70, y - rand(16, 30) + (y < -50 ? 24 : 0)));
+      j.legs.push({ x, y, ms: rand(1000, 1400), easing: "ease-out" });
+      y = Math.min(80, y + rand(7, 14));
+      j.legs.push({ x, y, ms: rand(2200, 3400), easing: "linear" });
+    }
+    walk(cx, j, (cx) => this.pulse(cx));
+  }
+
+  // The crab scuttles a little way along the sand, stops to look about, and goes on.
+  scuttle(cx) {
+    const c = this.crab, was = position(c) ?? c.from;
+    c.from = { x: was.x, y: 0 };
+    let x = c.from.x;
+    c.legs = [];
+    for (let i = 0; i < 4; i++) {
+      const nx = Math.max(56, Math.min(W - 110, x + rand(26, 80) * (Math.random() < 0.5 ? -1 : 1)));
+      c.legs.push({ x: nx, y: 0, ms: (Math.abs(nx - x) / 22) * 1000 + 200, easing: "ease-in-out" });
+      c.legs.push({ x: nx, y: 0, ms: rand(1200, 4200), easing: "linear" });
+      x = nx;
+    }
+    walk(cx, c, (cx) => this.scuttle(cx));
+  }
+
+  // A string of bubbles let go from somewhere on the seabed, rising all the way to the surface.
+  nextVent(cx) {
+    cx.timer.after(rand(...BUBBLE_EVERY), (cx) => {
+      const id = ++this.vents;
+      this.vent = { id, x: rand(50, W - 60), up: false };
+      cx.notify();
+      cx.timer.after(120, (cx) => {
+        this.vent.up = true;
+        cx.notify();
+      });
+      cx.timer.after(BUBBLES * 500 + 7000, (cx) => {
+        this.vent = null;
+        cx.notify();
+        this.nextVent(cx);
+      });
+    });
   }
 
   // Agents that just surfaced with loot make him cheer and go in the log; seeded on the first render so a
@@ -79,15 +161,15 @@ export class Sea {
     };
   }
 
-  // the lock-on brackets round the focused agent's tag
-  brackets(w, h) {
+  // the lock-on brackets round the focused agent's tag, standing off it evenly whatever size it comes out
+  brackets() {
     const arm = (pos, sides) => {
       let el = div().absolute().size(10).border_color("#e8ffa0");
       for (const s of sides) el = el[`border_${s}`](2);
       for (const [k, v] of Object.entries(pos)) el = el[k](v);
       return el;
     };
-    return div().absolute().top(-6).left(-6).w(w + 12).h(h + 12).loop("opacity", { from: 0.45, to: 1, period: 900 })
+    return div().absolute().top(-6).left(-6).right(-6).bottom(-6).loop("opacity", { from: 0.45, to: 1, period: 900 })
       .child(arm({ top: 0, left: 0 }, ["t", "l"])).child(arm({ top: 0, right: 0 }, ["t", "r"]))
       .child(arm({ bottom: 0, left: 0 }, ["b", "l"])).child(arm({ bottom: 0, right: 0 }, ["b", "r"]));
   }
@@ -104,11 +186,11 @@ export class Sea {
       .when(a.pinned, (el) => el.child(div().flex_none().text_color(INK.gold).child("PIN")))
       .child(div().flex_none().text_color(word[1]).child(word[0]));
     // on a dark, see-through backing so passing sea life never muddles the text
-    const tagEl = v_flex().relative().w(w).gap(4).text_size(12).px(4).py(1).mx(-4).bg("#03151fa8")
+    const tagEl = v_flex().relative().w(w).gap(4).text_size(12).px(6).py(3).mx(-6).bg("#03151fe6")
       .child(line1)
-      .when(!compact, (el) => el.child(div().pl(26).truncate().text_color(alert === "pressure" ? "#ffb055" : INK.seaDim)
+      .when(!compact, (el) => el.child(div().pl(14).truncate().text_color(alert === "pressure" ? "#ffb055" : INK.seaDim)
         .child([toolName(a), a.space_name, clock].filter(Boolean).join(" · "))));
-    return a.focused ? tagEl.child(this.brackets(w, compact ? 14 : 32)) : tagEl;
+    return a.focused ? tagEl.child(this.brackets()) : tagEl;
   }
 
   render(cx) {
@@ -133,24 +215,45 @@ export class Sea {
 
     // scenery: sky, the surface, the deepening water, the seabed; a few fish and a jelly for life
     const scene = v_flex().absolute().top(0).left(0).w(W).h(H)
-      .child(image(`${ART}/sea-sky.gif`).w(W).h(SKY).flex_none())
-      .child(image(`${ART}/sea-surface.gif`).w(W).h(SURFACE).flex_none())
+      .child(sprite("sea-sky", W, SKY).flex_none())
+      .child(sprite("sea-water", W, SURFACE).flex_none())
       .child(div().relative().w(W).flex_1().child(gradient(WATER_TOP, WATER_DEEP)))
-      .child(image(`${ART}/sea-seabed.gif`).w(W).h(SEABED).flex_none());
-    // sea life, behind the crew: swimmers cross their lanes and turn round off-screen (the GIFs carry it all),
+      .child(sprite("sea-seabed", W, SEABED).flex_none());
+    // sea life, behind the crew: swimmers cross their lanes and turn round off-screen,
     // the jelly drifts, garden eels stand out of their burrows in the sand, the crab scuttles along the seabed,
     // the seahorse bobs by the kelp
     const water = (f) => Math.round(WATERLINE + 40 + f * (H - SEABED - WATERLINE - 64));
     const life = [
-      ...LANES.map(([name, f]) => image(`${ART}/${name}.gif`).absolute().left(0).top(water(f)).w(W).h(48)),
-      div().absolute().left(250).top(water(0.55)).loop("left", { from: 220, to: 290, period: 9000 })
-        .child(div().relative().loop("top", { from: 0, to: 26, period: 5200 }).child(image(`${ART}/jelly.gif`).w(40).h(36))),
-      // the colony's burrows sit on the seabed strip's sand (its top 40 px down; the GIF's burrows 82 px down)
-      image(`${ART}/garden-eels.gif`).absolute().left(84).top(H - SEABED + 40 - 82).w(144).h(84),
-      image(`${ART}/crab.gif`).absolute().top(H - 52).w(48).h(32).loop("left", { from: 60, to: 230, period: 14000 }),
+      ...this.swimmers.filter((s) => s.legs).map((s) => {
+        const now = position(s), motion = motionOf(now);
+        return div().id(`swim-${s.name}-${s.trip}`).absolute().left(Math.round(now.x)).top(water(s.lane) + Math.round(now.y))
+          .transition("left", motion).transition("top", motion)
+          .child(sprite(`${s.name}-${facingRight(s) ? "r" : "l"}`, SWIM_W, SWIM_H));
+      }),
+      ...(() => {
+        const now = position(this.jelly) ?? this.jelly.from, motion = motionOf(now);
+        return [div().id("jelly").absolute().left(Math.round(now.x)).top(water(0.5) + Math.round(now.y))
+          .transition("left", motion).transition("top", motion).child(sprite("jelly", 40, 36))];
+      })(),
+      // the colony's burrows sit on the seabed strip's sand (its top 40 px down; the sprite's burrows 82 px down)
+      sprite("garden-eels", 144, 84).absolute().left(84).top(H - SEABED + 40 - 82),
+      ...(() => {
+        const now = position(this.crab) ?? this.crab.from;
+        return [div().id("crab").absolute().top(H - 52).left(Math.round(now.x)).transition("left", motionOf(now)).child(sprite("crab", 48, 32))];
+      })(),
       div().absolute().left(300).top(H - SEABED - 30).loop("top", { from: H - SEABED - 34, to: H - SEABED - 22, period: 3400 })
-        .child(image(`${ART}/seahorse.gif`).w(32).h(48)),
+        .child(sprite("seahorse", 32, 48)),
     ];
+    // the shafts of light, over the water and behind everything in it
+    const rays = RAYS.map(([n, period, peak]) => image(`${ART}/sea-ray-${n}.png`).absolute().left(0).top(WATERLINE + 2).w(W).h(180)
+      .loop("opacity", { from: 0.05, to: peak, period }));
+    // a string of bubbles on its way up, each wobbling as it goes
+    const bubbles = this.vent ? Array.from({ length: BUBBLES }, (_, i) => {
+      const size = 3 + (i % 3) * 2;
+      return div().id(`vent-${this.vent.id}-${i}`).absolute().left(Math.round(this.vent.x + (i % 3) * 3)).top(this.vent.up ? WATERLINE + 8 : H - SEABED + 6)
+        .transition("top", { duration: 5200 + (i % 3) * 700, delay: i * 500, easing: "ease-in" }).opacity(0.75)
+        .child(div().relative().loop("left", { from: -3, to: 3, period: 1100 + i * 90 }).child(div().size(size).rounded_full().border_1().border_color("#8ad8ff")));
+    }) : [];
     // the ruler: minutes under
     const ruler = RULER.map((m) => {
       const y = Math.round(yOf(depthOf(m)) + ROW / 2);
@@ -161,18 +264,18 @@ export class Sea {
     });
 
     // the captain, his hatch at the waterline on the right
-    const captain = image(`${ART}/captain-${this.mood(list)}.gif`).absolute().top(WATERLINE - 132).left(W - 168).w(CAPTAIN[0]).h(CAPTAIN[1]);
+    const captain = sprite(`captain-${this.mood(list)}`, CAPTAIN[0], CAPTAIN[1]).absolute().top(WATERLINE - 132).left(W - 168);
 
     // surfaced subs bobbing at the waterline, their tags in the sky; one just up throws a splash and a flare
     for (const [k, until] of this.surfacing) if (until < now) this.surfacing.delete(k);
     const surfaced = done.slice(0, 3).map((a, i) => div().id(`s-${a.address}`).absolute().left(10 + i * 50).top(WATERLINE - 28)
       .on_click(this.go(a)).on_mouse_down("right", this.pin(a))
-      .child(image(`${ART}/minisub-${toolOf(a)}-loot.gif`).w(SUB_W).h(LOOT_H)));
+      .child(sprite(`minisub-${toolOf(a)}-loot`, SUB_W, LOOT_H)));
     const bursts = done.slice(0, 3).flatMap((a, i) => this.surfacing.has(a.address) ? [
       image(`${ART}/splash.gif`).absolute().left(10 + i * 50 + 28 - 40).top(WATERLINE - 48).w(80).h(56),
       image(`${ART}/flare.gif`).absolute().left(10 + i * 50 + 28 - 40).top(WATERLINE - 84).w(80).h(88),
     ] : []);
-    const sky = v_flex().absolute().left(12).top(10).w(196).gap(6)
+    const sky = v_flex().absolute().left(16).top(14).w(192).gap(6)
       .child(div().text_size(12).text_color("#9ab8ff").child(`SURFACED · ${done.length}`))
       .children(done.slice(0, 2).map((a) => div().id(`st-${a.address}`).on_click(this.go(a)).on_mouse_down("right", this.pin(a))
         .child(this.tag(a, ids.get(a.address), tabs, 196, true))))
@@ -181,25 +284,25 @@ export class Sea {
     // the ones under: flare trails first (behind), then each sub with its tag
     const flares = want.filter((w) => w.a.status === "blocked").map((w) => {
       const h = Math.max(0, w.y - WATERLINE);
-      return v_flex().absolute().left(46).top(WATERLINE + 4).h(h).gap(4)
+      return v_flex().absolute().left(SUB_X + 18).top(WATERLINE + 4).h(h).gap(4)
         .children(Array.from({ length: Math.floor(h / 6) }, () => div().size(2).bg(INK.red)));
     });
     const subs = want.map(({ a, y }) => {
       const s = compact ? 0.6 : 1;
       const alert = a.status === "working" && minutesUnder(a, tabs, now) >= PRESSURE_MIN ? "pressure"
         : a.status === "idle" && minutesParked(a, tabs, now) >= MOSS_MIN ? "moss" : null;
-      const look = alert === "moss" ? image(`${ART}/minisub-${toolOf(a)}-moss.gif`).w(SUB_W * s).h(LOOT_H * s)
-        : image(`${ART}/minisub-${toolOf(a)}.gif`).w(SUB_W * s).h(SUB_H * s);
-      return div().id(`u-${a.address}`).absolute().left(28).top(Math.round(y)).w(W - 36).h(row)
+      const look = alert === "moss" ? sprite(`minisub-${toolOf(a)}-moss`, SUB_W * s, LOOT_H * s)
+        : sprite(`minisub-${toolOf(a)}`, SUB_W * s, SUB_H * s);
+      return div().id(`u-${a.address}`).absolute().left(SUB_X).top(Math.round(y)).w(W - SUB_X - 8).h(row)
         .on_click(this.go(a)).on_mouse_down("right", this.pin(a))
-        .when(a.status === "blocked", (el) => el.child(image(`${ART}/blip-blocked.gif`).absolute().left(0).top(-10).size(56)))
-        .when(alert === "pressure" && !compact, (el) => el.child(image(`${ART}/pressure.gif`).absolute().left(-12).top(-28).w(80).h(76)))
+        .when(a.status === "blocked", (el) => el.child(sprite("blip-blocked", 56).absolute().left(0).top(-10)))
+        .when(alert === "pressure" && !compact, (el) => el.child(sprite("pressure", 80, 76).absolute().left(-12).top(-28)))
         .child(div().absolute().left(2).top(compact ? -4 : 0).child(look))
-        .child(div().absolute().left(58).top(compact ? 2 : 4).child(this.tag(a, ids.get(a.address), tabs, W - 36 - 66, compact, alert)));
+        .child(div().absolute().left(54).top(compact ? 2 : 4).child(this.tag(a, ids.get(a.address), tabs, W - SUB_X - 8 - 62, compact, alert)));
     });
 
     const sea = div().relative().size_full().overflow_hidden()
-      .child(scene).children(life).children(ruler).children(flares)
+      .child(scene).children(rays).children(bubbles).children(life).when(onAlert(), (el) => el.child(battleLight(0.35))).children(ruler).children(flares)
       .child(captain).children(surfaced).children(bursts).child(sky).children(subs)
       .when(!list.length, (el) => el.child(div().absolute().left(0).w(W).top(Math.round(H * 0.55)).flex().justify_center()
         .text_size(12).text_color(INK.seaDim).child("No crew out. Calm seas.")));

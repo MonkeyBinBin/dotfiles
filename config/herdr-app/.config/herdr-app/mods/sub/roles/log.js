@@ -2,11 +2,12 @@
 // The left page is That Monkey's record: his portrait in the hatch, rank and the dives to the next one, subs home,
 // and how the crew is doing. The right page lists who needs the person (SOS) and who's back with loot, each with a
 // Go link, then the log entries of the latest subs home (shared "sub.log", written by the sea). Esc closes it.
-import { div, image } from "gpui-kit";
+import { div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { agents, run, shared, closeOverlay } from "herdr";
 import { framed } from "../kit/frame.js";
-import { ART, INK, WORD, toolOf, toolName, titleOf, since } from "../state.js";
+import { sprite } from "../kit/sprite.js";
+import { INK, WORD, toolOf, toolName, titleOf, since } from "../state.js";
 
 // ranks by subs brought home
 const RANKS = [[0, "Ensign"], [5, "Lieutenant"], [15, "Commander"], [40, "Captain"], [100, "Admiral"]];
@@ -33,7 +34,7 @@ export class CaptainsLog {
       run("agent.focus", { terminal: a.address });
     };
     return h_flex().id(`l-${a.address}`).gap(10).items_center().on_click(go)
-      .child(image(`${ART}/minisub-${toolOf(a)}.gif`).w(39).h(30).flex_none())
+      .child(sprite(`minisub-${toolOf(a)}`, 39, 30).flex_none())
       .child(v_flex().flex_1().min_w(0).gap(3)
         .child(div().truncate().text_color(a.status === "blocked" ? INK.redSoft : INK.hi).child(titleOf(a)))
         .child(div().truncate().text_color(INK.dim).child(`${toolName(a)} · ${a.space_name}`)))
@@ -59,8 +60,8 @@ export class CaptainsLog {
 
     const left = v_flex().w(250).flex_none().p(14).gap(10)
       .child(div().text_size(22).text_color(INK.hi).child("CAPTAIN'S LOG"))
-      .child(div().text_color(INK.dim).child("Captain 那個猴子, on watch"))
-      .child(h_flex().justify_center().child(image(`${ART}/captain-${mood}.gif`).w(196).h(140)))
+      .child(div().text_color(INK.dim).child("Captain, on watch"))
+      .child(h_flex().justify_center().child(sprite(`captain-${mood}`, 196, 140)))
       .child(this.heading("RECORD"))
       .child(stat("Rank", r.name, INK.gold))
       .child(h_flex().justify_between().items_center()

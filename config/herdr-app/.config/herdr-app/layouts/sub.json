@@ -7,7 +7,8 @@
   "titlebar": "none",
   "traffic_lights": [22, 24],
   "background": { "image": "mods/sub/assets/hull.png", "fit": "cover" },
-  "terminal_padding": [14, 12],
+  "terminal_padding": [18, 20],
+  "terminal_opacity": 0.3,
   "padding": [0, 12],
   "children": [
     {
@@ -26,18 +27,19 @@
         {
           "id": "main",
           "type": "block",
+          "background": { "image": "mods/sub/assets/deep-sea-pixel.png", "fit": "cover" },
+          "radius": 16,
           "content": {
             "tab": "active",
             "pane": {
               "gap": 8,
               "radius": 16,
-              "background": "background",
               "lone": true,
               "border": { "width": 4, "color": "#4a6a6c" },
               "focus": { "width": 4, "color": "#c89c48" },
               "header": {
                 "content": { "mod": "sub", "props": { "role": "pane" } },
-                "height": 32,
+                "height": 48,
                 "position": "top",
                 "reveal": "always"
               }
@@ -59,8 +61,8 @@
               "type": "stack",
               "active": "files",
               "children": [
-                { "id": "files", "type": "block", "content": { "mod": "files" } },
-                { "id": "changes", "type": "block", "content": { "mod": "changes" } }
+                { "id": "files", "type": "block", "content": { "mod": "sub-files" } },
+                { "id": "changes", "type": "block", "content": { "mod": "sub-changes" } }
               ]
             }
           ]
@@ -81,7 +83,7 @@
     {
       "id": "deck",
       "type": "block",
-      "size": { "px": 48 },
+      "size": { "px": 96 },
       "window_drag": true,
       "content": { "mod": "sub", "props": { "role": "deck" } }
     }

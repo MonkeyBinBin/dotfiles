@@ -2,7 +2,7 @@
 // state, the lines and the art live in one place:
 //   sea    the sea column: the agents as mini-subs, deeper the longer they've been under; the captain on top
 //   sonar  the sonar scope under it: a blip per agent, and the crew's counts
-//   deck   the bottom hull edge: the spaces as compartment plates, Settings
+//   deck   the control console along the bottom hull edge: the spaces as toggle plates, telegraph, alarms, systems
 //   pane   a porthole header over each pane
 //   log    the captain's log dialog (opened from the nameplate)
 //   menu   a sub's right-click menu (state.js subMenu())
