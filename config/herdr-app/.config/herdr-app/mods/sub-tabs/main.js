@@ -2,7 +2,7 @@
 // riveted on the hull (the shown one brass, the rest steel) with its status lamp, + and the side panel buttons as
 // plates too, and a brass porthole badge at the right end (click: the captain's log). Behaviour is unchanged: select, drag to move,
 // double-click to rename, right-click menu, + menu, side panel buttons remembered per space. An unnamed tab goes by its
-// agent's title. Key commands (keys.json): sub-tabs.files, .changes, .log and .agent1-9, which goes to contact C1-C9.
+// agent's title. Key commands (keys.json): sub-tabs.files, .changes, .log, .radio, .keys and .agent1-9, which goes to contact C1-C9.
 import { View, div, image, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { battleLight, onAlert } from "./kit/battle-light.js";
@@ -30,6 +30,7 @@ function find(node, id) {
 export default class Tabs extends View {
   init(_props, cx) {
     this.pressed = null;
+    this.open = {};
     this.panels = JSON.parse(localStorage.getItem("panels") ?? "{}");
     cx.spawn(async () => {
       for (;;) this.command(await nextCommand());
@@ -38,7 +39,9 @@ export default class Tabs extends View {
 
   command(c) {
     if (PANELS.includes(c)) return this.togglePanel(c);
-    if (c === "log") return this.toggleLog();
+    if (c === "log") return this.toggle("log", 680, 460);
+    if (c === "radio") return this.toggle("radio", 560, 430);
+    if (c === "keys") return this.toggle("keys", 780, 600);
     const contact = /^agent([1-9])$/.exec(c);
     const agent = contact && byContact(agents())[Number(contact[1]) - 1];
     if (agent) run("agent.focus", { terminal: agent.address });
@@ -51,12 +54,13 @@ export default class Tabs extends View {
     run("layout.show", { id: "panel" });
   }
 
-  // Open while the log says so (it clears "sub.log.open" as it goes, Esc included). The id must also be this run's: shared
-  // state outlives the app, and a quit may not get to clear it.
-  toggleLog() {
-    if (this.log && shared("sub.log.open") === this.log) return closeOverlay(this.log);
-    this.log = openOverlay({ mod: "sub", kind: "dialog", width: 680, height: 460, frame: "none", props: { role: "log" } });
-    setShared("sub.log.open", this.log);
+  // A dialog role of the sub, opened or closed. Open while it says so (it clears "sub.<role>.open" as it goes, Esc included).
+  // The id must also be this run's: shared state outlives the app, and a quit may not get to clear it.
+  toggle(role, width, height) {
+    const key = `sub.${role}.open`;
+    if (this.open[role] && shared(key) === this.open[role]) return closeOverlay(this.open[role]);
+    this.open[role] = openOverlay({ mod: "sub", kind: "dialog", width, height, frame: "none", props: { role } });
+    setShared(key, this.open[role]);
   }
 
   // The side panel is remembered per space: switching shows that space's choice
@@ -113,7 +117,7 @@ export default class Tabs extends View {
           if (from !== null && from !== i) run("tab.move", { id: shown[from].id, index: space.tabs.findIndex(x => x.id === c.id) + 1 });
           else run("tab.select", { id: c.id });
         })
-        .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); openOverlay({ mod: "menu", kind: "popup", width: 200, props: { tab: "tab", target: { id: c.id, space: space.id } } }); })
+        .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); openOverlay({ mod: "sub-menu", kind: "popup", width: 200, frame: "none", props: { tab: "tab", target: { id: c.id, space: space.id } } }); })
         .child(plate(h_flex().h_full().pl(14).pr(12).gap(8).items_center()
           .child(div().flex_none().opacity(0.7).child(String(i + 1)))
           .child(div().max_w(170).truncate().child(c.zoomed ? `${name} Z` : name))
@@ -139,7 +143,7 @@ export default class Tabs extends View {
     // plates riveted straight on the hull; at the right end a brass porthole badge, the captain's log
     const logBadge = div().id("log-badge").tooltip("Captain's log").flex_none().size(36).opacity(0.92).hover(s => s.opacity(1)).active(s => s.opacity(0.75))
       .on_mouse_down("left", stop)
-      .on_click(() => this.toggleLog())
+      .on_click(() => this.toggle("log", 680, 460))
       .child(image(`${ART}/log-badge.png`).size_full());
     return h_flex().relative().size_full().min_w(0).pl(lightsPadding).gap(8).items_center()
       .when(onAlert(), el => el.child(battleLight()))
@@ -147,7 +151,7 @@ export default class Tabs extends View {
       .on_scroll_wheel(e => { if (Math.abs(e.delta.y) >= 1) run(e.delta.y > 0 ? "tab.prev" : "tab.next"); })
       // + right behind the last tab, scrolling with the tabs: a scroller always fills its row, so outside it + would sit at the far end
       .child(h_flex().id("tab-scroll").flex_1().min_w(0).h_full().items_center().overflow_x_scrollbar().gap(8).children(shown.map(item))
-        .child(button("tab-new", "+", () => openOverlay({ mod: "new-menu", kind: "popup", width: 250, height: 512 }))))
+        .child(button("tab-new", "+", () => openOverlay({ mod: "sub-new-menu", kind: "popup", width: 250, frame: "none" }))))
       .when(enabled.includes("files"), el => el.child(panelButton("files", "Files", "mods/files/file.svg")))
       .when(enabled.includes("changes"), el => el.child(panelButton("changes", "Changes", "mods/changes/changes.svg")))
       .when(w?.buttons, el => el.child(button("minimize", w.platform === "windows" ? svg("mods/sub-tabs/win-min.svg").size(16) : "−", () => run("window.minimize")))

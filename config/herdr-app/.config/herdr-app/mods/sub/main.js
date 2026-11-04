@@ -7,6 +7,8 @@
 //   log    the captain's log dialog (opened from the nameplate)
 //   menu   a sub's right-click menu (state.js subMenu())
 //   scope  the periscope window's bar (state.js periscope(): one agent's live terminal, floating)
+//   radio  the radio dialog: words sent straight to one or more agents
+//   keys   the keys in force, read live
 import { View } from "gpui-kit";
 import { props } from "herdr";
 import { Sea } from "./roles/sea.js";
@@ -16,12 +18,16 @@ import { PaneHeader } from "./roles/pane.js";
 import { CaptainsLog } from "./roles/log.js";
 import { Scope } from "./roles/scope.js";
 import { SubMenu } from "./roles/menu.js";
+import { Radio } from "./roles/radio.js";
+import { KeyList } from "./roles/keys.js";
 
-const ROLES = { sea: Sea, sonar: Sonar, deck: Deck, pane: PaneHeader, log: CaptainsLog, scope: Scope, menu: SubMenu };
+const ROLES = { sea: Sea, sonar: Sonar, deck: Deck, pane: PaneHeader, log: CaptainsLog, scope: Scope, menu: SubMenu, radio: Radio, keys: KeyList };
 
 export default class Sub extends View {
-  init() {
-    this.role = null;
+  init(_props, cx) {
+    // These make their input as they start, which can't happen during a render.
+    const role = props()?.role;
+    this.role = role === "radio" || role === "keys" ? new ROLES[role](cx) : null;
   }
 
   async close() {

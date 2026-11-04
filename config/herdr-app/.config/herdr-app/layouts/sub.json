@@ -4,6 +4,7 @@
   "theme": "sub",
   "ui_font": "Cubic 11",
   "preview": "layouts/sub.svg",
+  "terminal_menu": "sub-menu",
   "titlebar": "none",
   "traffic_lights": [22, 24],
   "background": { "image": "mods/sub/assets/hull.png", "fit": "cover" },

@@ -108,7 +108,12 @@ export function goTo(address) {
   run("agent.focus", { terminal: address });
 }
 
-/** A sub's right-click menu, at the pointer: periscope, go to, pin, rename its tab, close it. */
+/** The radio dialog, tuned to one agent. */
+export function radio(address) {
+  openOverlay({ mod: "sub", kind: "dialog", width: 560, height: 430, frame: "none", props: { role: "radio", terminal: address } });
+}
+
+/** A sub's right-click menu, at the pointer: periscope, go to, radio, pin, rename its tab, close it. */
 export function subMenu(address) {
-  openOverlay({ mod: "sub", kind: "popup", width: 190, height: 184, frame: "none", props: { role: "menu", terminal: address } });
+  openOverlay({ mod: "sub", kind: "popup", width: 190, height: 212, frame: "none", props: { role: "menu", terminal: address } });
 }

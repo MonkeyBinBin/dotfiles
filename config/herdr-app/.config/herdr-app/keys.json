@@ -67,6 +67,8 @@
     "cmd-shift-e": "sub-tabs.files",
     "cmd-shift-g": "sub-tabs.changes",
     "cmd-shift-y": "sub-tabs.log",
+    "cmd-shift-r": "sub-tabs.radio",
+    "cmd-/": "sub-tabs.keys",
     "cmd-alt-1": "sub-tabs.agent1",
     "cmd-alt-2": "sub-tabs.agent2",
     "cmd-alt-3": "sub-tabs.agent3",

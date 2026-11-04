@@ -1,10 +1,10 @@
-// A sub's right-click menu (state.js subMenu()), on a steel plate: watch it through the periscope, go to it, pin or
+// A sub's right-click menu (state.js subMenu()), on a steel plate: watch it through the periscope, go to it, radio it, pin or
 // unpin it, rename its tab, close its pane. Props: { terminal, overlay }.
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { agents, panes, run, closeOverlay } from "herdr";
 import { framed } from "../kit/frame.js";
-import { INK, titleOf, periscope, goTo } from "../state.js";
+import { INK, titleOf, periscope, goTo, radio } from "../state.js";
 
 export class SubMenu {
   render(cx, p) {
@@ -19,6 +19,7 @@ export class SubMenu {
     const items = [
       ["Periscope", () => periscope(terminal)],
       ["Go to", () => goTo(terminal)],
+      ...(a ? [["Radio", () => radio(terminal)]] : []),
       [a?.pinned ? "Unpin" : "Pin to top", () => run("terminal.pin", { terminal, pinned: !a?.pinned })],
       ...(a?.tab ? [["Rename tab", () => run("tab.rename", { id: a.tab })]] : []),
       ["Close", () => (pane ? run("pane.close", { pane }) : run("terminal.kill", { terminal })), true],

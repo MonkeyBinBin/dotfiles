@@ -1,9 +1,10 @@
 // The Files panel, in the sub's materials: Herdr's files mod (cloned from 0.1.12), behaviour unchanged. A lazy file browser
 // for the focused pane's folder, with bounded read-only previews. pane.go brings the keyboard here: j/k or arrows walk
-// the tree, enter or l opens, h closes a folder or goes to its parent, and h or esc leaves a preview.
+// the tree, enter or l opens, h closes a folder or goes to its parent, and h or esc leaves a preview. A markdown file's preview
+// has a READ key (or m) that opens it rendered in a pane beside the focused one (sub-md).
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Editor, EditorState } from "gpui-base";
-import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, window, nextCommand } from "herdr";
+import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, window, nextCommand, run } from "herdr";
 import { Cursor } from "./kit/cursor.js";
 import { engraved } from "./kit/metal.js";
 import { INK, key as keyPlate, plate, well } from "./kit/panel.js";
@@ -17,6 +18,7 @@ function location() {
 const key = () => JSON.stringify(location());
 const LANG = { ts: "js", tsx: "js", mts: "js", cts: "js", jsx: "js", mjs: "js", toml: "yaml", jsonc: "json", svelte: "html", vue: "html" };
 const PER_FOLDER = 500, TOTAL = 5000;
+const isMarkdown = (path) => /\.(md|mdx|markdown)$/i.test(path ?? "");
 
 async function directory(path, on) {
   if (!on && window()?.platform === "windows") {
@@ -152,9 +154,14 @@ export default class Files extends View {
     });
   }
 
+  read() {
+    run("pane.split", { direction: "right", mod: "sub-md", props: { file: `${this.root}/${this.file}`, on: this.on } });
+  }
+
   // true when the key was this panel's
   walk(k, cx) {
     if (this.file) {
+      if (k === "m" && isMarkdown(this.file)) { this.read(); return true; }
       if (k !== "escape" && k !== "h" && k !== "left") return false;
       this.show(null);
       return true;
@@ -221,6 +228,7 @@ export default class Files extends View {
       .child(plate(h_flex().size_full().gap(8).items_center()
         .when(Boolean(this.file), el => el.child(keyPlate("files-back", "←", false, 30, (cx) => { this.show(null); cx.notify(); })))
         .child(div().flex_none().pl(4).child(engraved("FILES")))
+        .when(isMarkdown(this.file), el => el.child(keyPlate("files-read", "READ", false, 30, () => this.read())))
         .child(div().flex_1().min_w(0).truncate().text_right().text_size(11).text_color(INK.paint).pr(4).child(this.file ?? this.root?.split(/[\\/]/).pop() ?? ""))))
       .child(well(body));
   }
