@@ -109,7 +109,7 @@ export class Deck {
     const who = groups.map((g) => `${g.map((a) => ids.get(a.address)).join(", ")} on ${g[0].space_name}`).join("; ");
     return div().id("clash").w(68).h(44).when(n > 0, (el) => el.tooltip(`Same checkout and branch: ${who}. Click for a new worktree.`)
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-      .on_click(() => openOverlay({ mod: "worktree", kind: "dialog", width: 460, height: 280, props: { space: first.space, folder: panes().find((p) => p.pane === first.pane)?.cwd, action: "new" } })))
+      .on_click(() => openOverlay({ mod: "sub-worktree", kind: "dialog", width: 460, height: 280, props: { space: first.space, folder: panes().find((p) => p.pane === first.pane)?.cwd, action: "new" } })))
       .child(framed("well", div().relative().size_full().flex().items_center().justify_center().text_size(12).overflow_hidden()
         .bg(n ? `${VIOLET}40` : "#041012").text_color(n ? VIOLET : "#28444a")
         .when(n > 0, (el) => el.child(div().absolute().top(0).left(0).size_full().bg(VIOLET).loop("opacity", { from: 0, to: 0.3, period: 1400 })))

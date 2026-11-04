@@ -1,6 +1,6 @@
 // The keys in force right now, read live from keys(): the shown layout's over the global ones (a global key it rebinds isn't
 // listed), the terminal's apart. Runs of numbered keys fold into one row. Type to filter, Esc to close. Change them in keys.json.
-import { div } from "gpui-kit";
+import { div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { keys, setShared, shared } from "herdr";
 import { framed } from "../kit/frame.js";
@@ -18,7 +18,7 @@ const GROUPS = [
 
 const NAMES = {
   "sub-tabs.files": "Files panel", "sub-tabs.changes": "Changes panel", "sub-tabs.log": "Captain's log", "sub-tabs.radio": "Radio",
-  "sub-tabs.keys": "This list", "sub-tabs.agent": "Go to contact C", "layout.toggle:helm": "Right column",
+  "sub-tabs.keys": "This list", "sub-tabs.new": "New menu (agents)", "sub-tabs.agent": "Go to contact C", "layout.toggle:helm": "Right column",
   "agent.next": "Next agent", "agent.prev": "Previous agent",
   "tab.new": "New tab", "tab.close": "Close tab", "tab.next": "Next tab", "tab.prev": "Previous tab", "tab.rename": "Rename tab", "tab.select:": "Go to tab ",
   "space.new": "New space", "space.next": "Next space", "space.prev": "Previous space", "space.rename": "Rename space", "space.select:": "Go to space ",
@@ -108,7 +108,9 @@ export class KeyList {
     }
     return framed("brass", v_flex().size_full().p(14).gap(10).bg(INK.glass).text_size(12)
       .child(h_flex().justify_between().items_center()
-        .child(div().text_size(22).text_color(INK.hi).child("KEYS"))
+        .child(h_flex().gap(10).items_center()
+          .child(svg("mods/sub/icons/keys.svg").size(24).flex_none().text_color(INK.gold))
+          .child(div().text_size(22).text_color(INK.hi).child("KEYS")))
         .child(div().text_color(INK.dim).child("Esc to close · keys.json to change")))
       .child(div().flex_none().h(36).on_mouse_down("left", (_e, cx) => cx.stop_propagation())
         .child(framed("well", div().size_full().px(8).flex().items_center().child(Input.new(this.input).h_full().w_full().text_size(12).text_color(INK.hi)))))

@@ -1,7 +1,7 @@
 // The radio: words sent straight to one or more agents, without going through another agent. Tick who hears it, pick a standing
 // order or type one, Enter or SEND. An order only fills the box: nothing goes out until it's sent. An agent waiting on a
 // question can't be tuned in: what's sent would answer it. Props: { terminal?, overlay }.
-import { div } from "gpui-kit";
+import { div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { agents, closeOverlay, hc, notify, setShared } from "herdr";
 import { framed } from "../kit/frame.js";
@@ -97,7 +97,10 @@ export class Radio {
     const ready = this.hearers(list).length > 0 && Boolean(this.text.trim()) && !this.sending;
     return framed("brass", v_flex().size_full().p(14).gap(10).bg(INK.glass).text_size(12)
       .child(h_flex().justify_between().items_center()
-        .child(div().text_size(22).text_color(INK.hi).child("RADIO"))
+        .child(h_flex().gap(10).items_center()
+          .child(svg("mods/sub-menu/radio.svg").size(24).flex_none().text_color(INK.gold))
+          .child(div().text_size(22).text_color(INK.hi).child("RADIO"))
+          .child(div().text_color(INK.dim).child("Message your agents")))
         .child(div().text_color(INK.dim).child("Esc to close")))
       .child(div().flex_1().min_h(0).child(framed("well", v_flex().id("radio-crew").size_full().p(2).overflow_y_scrollbar()
         .when(!list.length, (el) => el.child(div().p(8).text_color(INK.dim).child("No crew out.")))

@@ -26,6 +26,7 @@ export class Scope {
     const home = panes().some((x) => x.terminal === terminal);
     const title = a ? titleOf(a) : k?.name || k?.program?.name || terminal;
     return framed("brass", h_flex().size_full().px(16).gap(10).items_center().text_size(12).text_color(TEXT)
+      .child(svg("mods/sub/icons/periscope.svg").size(16).flex_none().text_color(FAINT))
       .child(div().flex_none().text_color(FAINT).child("PERISCOPE"))
       .child(sprite(`lamp-${status}`, 10).flex_none())
       .when(Boolean(a), (el) => el.child(div().flex_none().text_color(FAINT).child(contacts(list).get(terminal))))

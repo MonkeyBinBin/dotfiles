@@ -2,7 +2,7 @@
 // The left page is That Monkey's record: his portrait in the hatch, rank and the dives to the next one, subs home,
 // and how the crew is doing. The right page lists who needs the person (SOS) and who's back with loot, each with a
 // Go link, then the log entries of the latest subs home (shared "sub.log", written by the sea). Esc closes it.
-import { div } from "gpui-kit";
+import { div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { agents, run, shared, setShared, closeOverlay } from "herdr";
 import { framed } from "../kit/frame.js";
@@ -63,7 +63,9 @@ export class CaptainsLog {
     const mood = blocked.length ? "alarm" : working ? "sleep" : "idle";
 
     const left = v_flex().w(250).flex_none().p(14).gap(10)
-      .child(div().text_size(22).text_color(INK.hi).child("CAPTAIN'S LOG"))
+      .child(h_flex().gap(10).items_center()
+        .child(svg("mods/sub/icons/log.svg").size(24).flex_none().text_color(INK.gold))
+        .child(div().text_size(22).text_color(INK.hi).child("CAPTAIN'S LOG")))
       .child(div().text_color(INK.dim).child("Captain, on watch"))
       .child(h_flex().justify_center().child(sprite(`captain-${mood}`, 196, 140)))
       .child(this.heading("RECORD"))

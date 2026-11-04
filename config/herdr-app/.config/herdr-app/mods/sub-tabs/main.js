@@ -2,7 +2,7 @@
 // riveted on the hull (the shown one brass, the rest steel) with its status lamp, + and the side panel buttons as
 // plates too, and a brass porthole badge at the right end (click: the captain's log). Behaviour is unchanged: select, drag to move,
 // double-click to rename, right-click menu, + menu, side panel buttons remembered per space. An unnamed tab goes by its
-// agent's title. Key commands (keys.json): sub-tabs.files, .changes, .log, .radio, .keys and .agent1-9, which goes to contact C1-C9.
+// agent's title. Key commands (keys.json): sub-tabs.files, .changes, .log, .radio, .keys, .new and .agent1-9, which goes to contact C1-C9.
 import { View, div, image, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { battleLight, onAlert } from "./kit/battle-light.js";
@@ -42,6 +42,7 @@ export default class Tabs extends View {
     if (c === "log") return this.toggle("log", 680, 460);
     if (c === "radio") return this.toggle("radio", 560, 430);
     if (c === "keys") return this.toggle("keys", 780, 600);
+    if (c === "new") return this.toggleNew();
     const contact = /^agent([1-9])$/.exec(c);
     const agent = contact && byContact(agents())[Number(contact[1]) - 1];
     if (agent) run("agent.focus", { terminal: agent.address });
@@ -52,6 +53,13 @@ export default class Tabs extends View {
     if (panel && !panel.hidden && find(root, "panel-body")?.active === id) return run("layout.hide", { id: "panel" });
     run("layout.select", { stack: "panel-body", child: id });
     run("layout.show", { id: "panel" });
+  }
+
+  // The + menu from the keyboard: under the tab bar, wherever the pointer happens to be. It clears "sub.new.open" as it goes.
+  toggleNew() {
+    if (this.newMenu && shared("sub.new.open") === this.newMenu) return closeOverlay(this.newMenu);
+    this.newMenu = openOverlay({ mod: "sub-new-menu", kind: "popup", width: 250, frame: "none", at: { x: 24, y: 56 } });
+    setShared("sub.new.open", this.newMenu);
   }
 
   // A dialog role of the sub, opened or closed. Open while it says so (it clears "sub.<role>.open" as it goes, Esc included).
