@@ -11,6 +11,7 @@
 | `ghostty`     | Ghostty 終端模擬器設定                         | `~/.config/ghostty/config`                        |
 | `cmux`        | Cmux 終端機設定                                | `~/.config/cmux/`                                 |
 | `herdr`       | Herdr 終端多工器設定（tmux 風格按鍵、gruvbox） | `~/.config/herdr/config.toml`                     |
+| `herdr-app`   | Herdr app 介面（潛艇 layout、mods、快捷鍵與個人設定） | `~/.config/herdr-app/`（mods 為複製，見「Herdr app 介面」） |
 | `claude`      | Claude Code 系統提示 + output styles + hooks 範本 + status line | `~/.claude/CLAUDE.md`、`~/.claude/output-styles/`、`~/.claude/statusline.sh` |
 | `claude-mods` | Claude Code mods（hooks plugin：pane、band 等） | `~/.claude/mods/<mod>/` → 目錄 symlink |
 | `codex`       | Codex CLI 系統提示                             | `~/.codex/AGENTS.md`                              |
@@ -112,7 +113,12 @@ chmod +x scripts/stow-wrap.sh
 for pkg in zsh tmux ghostty cmux herdr claude claude-mods codex hammerspoon ripgrep git nvim; do
   ./scripts/stow-wrap.sh "$pkg"
 done
+
+# 有裝 Herdr app 才需要：stow herdr-app 並複製 mods（需要 node、rsync）
+./scripts/herdr-sub/install.sh
 ```
+
+> 若 Herdr app 已經啟動過，stow 會因 `keys.json`、`settings.json` 已存在而衝突，處理方式見「Herdr app 介面」。
 
 ### 8. 設定 Powerlevel10k
 
@@ -169,7 +175,7 @@ which fzf eza
 ./scripts/stow-wrap.sh -D zsh          # 移除套件 symlink
 ```
 
-> `claude`、`codex`、`herdr` 套件會自動以 `--no-folding` 模式部署（腳本內的 `NO_FOLDING_PKGS`），避免將目標目錄折疊為單一 symlink，確保非 dotfiles 管理的檔案不受影響。多套件混合執行時會自動拆分為獨立呼叫。
+> `claude`、`codex`、`herdr`、`herdr-app` 套件會自動以 `--no-folding` 模式部署（腳本內的 `NO_FOLDING_PKGS`），避免將目標目錄折疊為單一 symlink，確保非 dotfiles 管理的檔案不受影響。多套件混合執行時會自動拆分為獨立呼叫。
 >
 > 部署完成後，`config/shared/skills/` 內的共享 skills 會自動 symlink 至各 AI CLI 工具的 `~/.<tool>/skills/`（腳本內的 `AI_CLI_PKGS`，目前為 `claude`、`codex`）；工具專屬 skill 優先，不會被覆蓋。`bin` 雖同為 no-folding 套件但不參與 skills 注入。`shared` 不是合法的套件名稱，傳入會直接報錯。
 
@@ -286,7 +292,7 @@ dotfiles**——否則 cmux 更新格式時 repo 內的手寫版本會悄悄失�
 `claude-mods` 套件收錄 `config/claude-mods/.claude/mods/<mod>/`，由 `CLAUDE_CODE_PLUGIN_DIRS`
 （`config/zsh/zshrc.d/01-env.zsh` export）載入。不放在 `settings.json` 的 `env`，因為那裡會蓋掉 shell
 的值；在 Herdr app 裡（有 `HC_TERMINAL_ID`）不 export，mods 不載入。目前收錄 `rpg-hud`、
-`slime-band`、`skill-bar`。
+`rpg-battle`、`rpg-prompt`、`rpg-quest`、`rpg-spinner`、`slime-band`、`skill-bar`。
 
 此套件**刻意不用** `--no-folding`：plugin loader 讀 `hooks/hooks.json` 時不跟隨 symlink，且 module
 realpath 落在 plugin 目錄外會被判為 path traversal，逐檔 symlink 會讓 mod 整個載入失敗。folding 後
@@ -300,6 +306,35 @@ realpath 落在 plugin 目錄外會被判為 path traversal，逐檔 symlink 會
 ### 設定檔策略
 
 各工具的設定檔（`config.toml`、`settings.json`、`config.json`）包含機器專屬內容，不納入版控，各機器獨立維護。
+
+例外：Herdr app 的 `keys.json`、`settings.json`、`programs.json` 只有快捷鍵與個人偏好，由 `herdr-app` 套件管理。在 app 裡改設定會直接寫回 repo，`git status` 會顯示變更。
+
+## Herdr app 介面
+
+`herdr-app` 套件是 Herdr app 的 `sub` 潛艇介面。Herdr app 與 `herdr` 套件設定的 CLI Herdr 是兩套獨立的服務，互相看不到對方的 agent。
+
+```bash
+./scripts/herdr-sub/install.sh            # 部署：stow + 複製 mods；改完 mod 後也跑這支
+node scripts/herdr-sub/dev-watch.mjs      # 開發時持續同步到 app
+node scripts/herdr-sub/bake.mjs [名稱]     # 從 scripts/herdr-sub/fx/ 重新產生素材
+herdr-app check ~/.config/herdr-app/mods/<mod>   # 檢查 mod（只跑初次 render，仍要在 app 裡實測）
+```
+
+| 來源 | 說明 |
+| ---- | ---- |
+| `config/herdr-app/.config/herdr-app/` | layouts、themes、fonts、`keys.json` 等由 stow 連結 |
+| `config/herdr-app/.config/herdr-app/mods/` | `sub*` mods；`install.sh` 用 rsync 複製，因為 Herdr 不會透過 symlink 載入 mod 的圖片 |
+| `config/herdr-app/kit/` | 共用元件的來源；`install.sh` 會複製到每個 `sub*` mod 的 `kit/`（已 gitignore），不要改 mod 裡的副本 |
+| `scripts/herdr-sub/` | 安裝、開發與素材產生工具 |
+
+快捷鍵定義在 `keys.json`，在 app 裡按 `cmd+/` 可查看目前生效的清單。
+
+注意事項：
+
+- **stow 衝突**：Herdr 會在 `keys.json`、`settings.json` 不存在時立刻重建。已啟動過的機器要先結束 Herdr、備份並移除這兩個檔案，再跑 `install.sh`。
+- **直接改 repo 內的設定檔不會即時重載**：Herdr 只監看自己的目錄。跑 `dev-watch.mjs`，或對 `~/.config/herdr-app` 裡的連結執行 `touch -h`。
+- **背景圖要重開 app 才會更新**：layout 的 `background` 圖片會被快取，mod 內的圖片則會即時更新。
+- **clone 的 mod 不會跟著更新**：`sub-menu`、`sub-new-menu`、`sub-tabs`、`sub-files`、`sub-changes`、`sub-worktree` 複製自內建 mod，版本記在各自 `mod.json` 的 `cloned_from`。
 
 ## 多機同步：移除不會自動傳播
 
