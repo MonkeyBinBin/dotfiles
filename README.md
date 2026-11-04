@@ -329,6 +329,8 @@ herdr-app check ~/.config/herdr-app/mods/<mod>   # 檢查 mod（只跑初次 ren
 
 快捷鍵定義在 `keys.json`，在 app 裡按 `cmd+/` 可查看目前生效的清單。
 
+子代理顯示為主代理的僚艇（sea 標籤內的小魚雷、deck 的小 pip、pane header 的 `N ESCORT`），來源有兩種：`hc run` 啟動的終端機直接讀 `terminals()`，可點開 periscope；Claude Code 的 in-process 子代理不是終端機，由 `claude` 套件的 `herdr-subagents.sh` hook 寫成終端機 label（`cc.sub.<agent_id>`），只有類型與時間，看不到畫面。
+
 注意事項：
 
 - **stow 衝突**：Herdr 會在 `keys.json`、`settings.json` 不存在時立刻重建。已啟動過的機器要先結束 Herdr、備份並移除這兩個檔案，再跑 `install.sh`。

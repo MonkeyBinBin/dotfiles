@@ -1,5 +1,5 @@
 // A pane's header, inside its porthole: a status lamp, the space and the agent's title (or the terminal's),
-// the tool and how long it has been under on the right; on hover, buttons to split, zoom and close. Phosphor on
+// the tool, how long it has been under and its escorts on the right; on hover, buttons to split, zoom and close. Phosphor on
 // the pane's dark glass, a thin rule under it. It signals the agent's state:
 //   working  air bubbles rising out along the right
 //   blocked  a red beacon turning in place of the lamp, the glass pulsing red, SOS
@@ -12,7 +12,7 @@ import { h_flex } from "gpui-base";
 import { panes, agents, run, shared } from "herdr";
 import { sprite } from "../kit/sprite.js";
 import { facingRight, motionOf, pick, position, rand, route, walk } from "../swim.js";
-import { FLASH_MS, INK, since, tabsById, toolOf, underSince } from "../state.js";
+import { escortsOf, FLASH_MS, INK, since, tabsById, toolOf, underSince } from "../state.js";
 
 // What goes on behind the header's text, picked by what the agent is up to. Every actor swims a path of legs, each to an
 // { x, y } mark in `ms`: climbing and diving, stopping to hang there, doubling back (its sprite turns round with it).
@@ -31,7 +31,7 @@ const SCENES = {
     const legs = route(W, 80, right, { speed: 280, steps: 7, rise: 10, turns: 0.3 });
     return [{ name: "shoal", w: 80, h: 48, legs, rock: 3 }, { name: "shoal", w: 80, h: 48, legs: trail(legs, 5, 1.04), after: 1300, rock: 3, opacity: 0.55 }];
   },
-  sub: (W) => [{ tool: true, w: 52, h: 40, legs: route(W, 52, true, { speed: 240, steps: 6, rise: 7, stops: 0.25 }), rock: 2 }],
+  sub: (W) => [{ tool: true, w: 52, h: 40, legs: route(W, 52, false, { speed: 240, steps: 6, rise: 7, stops: 0.25 }), rock: 2 }],
   turtle: (W, right) => [{ name: "sea-turtle", w: 80, h: 48, legs: route(W, 80, right, { speed: 120, steps: 6, rise: 9, turns: 0.2, stops: 0.2 }), rock: 3 }],
   puffer: (W, right) => [{ name: "puffer", w: 80, h: 48, legs: route(W, 80, right, { speed: 200, steps: 6, rise: 8, turns: 0.3, stops: 0.5 }) }],
   angler: (W, right) => [{ name: "angler", w: 80, h: 48, legs: route(W, 80, right, { speed: 120, steps: 7, rise: 6, stops: 0.4, lunges: 0.25 }), rock: 2 }],
@@ -115,7 +115,8 @@ export class PaneHeader {
     const title = agent?.title || me.title || prog?.name || "shell";
     const tab = agent && tabsById().get(agent.tab);
     const clock = agent?.status === "working" ? since(underSince(agent, tabsById())) : "";
-    const right = [((prog?.agent || prog?.shell) && prog.name) || "", clock].filter(Boolean).join(" · ");
+    const escorts = agent ? escortsOf(agent.address).length : 0;
+    const right = [((prog?.agent || prog?.shell) && prog.name) || "", clock, escorts ? `${escorts} ESCORT` : ""].filter(Boolean).join(" · ");
     const st = me.status;
     this.status = st;
     this.tool = agent ? toolOf(agent) : "other";

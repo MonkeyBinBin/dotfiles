@@ -10,6 +10,8 @@
 // ffmpeg. `alpha` keeps transparency instead (PNG, or a GIF with one transparent color). The mod shows each at
 // half its size: on a 2x screen that's 1:1, and on a 1x screen the even downscale keeps the pixels crisp.
 //
+// `mirror` flips the crop left to right, for art drawn facing right that the mod shows facing left.
+//
 // Anything that must keep moving while the window is unfocused is a `sheet` instead of a GIF (GIFs only advance with
 // focus): `count` frames, every `stride`th, side by side in one PNG, played there and back by kit/sprite.js. The
 // frame count and period go into kit/sprites.js.
@@ -45,9 +47,10 @@ const SUB_ASSETS = {
   hull: { fx: "sub/hull", crop: [0, 0, 720, 450], mod: "sub", png: true, edge: 0 },
   ...Object.fromEntries(["idle", "alarm", "happy", "sleep"].map((mood) => [`captain-${mood}`, sub("sub/captain", [-46, -66, 52, 4], { opts: { mood }, ...sheet(15, 2) })])),
   ...Object.fromEntries(Object.entries(MINISUB).flatMap(([tool, palette]) => [
-    [`minisub-${tool}`, sub("sub/minisub", [-14, -12, 12, 8], { opts: { palette }, ...sheet(8) })],
-    [`minisub-${tool}-loot`, sub("sub/minisub", [-14, -12, 12, 18], { opts: { palette, loot: true }, ...sheet(8) })],
-    [`minisub-${tool}-moss`, sub("sub/minisub", [-14, -12, 12, 18], { opts: { palette, moss: true }, ...sheet(14) })],
+    [`minisub-${tool}`, sub("sub/minisub", [-14, -12, 12, 8], { mirror: true, opts: { palette }, ...sheet(8) })],
+    [`minisub-${tool}-loot`, sub("sub/minisub", [-14, -12, 12, 18], { mirror: true, opts: { palette, loot: true }, ...sheet(8) })],
+    [`minisub-${tool}-moss`, sub("sub/minisub", [-14, -12, 12, 18], { mirror: true, opts: { palette, moss: true }, ...sheet(14) })],
+    [`torpedo-${tool}`, sub("sub/torpedo", [-6, -3, 6, 4], { mirror: true, opts: { palette }, ...sheet(6) })],
   ])),
   // the scope without its sweep, the boat to lay over the sweep; the sweep itself is vector, see bakeSweep
   sonar: sub("sub/sonar", [-70, -70, 70, 70], { png: true, opts: { part: "scope" } }),
@@ -143,7 +146,7 @@ function bake(name, a) {
       const out = new Uint8ClampedArray(w * h * 4);
       for (let y = 0; y < h; y++)
         for (let x = 0; x < w; x++) {
-          const s = ((cy + y) * r.w + cx + x) * 4, d = (y * w + x) * 4, bgRGB = rgb(bgAt(y + y0));
+          const s = ((cy + y) * r.w + cx + (a.mirror ? w - 1 - x : x)) * 4, d = (y * w + x) * 4, bgRGB = rgb(bgAt(y + y0));
           let k = E ? Math.min(1, (Math.min(x, y, w - 1 - x, h - 1 - y) + 0.5) / E) : 1;
           if (a.vignette) {
             // big glows: fade out on an ellipse round the source, reaching the background before the crop edge

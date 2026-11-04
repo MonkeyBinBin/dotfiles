@@ -86,6 +86,15 @@
             "timeout": 15
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$HOME/.config/claude/herdr-subagents.sh\" settle",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "SubagentStart": [
@@ -94,6 +103,49 @@
           {
             "type": "command",
             "command": "sh \"$HOME/.config/claude/cc-notify.sh\" subagent"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$HOME/.config/claude/herdr-subagents.sh\" start",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$HOME/.config/claude/herdr-subagents.sh\" stop",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$HOME/.config/claude/herdr-subagents.sh\" reset",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$HOME/.config/claude/herdr-subagents.sh\" reset",
+            "timeout": 5
           }
         ]
       }

@@ -11,6 +11,8 @@
 // more, it overgrows with barnacles and weed. One that just surfaced throws up a splash and fires a gold flare.
 // Click a sub (or its tag) to watch it through the periscope (a floating window with its live terminal);
 // double-click to go to it; right-click for its menu (periscope, go, pin, rename, close). The order the column reads in is agent.next's.
+// A sub's escorts (state.js escortsOf) are tiny torpedoes on a line of their own in its tag: hover for who and how long, click one with a
+// terminal for its periscope.
 import { div, image, svg, Background, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { agents, run, setAgentOrder, shared, setShared } from "herdr";
@@ -18,7 +20,7 @@ import { battleLight, onAlert } from "../kit/battle-light.js";
 import { framed } from "../kit/frame.js";
 import { sprite } from "../kit/sprite.js";
 import { facingRight, motionOf, position, rand, route, walk } from "../swim.js";
-import { ART, INK, RANK, WORD, RULER, STATUS_INK, toolOf, toolName, titleOf, since, tabsById, periscope, goTo, subMenu, underSince, depthOf, minutesUnder, minutesParked, contacts, PRESSURE_MIN, MOSS_MIN } from "../state.js";
+import { ART, INK, RANK, WORD, RULER, STATUS_INK, toolOf, toolName, titleOf, since, tabsById, periscope, goTo, subMenu, underSince, depthOf, minutesUnder, minutesParked, contacts, escortsOf, PRESSURE_MIN, MOSS_MIN } from "../state.js";
 
 // The scenery strips, baked at 4x and shown at 2x: sky 64, surface 40, seabed 30 native px, all 176 wide.
 const W = 352, SKY = 128, SURFACE = 80, SEABED = 60, WATERLINE = SKY + 4;
@@ -40,9 +42,11 @@ const SWIM_W = 80, SWIM_H = 48;
 // the light from above: each shaft breathes at its own pace, how bright at most
 const RAYS = [[0, 7300, 0.55], [1, 9100, 0.4], [2, 6100, 0.5], [3, 11300, 0.35]];
 const BUBBLE_EVERY = [6000, 15000], BUBBLES = 7;
-// the subs hang right of the ruler's labels
-const SUB_X = 62, ROW = 44, SUB_W = 52, SUB_H = 40, LOOT_H = 60, CAPTAIN = [196, 140], HAPPY_MS = 3600;
+// the subs hang right of the ruler's labels, nose toward them; HULL_X keeps the propeller clear of the tag
+const SUB_X = 62, ROW = 44, SUB_W = 52, SUB_H = 40, HULL_X = -6, LOOT_H = 60, CAPTAIN = [196, 140], HAPPY_MS = 3600;
 const TOOL_ICON = 14;
+// a compact tag has no line for its escorts: one small torpedo sits in its only line
+const ESCORT_W = 36, ESCORT_H = 21, ESCORT_ROW = ESCORT_H + 4, COMPACT_ESCORT_W = 24, COMPACT_ESCORT_H = 14, MAX_ESCORTS = 5;
 // The agent's icon from the app's program table, or null when it has none: a one-color glyph or a picture.
 const toolIcon = (p, color) => !p?.icon ? null
   : p.tint ? svg(p.icon).size(TOOL_ICON).flex_none().text_color(color)
@@ -180,16 +184,35 @@ export class Sea {
       .child(arm({ bottom: 0, left: 0 }, ["b", "l"])).child(arm({ bottom: 0, right: 0 }, ["b", "r"]));
   }
 
+  // the tiny torpedoes of an agent's escorts, and how many didn't fit; a compact tag has room for one
+  escorts(a, compact) {
+    // past the most that fit, the last torpedo gives way to the +N
+    const list = escortsOf(a.address), room = compact ? 1 : list.length > MAX_ESCORTS ? MAX_ESCORTS - 1 : MAX_ESCORTS;
+    const w = compact ? COMPACT_ESCORT_W : ESCORT_W, h = compact ? COMPACT_ESCORT_H : ESCORT_H;
+    if (!list.length) return null;
+    return h_flex().flex_none().gap(2).items_center()
+      .children(list.slice(0, room).map((e) => div().id(`esc-${a.address}-${e.key}`).relative().flex_none().w(w).h(h)
+        .tooltip([e.name, WORD[e.status] ?? e.status, since(e.since)].filter(Boolean).join(" · "))
+        .when(Boolean(e.address), (el) => el
+          .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+          .on_click(() => periscope(e.address)))
+        .child(sprite(`torpedo-${e.tool}`, w, h))
+        .when(e.status === "blocked", (el) => el.child(div().absolute().top(0).right(0).size(4).bg(INK.red)))))
+      .when(list.length > room, (el) => el.child(div().text_color(INK.seaDim).child(`+${list.length - room}`)));
+  }
+
   // an agent's tag: contact number, title, status word; its tool's icon (else its name), space, clock under it. `alert`: under pressure
   // or overgrown, which changes its word and clock
   tag(a, id, tabs, w, compact, alert) {
     const clock = a.status === "idle" ? (alert ? `${since(tabs.get(a.tab)?.changed_at)} idle` : "") : since(a.status === "working" ? underSince(a, tabs) : tabs.get(a.tab)?.changed_at);
     const word = alert === "pressure" ? ["PRESSURE", "#ffb055"] : alert === "moss" ? ["OVERGROWN", "#7aaa5a"] : [WORD[a.status], STATUS_INK[a.status]];
     const title = a.status === "blocked" ? INK.redSoft : a.status === "idle" ? INK.seaDim : INK.sea;
+    const escorts = this.escorts(a, compact);
     const line1 = h_flex().gap(8).items_center()
       .child(div().flex_none().text_color(INK.seaId).child(id))
       .child(div().flex_1().min_w(0).truncate().text_color(title).child(titleOf(a)))
       .when(a.pinned, (el) => el.child(div().flex_none().text_color(INK.gold).child("PIN")))
+      .when(compact && Boolean(escorts), (el) => el.child(escorts))
       .child(div().flex_none().text_color(word[1]).child(word[0]));
     // on a dark, see-through backing so passing sea life never muddles the text
     const tagEl = v_flex().relative().w(w).gap(4).text_size(12).px(6).py(3).mx(-6).bg("#03151fe6")
@@ -198,7 +221,8 @@ export class Sea {
         const color = alert === "pressure" ? "#ffb055" : INK.seaDim, icon = toolIcon(a.program, color);
         return el.child(h_flex().pl(14).gap(6).items_center().text_color(color)
           .when(Boolean(icon), (row) => row.child(icon))
-          .child(div().flex_1().min_w(0).truncate().child([icon ? null : toolName(a), a.space_name, clock].filter(Boolean).join(" · "))));
+          .child(div().flex_1().min_w(0).truncate().child([icon ? null : toolName(a), a.space_name, clock].filter(Boolean).join(" · "))))
+          .when(Boolean(escorts), (tall) => tall.child(div().pl(14).child(escorts)));
       });
     return a.focused ? tagEl.child(this.brackets()) : tagEl;
   }
@@ -216,12 +240,16 @@ export class Sea {
     // (the bottom of the depth scale stays a row above the sand, which is for the parked)
     const top = WATERLINE + 30, bottom = H - 16;
     const yOf = (f) => top + f * (bottom - top - 2 * ROW);
-    const want = under.map((a) => ({ a, y: a.status === "idle" ? bottom - ROW : yOf(depthOf(minutesUnder(a, tabs, now))) }))
-      .sort((p, q) => p.y - q.y || RANK[p.a.status] - RANK[q.a.status]);
-    const room = bottom - top, row = want.length * ROW > room ? Math.max(22, Math.floor(room / want.length)) : ROW;
-    const compact = row < 40;
-    for (let i = 0; i < want.length; i++) want[i].y = Math.max(want[i].y, i ? want[i - 1].y + row : top);
-    for (let i = want.length - 1; i >= 0; i--) want[i].y = Math.min(want[i].y, i < want.length - 1 ? want[i + 1].y - row : bottom - row);
+    // a sub with escorts takes a taller row, its center still on its depth; when those don't all fit, every tag goes compact
+    const room = bottom - top, row = under.length * ROW > room ? Math.max(22, Math.floor(room / under.length)) : ROW;
+    const heightOf = (a) => row + (escortsOf(a.address).length ? ESCORT_ROW : 0);
+    const compact = row < 40 || under.reduce((sum, a) => sum + heightOf(a), 0) > room;
+    const want = under.map((a) => {
+      const h = compact ? row : heightOf(a);
+      return { a, h, y: a.status === "idle" ? bottom - h : yOf(depthOf(minutesUnder(a, tabs, now))) - (h - ROW) / 2 };
+    }).sort((p, q) => p.y - q.y || RANK[p.a.status] - RANK[q.a.status]);
+    for (let i = 0; i < want.length; i++) want[i].y = Math.max(want[i].y, i ? want[i - 1].y + want[i - 1].h : top);
+    for (let i = want.length - 1; i >= 0; i--) want[i].y = Math.min(want[i].y, (i < want.length - 1 ? want[i + 1].y : bottom) - want[i].h);
     setAgentOrder([...done, ...want.map((w) => w.a)].sort((p, q) => (q.pinned - p.pinned) || (RANK[p.status] - RANK[q.status])).map((a) => a.address));
 
     // scenery: sky, the surface, the deepening water, the seabed; a few fish and a jelly for life
@@ -282,7 +310,7 @@ export class Sea {
     const surfaced = done.slice(0, 3).map((a, i) => div().id(`s-${a.address}`).absolute().left(10 + i * 50).top(WATERLINE - 28)
       .on_click(this.go(a)).on_mouse_down("right", this.pin(a))
       .child(sprite(`minisub-${toolOf(a)}-loot`, SUB_W, LOOT_H)));
-    const burst = (name, a, i, top, h) => div().id(`${name}-${a.address}-${this.surfacing.get(a.address)}`).absolute().left(10 + i * 50 + 28 - 40).top(top)
+    const burst = (name, a, i, top, h) => div().id(`${name}-${a.address}-${this.surfacing.get(a.address)}`).absolute().left(10 + i * 50 + 24 - 40).top(top)
       .child(sprite(name, 80, h, { period: SPLASH_MS * 2 }));
     const bursts = done.slice(0, 3).flatMap((a, i) => this.surfacing.has(a.address) ? [burst("splash", a, i, WATERLINE - 48, 56), burst("flare", a, i, WATERLINE - 84, 88)] : []);
     const sky = v_flex().absolute().left(16).top(14).w(192).gap(6)
@@ -292,23 +320,28 @@ export class Sea {
       .when(done.length > 2, (el) => el.child(div().text_size(12).text_color(INK.seaDim).child(`+${done.length - 2} more`)));
 
     // the ones under: flare trails first (behind), then each sub with its tag
+    const subScale = compact ? 0.6 : 1;
     const flares = want.filter((w) => w.a.status === "blocked").map((w) => {
-      const h = Math.max(0, w.y - WATERLINE);
+      // up from the top of the hull, centered in its row
+      const h = Math.max(0, w.y + (w.h - SUB_H * subScale) / 2 - WATERLINE);
       return v_flex().absolute().left(SUB_X + 18).top(WATERLINE + 4).h(h).gap(4)
         .children(Array.from({ length: Math.floor(h / 6) }, () => div().size(2).bg(INK.red)));
     });
-    const subs = want.map(({ a, y }) => {
-      const s = compact ? 0.6 : 1;
+    const subs = want.map(({ a, y, h }) => {
+      const s = subScale;
       const alert = a.status === "working" && minutesUnder(a, tabs, now) >= PRESSURE_MIN ? "pressure"
         : a.status === "idle" && minutesParked(a, tabs, now) >= MOSS_MIN ? "moss" : null;
       const look = alert === "moss" ? sprite(`minisub-${toolOf(a)}-moss`, SUB_W * s, LOOT_H * s)
         : sprite(`minisub-${toolOf(a)}`, SUB_W * s, SUB_H * s);
-      return div().id(`u-${a.address}`).absolute().left(SUB_X).top(Math.round(y)).w(W - SUB_X - 8).h(row)
+      // the hull's box is its own height whatever hangs under it (moss), so the hull and the tag center on each other
+      const hull = div().relative().flex_none().w(SUB_W).h(SUB_H * s)
+        .when(a.status === "blocked", (el) => el.child(sprite("blip-blocked", 56).absolute().left(HULL_X - 4).top(-10)))
+        .when(alert === "pressure" && !compact, (el) => el.child(sprite("pressure", 80, 76).absolute().left(HULL_X - 16).top(-28)))
+        .child(div().absolute().left(compact ? 0 : HULL_X).top(0).child(look));
+      return h_flex().id(`u-${a.address}`).absolute().left(SUB_X).top(Math.round(y)).w(W - SUB_X - 8).h(h).items_center().pl(2)
         .on_click(this.go(a)).on_mouse_down("right", this.pin(a))
-        .when(a.status === "blocked", (el) => el.child(sprite("blip-blocked", 56).absolute().left(0).top(-10)))
-        .when(alert === "pressure" && !compact, (el) => el.child(sprite("pressure", 80, 76).absolute().left(-12).top(-28)))
-        .child(div().absolute().left(2).top(compact ? -4 : 0).child(look))
-        .child(div().absolute().left(54).top(compact ? 2 : 4).child(this.tag(a, ids.get(a.address), tabs, W - SUB_X - 8 - 62, compact, alert)));
+        .child(hull)
+        .child(div().flex_none().child(this.tag(a, ids.get(a.address), tabs, W - SUB_X - 8 - 62, compact, alert)));
     });
 
     const sea = div().relative().size_full().overflow_hidden()

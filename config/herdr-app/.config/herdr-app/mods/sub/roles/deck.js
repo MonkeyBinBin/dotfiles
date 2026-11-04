@@ -1,7 +1,8 @@
 // The control console along the bottom hull edge: a brushed gunmetal slab with four steel panels screwed to it, their
 // labels engraved and paint-filled, dials and alarms sunk into wells:
 //   COMPARTMENTS  a toggle plate per space, thrown and brass when shown: its status lamp, its name, a pip per agent
-//                 aboard in that agent's status color; + for a new space. Click to go there, right-click for its menu
+//                 aboard in that agent's status color, a smaller one after it per escort; + for a new space. Click to go
+//                 there, right-click for its menu
 //   TELEGRAPH     the engine order: EMERGENCY with one blocked, AHEAD with one working, else STOP
 //   ALARMS        dark until they trip: SOS (blocked), LOOT (done), PRES (under pressure), MOSS (overgrown), and CLASH: agents
 //                 at work in one checkout on one branch. Click it for a new worktree; its tooltip says who
@@ -14,7 +15,7 @@ import { framed } from "../kit/frame.js";
 import { clashes } from "../kit/clash.js";
 import { engraved, metal, PAINT } from "../kit/metal.js";
 import { sprite } from "../kit/sprite.js";
-import { ART, INK, RANK, STATUS_INK, tabsById, minutesUnder, minutesParked, contacts, PRESSURE_MIN, MOSS_MIN } from "../state.js";
+import { ART, INK, RANK, STATUS_INK, tabsById, minutesUnder, minutesParked, contacts, escortsOf, PRESSURE_MIN, MOSS_MIN } from "../state.js";
 
 const CONTENT = 44, MAX_PIPS = 8;
 const AMBER = "#ffb055", WEED = "#7aaa5a", VIOLET = "#c8a0ff";
@@ -62,7 +63,8 @@ export class Deck {
   // a space's toggle plate
   room(s, list) {
     const crew = list.filter((a) => a.space === s.id).sort((p, q) => RANK[p.status] - RANK[q.status]);
-    const extra = crew.length - MAX_PIPS;
+    const pips = crew.flatMap((a) => [{ size: 6, status: a.status }, ...escortsOf(a.address).map((e) => ({ size: 4, status: e.status }))]);
+    const extra = pips.length - MAX_PIPS;
     return this.plate(`sp-${s.id}`, s.active, h_flex().gap(8).items_center()
       .child(image(`${ART}/toggle-${s.active ? "down" : "up"}.png`).w(14).h(28).flex_none())
       .child(v_flex().gap(3)
@@ -70,7 +72,7 @@ export class Deck {
           .child(sprite(`lamp-${s.status ?? "idle"}`, 10).flex_none())
           .child(div().max_w(130).truncate().child(s.name)))
         .child(h_flex().h(6).gap(3).items_center()
-          .children(crew.slice(0, MAX_PIPS).map((a) => div().size(6).bg(STATUS_INK[a.status] ?? INK.idle)))
+          .children(pips.slice(0, MAX_PIPS).map((p) => div().size(p.size).bg(STATUS_INK[p.status] ?? INK.idle)))
           .when(extra > 0, (el) => el.child(div().text_size(10).child(`+${extra}`))))))
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
       .on_click(() => run("space.select", { id: s.id }))

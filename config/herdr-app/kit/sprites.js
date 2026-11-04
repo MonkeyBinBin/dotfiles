@@ -208,5 +208,21 @@ export const SPRITES = {
   "flare": {
     "n": 14,
     "period": 2333
+  },
+  "torpedo-claude": {
+    "n": 6,
+    "period": 1000
+  },
+  "torpedo-codex": {
+    "n": 6,
+    "period": 1000
+  },
+  "torpedo-gemini": {
+    "n": 6,
+    "period": 1000
+  },
+  "torpedo-other": {
+    "n": 6,
+    "period": 1000
   }
 };

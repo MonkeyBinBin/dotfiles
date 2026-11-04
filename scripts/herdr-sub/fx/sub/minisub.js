@@ -1,6 +1,6 @@
 // A crew's mini-sub, one per agent: a stubby hull in its tool's livery, a porthole, a little tower with a mast,
 // a propeller turning at the stern, bobbing gently. `loot` hangs a crate under it (back with the goods).
-// Facing right; origin at the hull's center.
+// Drawn facing right (bake.mjs mirrors it to face left); origin at the hull's center.
 
 import { hex, wrap, TAU } from "../../core/index.js";
 
