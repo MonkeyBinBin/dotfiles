@@ -224,5 +224,73 @@ export const SPRITES = {
   "torpedo-other": {
     "n": 6,
     "period": 1000
+  },
+  "helm-sub-dive": {
+    "n": 12,
+    "period": 6000
+  },
+  "helm-sub-sos": {
+    "n": 12,
+    "period": 6000
+  },
+  "helm-sub-idle": {
+    "n": 12,
+    "period": 6000
+  },
+  "helm-sub-surfaced": {
+    "n": 12,
+    "period": 6000
+  },
+  "helm-icon-edit": {
+    "n": 12,
+    "period": 6000
+  },
+  "helm-icon-bash": {
+    "n": 12,
+    "period": 6000
+  },
+  "helm-icon-read": {
+    "n": 12,
+    "period": 6000
+  },
+  "helm-icon-web": {
+    "n": 12,
+    "period": 6000
+  },
+  "helm-icon-agent": {
+    "n": 12,
+    "period": 6000
+  },
+  "helm-icon-gear": {
+    "n": 12,
+    "period": 6000
+  },
+  "helm-icon-ask": {
+    "n": 12,
+    "period": 6000
+  },
+  "helm-icon-chest": {
+    "n": 12,
+    "period": 6000
+  },
+  "helm-icon-o2": {
+    "n": 12,
+    "period": 6000
+  },
+  "helm-icon-fuel": {
+    "n": 12,
+    "period": 6000
+  },
+  "helm-icon-hull": {
+    "n": 12,
+    "period": 6000
+  },
+  "helm-icon-o2-critical": {
+    "n": 12,
+    "period": 6000
+  },
+  "helm-icon-fuel-critical": {
+    "n": 12,
+    "period": 6000
   }
 };

@@ -1,9 +1,8 @@
-// A pane's header, inside its porthole: a status lamp, the space and the agent's title (or the terminal's),
-// the tool, how long it has been under and its escorts on the right; on hover, buttons to split, zoom and close. Phosphor on
+// A pane's header, inside its porthole: a status lamp (for Claude Code, its little sub with a face), the space and the agent's title (or the terminal's),
+// on the right an icon for its work, gauges for what's running low and its escorts as torpedoes; on hover, buttons to split, zoom and close. Phosphor on
 // the pane's dark glass, a thin rule under it. It signals the agent's state:
-//   working  air bubbles rising out along the right
-//   blocked  a red beacon turning in place of the lamp, the glass pulsing red, SOS
-//   done     a gold glint sweeping across, SURFACED
+//   blocked  a red beacon turning in place of the lamp, the glass pulsing red, an icon for what it's asking
+//   done     a gold glint sweeping across, a chest
 // It also flashes when asked to show itself (state.js periscope(): the agent is already on screen).
 // Now and then a little scene plays out behind the text, unless the agent is blocked or just surfaced.
 // Props from the app: { pane, terminal }.
@@ -12,11 +11,14 @@ import { h_flex } from "gpui-base";
 import { panes, agents, run, shared } from "herdr";
 import { sprite } from "../kit/sprite.js";
 import { facingRight, motionOf, pick, position, rand, route, walk } from "../swim.js";
-import { escortsOf, FLASH_MS, INK, since, tabsById, toolOf, underSince } from "../state.js";
+import { escortsOf, FLASH_MS, gaugesOf, INK, sosIcon, sosReason, tabsById, toolOf, workIcon } from "../state.js";
 
 // What goes on behind the header's text, picked by what the agent is up to. Every actor swims a path of legs, each to an
 // { x, y } mark in `ms`: climbing and diving, stopping to hang there, doubling back (its sprite turns round with it).
 const HIGH = 48;
+const MAX_TORPEDOES = 4;
+// Claude Code's sub in the header: what it looks like in each status.
+const HELM_MOOD = { working: "dive", blocked: "sos", done: "surfaced", idle: "idle" };
 
 // The same way, a little off to one side and at another pace.
 const trail = (legs, dy, pace) => legs.map((l) => ({ ...l, y: l.y + dy, ms: l.ms * pace }));
@@ -114,9 +116,8 @@ export class PaneHeader {
     const agent = agents().find((a) => a.pane === pane);
     const title = agent?.title || me.title || prog?.name || "shell";
     const tab = agent && tabsById().get(agent.tab);
-    const clock = agent?.status === "working" ? since(underSince(agent, tabsById())) : "";
-    const escorts = agent ? escortsOf(agent.address).length : 0;
-    const right = [((prog?.agent || prog?.shell) && prog.name) || "", clock, escorts ? `${escorts} ESCORT` : ""].filter(Boolean).join(" · ");
+    const escorts = agent ? escortsOf(agent.address) : [];
+    const right = (!agent && prog?.shell && prog.name) || "";
     const st = me.status;
     this.status = st;
     this.tool = agent ? toolOf(agent) : "other";
@@ -129,8 +130,9 @@ export class PaneHeader {
       this.flashUntil = flash.until;
       cx.timer.after(FLASH_MS + 50, (cx) => cx.notify());
     }
-    const word = st === "blocked" ? ["SOS", INK.red] : st === "done" ? ["SURFACED", INK.gold] : null;
-    return h_flex().id(`ph-${pane}`).relative().overflow_hidden().size_full().px(18).gap(10).items_center().text_size(12)
+    const reason = st === "blocked" && agent ? sosReason(agent) : "";
+    const work = agent ? workIcon(agent) : "", gauges = agent ? gaugesOf(agent) : [];
+        return h_flex().id(`ph-${pane}`).relative().overflow_hidden().size_full().px(18).gap(10).items_center().text_size(12)
       .bg(INK.glass).border_b(1).border_color(st === "blocked" ? "#5a1410" : INK.rule)
       .when(Boolean(this.scene) && st !== "blocked" && st !== "done", (el) => el.children(this.scene.actors.map((a, i) => this.actor(a, i))))
       .when(st === "blocked", (el) => el.child(alarm))
@@ -141,12 +143,18 @@ export class PaneHeader {
         cx.notify();
       })
       .on_click(() => run("pane.focus", { pane }))
-      .child(st === "blocked" ? sprite("beacon", 21, 24).flex_none() : sprite(`lamp-${st ?? "idle"}`, 10).flex_none())
+      .child(agent && this.tool === "claude" ? sprite(`helm-sub-${HELM_MOOD[st] ?? "idle"}`, 100, 48, { exact: true }).flex_none()
+        : st === "blocked" ? sprite("beacon", 21, 24).flex_none() : sprite(`lamp-${st ?? "idle"}`, 10).flex_none())
       .child(div().flex_none().text_color(on ? INK.mid : INK.dim).child(agent?.space_name ?? tab?.name ?? ""))
       .child(div().flex_none().text_color(INK.dim).child("/"))
       .child(div().flex_1().min_w(0).truncate().text_color(on ? INK.hi : INK.dim).child(title))
-      .when(!this.hovered && st === "working", (el) => el.child(sprite("bubbles", 72, 24).flex_none().opacity(0.8)))
-      .when(!this.hovered && Boolean(word), (el) => el.child(div().flex_none().text_color(word[1]).child(word[0])))
+      .when(!this.hovered && st === "working" && Boolean(work), (el) => el.child(sprite(`helm-icon-${work}`, 32, 32, { exact: true }).flex_none()))
+      .children(this.hovered ? [] : gauges.map((icon) => sprite(`helm-icon-${icon}`, 32, 32, { exact: true }).flex_none()))
+      .when(!this.hovered && Boolean(reason), (el) => el.child(sprite(`helm-icon-${sosIcon(reason)}`, 32, 32, { exact: true }).flex_none()))
+      .when(!this.hovered && st === "done" && this.tool !== "claude", (el) => el.child(sprite("helm-icon-chest", 32, 32, { exact: true }).flex_none()))
+      .when(!this.hovered && Boolean(agent) && this.tool !== "claude", (el) => el.child(sprite(`minisub-${this.tool}`, 26, 20).flex_none()))
+      .when(!this.hovered && escorts.length > 0, (el) => el.child(h_flex().flex_none().gap(2)
+        .children(escorts.slice(0, MAX_TORPEDOES).map((e) => sprite(`torpedo-${e.tool}`, 24, 14).flex_none()))))
       .when(!this.hovered && Boolean(right), (el) => el.child(div().flex_none().text_color(on ? INK.mid : INK.dim).child(right)))
       .when(this.hovered, (el) => el
         .child(this.button(`pb-r-${pane}`, "split-right", "pane.split", { direction: "right", pane }))

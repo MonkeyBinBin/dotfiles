@@ -52,6 +52,14 @@ const SUB_ASSETS = {
     [`minisub-${tool}-moss`, sub("sub/minisub", [-14, -12, 12, 18], { mirror: true, opts: { palette, moss: true }, ...sheet(14) })],
     [`torpedo-${tool}`, sub("sub/torpedo", [-6, -3, 6, 4], { mirror: true, opts: { palette }, ...sheet(6) })],
   ])),
+  // the pane header's sub, one sheet per mood (the surfaced one sits lower, showing the sea and its chest)
+  ...Object.fromEntries([["dive", -52], ["sos", -52], ["idle", -52], ["surfaced", -48]].map(([state, top]) =>
+    [`helm-sub-${state}`, sub("sub/helm-sub", [-56, top, 44, top + 48], { mirror: true, opts: { state, compact: true }, ...sheet(12, 3) })])),
+  // the pane header's icons: the work, what a blocked agent is asking about, the loot of a sub that isn't Claude Code's, gauges
+  ...Object.fromEntries(["edit", "bash", "read", "web", "agent", "gear", "ask", "chest", "o2", "fuel", "hull"].map((kind) =>
+    [`helm-icon-${kind}`, sub("sub/helm-icons", [-8, -16, 8, 0], { opts: { kind }, ...sheet(12, 3) })])),
+  ...Object.fromEntries(["o2", "fuel"].map((kind) =>
+    [`helm-icon-${kind}-critical`, sub("sub/helm-icons", [-8, -16, 8, 0], { opts: { kind, critical: true }, ...sheet(12, 3) })])),
   // the scope without its sweep, the boat to lay over the sweep; the sweep itself is vector, see bakeSweep
   sonar: sub("sub/sonar", [-70, -70, 70, 70], { png: true, opts: { part: "scope" } }),
   "sonar-boat": sub("sub/sonar", [-5, -4, 5, 2], { png: true, mirror: true, opts: { part: "boat" } }),

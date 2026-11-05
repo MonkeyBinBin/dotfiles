@@ -7,7 +7,7 @@ import { h_flex, v_flex } from "gpui-base";
 import { agents, run, shared, setShared, closeOverlay } from "herdr";
 import { framed } from "../kit/frame.js";
 import { sprite } from "../kit/sprite.js";
-import { INK, WORD, escortsOf, toolOf, toolName, titleOf, since } from "../state.js";
+import { INK, WORD, escortsOf, sosReason, toolOf, toolName, titleOf, since } from "../state.js";
 
 // ranks by subs brought home
 const RANKS = [[0, "Ensign"], [5, "Lieutenant"], [15, "Commander"], [40, "Captain"], [100, "Admiral"]];
@@ -33,6 +33,7 @@ export class CaptainsLog {
 
   // an agent waiting on the person: its sub, title, tool · space, and Go
   entry(a, overlay) {
+    const reason = sosReason(a);
     const go = () => {
       closeOverlay(overlay);
       run("agent.focus", { terminal: a.address });
@@ -41,7 +42,7 @@ export class CaptainsLog {
       .child(sprite(`minisub-${toolOf(a)}`, 39, 30).flex_none())
       .child(v_flex().flex_1().min_w(0).gap(3)
         .child(div().truncate().text_color(a.status === "blocked" ? INK.redSoft : INK.hi).child(titleOf(a)))
-        .child(div().truncate().text_color(INK.dim).child(`${toolName(a)} · ${a.space_name}`)))
+        .child(div().truncate().text_color(reason ? INK.redSoft : INK.dim).child(reason || `${toolName(a)} · ${a.space_name}`)))
       .child(div().flex_none().text_color(INK.gold).hover((s) => s.text_color(INK.hi)).child("GO >"));
   }
 

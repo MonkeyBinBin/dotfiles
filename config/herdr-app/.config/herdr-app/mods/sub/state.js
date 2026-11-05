@@ -1,5 +1,5 @@
 // What the whole sub is up to, shared by every role.
-import { agents, focused, spaces, openOverlay, closeOverlay, run, setShared } from "herdr";
+import { agents, focused, spaces, terminals, openOverlay, closeOverlay, run, setShared } from "herdr";
 
 export const ART = "mods/sub/assets";
 // Status order: who needs the person first.
@@ -14,6 +14,37 @@ export const INK = {
   brassText: "#2a1a06", brassShine: "#ecc874", steelText: "#8ab8b4", steelShadow: "#061214",
 };
 export const STATUS_INK = { blocked: INK.red, done: INK.gold, working: INK.mid, idle: INK.idle };
+
+// Why an agent is calling for help, when it says: Claude Code reports it as a label on its terminal (the helm-bridge mod).
+export const sosReason = (a) => labelsOf(a)["cc.sos"] || "";
+
+const labelsOf = (a) => terminals().find((t) => t.address === a.address)?.labels ?? {};
+const WARN_AT = 70, CRITICAL_AT = 90, HULL_AT = 3;
+
+// What an agent is working on, as an icon's name, while it says so (helm-bridge's cc.op).
+export const workIcon = (a) => labelsOf(a)["cc.op"] || "";
+
+// Its warnings as icons' names: air and fuel past the status line's amber, a run of failed calls.
+export function gaugesOf(a) {
+  const labels = labelsOf(a), o2 = Number(labels["cc.o2"] || 0), fuel = Number(labels["cc.fuel"] || 0), hull = Number(labels["cc.hull"] || 0);
+  const gauges = [];
+  if (o2 >= WARN_AT) gauges.push(o2 >= CRITICAL_AT ? "o2-critical" : "o2");
+  if (fuel >= WARN_AT) gauges.push(fuel >= CRITICAL_AT ? "fuel-critical" : "fuel");
+  if (hull >= HULL_AT) gauges.push("hull");
+  return gauges;
+}
+
+// The icon for what that reason is about (helm-bridge's words: "Bash: git push", "linear:save_issue", "Question").
+export function sosIcon(reason) {
+  const tool = reason.split(":")[0];
+  if (tool === "Question") return "ask";
+  if (["Edit", "MultiEdit", "Write", "NotebookEdit"].includes(tool)) return "edit";
+  if (tool === "Bash") return "bash";
+  if (["Read", "Grep", "Glob"].includes(tool)) return "read";
+  if (["WebFetch", "WebSearch"].includes(tool)) return "web";
+  if (["Agent", "Task"].includes(tool)) return "agent";
+  return "gear";
+}
 
 export const toolName = (a) => a.program?.name ?? a.app ?? "agent";
 export const titleOf = (a) => a.title || a.program?.name || a.address;
