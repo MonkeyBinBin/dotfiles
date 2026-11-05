@@ -39,7 +39,7 @@ function box(p, x, y, w, h, C) {
 
 const ICONS = {
   o2(p, ph, o) {
-    const C = o.critical ? RED : CYAN, flash = o.critical && Math.sin(ph * TAU * 6) > 0;
+    const C = o.critical ? RED : CYAN, flash = o.critical && Math.round(ph * 12) % 2 === 1;
     p.rect(-2, -16, 4, 2, INK); p.rect(-1, -15, 2, 1, BRASS[2]);
     box(p, -4, -13, 8, 12, flash ? RED.slice(1) : C);
     // A band round the tank, and bubbles rising past the gauge window.

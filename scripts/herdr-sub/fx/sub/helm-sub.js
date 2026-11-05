@@ -96,10 +96,11 @@ function propeller(p, ox, oy, ph) {
   const x = ox - RX - 3;
   p.rect(x, oy - 1, 5, 3, INK);
   p.rect(x + 1, oy, 4, 1, METAL[4]);
-  // Blade width runs through a sine: a real turn, with a faint blur disc behind it.
+  // Blade width runs through a sine: a real turn, with a faint blur disc behind it. The bake keeps 12 frames of a loop, and
+  // 6 turns would catch the blades edge-on in every one of them.
   p.disc(x - 1, oy, 9, METAL[6], 0.07);
   for (const shift of [0, 0.5]) {
-    const s = Math.sin((ph * 6 + shift) * TAU), h = Math.round(s * 9);
+    const s = Math.sin((ph * 5 + shift) * TAU), h = Math.round(s * 9);
     p.line(x - 1, oy, x - 1, oy + h, shift ? METAL[3] : METAL[6]);
     p.line(x - 2, oy, x - 2, oy + Math.round(h * 0.8), METAL[2]);
   }
@@ -153,7 +154,7 @@ function face(p, ox, oy, state, ph, flush) {
         p.px(x + dir * i, fy - 4 + i, INK); p.px(x + dir * i, fy + 4 - i, INK);
       }
     }
-    const open = Math.sin(ph * TAU * 6) > 0 ? 3 : 2;
+    const open = Math.round(ph * 12) % 2 ? 3 : 2;
     p.ellipse(fx, fy + 6, 2.5, open, INK);
     p.px(fx, fy + 6 + open - 1, PINK);
     return;
@@ -266,7 +267,7 @@ export function draw(p, t, o) {
   const ph = (t % D) / D, state = o.state, compact = Boolean(o.compact);
   const flush = state === "sos" && Math.sin(ph * TAU * 4) > 0;
   const C = state === "sos" ? (flush ? REDS : HOT) : fit(o.palette, 7);
-  const sway = state === "sos" ? Math.round(Math.sin(ph * TAU * 12) * 1) : 0;
+  const sway = state === "sos" ? Math.round(Math.sin(ph * TAU * 3)) : 0;
   const bob = compact ? (state === "sos" ? 0 : Math.round((Math.sin(ph * TAU) + 1) / 2))
     : state === "surfaced" ? Math.round(Math.sin(ph * TAU) * 1) : Math.round(Math.sin(ph * TAU) * 2);
   const ox = CX + sway, oy = (state === "surfaced" ? CY + 3 : CY - 2) + bob, reach = compact ? 12 : 24;

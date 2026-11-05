@@ -116,7 +116,8 @@ export class PaneHeader {
     const agent = agents().find((a) => a.pane === pane);
     const title = agent?.title || me.title || prog?.name || "shell";
     const tab = agent && tabsById().get(agent.tab);
-    const escorts = agent ? escortsOf(agent.address) : [];
+    // Blocked ones first: they're the ones worth a torpedo when not all of them fit.
+    const escorts = (agent ? escortsOf(agent.address) : []).sort((a, b) => (b.status === "blocked") - (a.status === "blocked"));
     const right = (!agent && prog?.shell && prog.name) || "";
     const st = me.status;
     this.status = st;
@@ -153,8 +154,10 @@ export class PaneHeader {
       .when(!this.hovered && Boolean(reason), (el) => el.child(sprite(`helm-icon-${sosIcon(reason)}`, 32, 32, { exact: true }).flex_none()))
       .when(!this.hovered && st === "done" && this.tool !== "claude", (el) => el.child(sprite("helm-icon-chest", 32, 32, { exact: true }).flex_none()))
       .when(!this.hovered && Boolean(agent) && this.tool !== "claude", (el) => el.child(sprite(`minisub-${this.tool}`, 26, 20).flex_none()))
+      .when(!this.hovered && st !== "blocked" && escorts[0]?.status === "blocked", (el) => el.child(sprite("beacon", 21, 24).flex_none()))
       .when(!this.hovered && escorts.length > 0, (el) => el.child(h_flex().flex_none().gap(2)
         .children(escorts.slice(0, MAX_TORPEDOES).map((e) => sprite(`torpedo-${e.tool}`, 24, 14).flex_none()))))
+      .when(!this.hovered && escorts.length > MAX_TORPEDOES, (el) => el.child(div().flex_none().text_color(INK.dim).child(`+${escorts.length - MAX_TORPEDOES}`)))
       .when(!this.hovered && Boolean(right), (el) => el.child(div().flex_none().text_color(on ? INK.mid : INK.dim).child(right)))
       .when(this.hovered, (el) => el
         .child(this.button(`pb-r-${pane}`, "split-right", "pane.split", { direction: "right", pane }))
