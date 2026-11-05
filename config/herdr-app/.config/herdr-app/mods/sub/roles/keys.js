@@ -1,20 +1,38 @@
 // The keys in force right now, read live from keys(): the shown layout's over the global ones (a global key it rebinds isn't
 // listed), the terminal's apart. Runs of numbered keys fold into one row. Type to filter, Esc to close. Change them in keys.json.
+// Our own keys come first: what keys.json adds to Herdr's defaults, then the ones panels handle themselves, which keys() can't see.
 import { div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { keys, setShared, shared } from "herdr";
 import { framed } from "../kit/frame.js";
 import { INK } from "../state.js";
 
+const acts = (re) => (r) => re.test(r.action);
+
 const GROUPS = [
-  ["SUB", /^sub-tabs\.|^layout\.toggle/],
-  ["AGENTS", /^agent\./],
-  ["TABS", /^tab\./],
-  ["SPACES", /^space\./],
-  ["PANES", /^pane\./],
-  ["TERMINAL", /^terminal\.|^send:/],
-  ["APP", /./],
+  ["CUSTOM", (r) => r.custom],
+  ["IN PANELS", (r) => r.action === "panel"],
+  ["AGENTS", acts(/^agent\./)],
+  ["TABS", acts(/^tab\./)],
+  ["SPACES", acts(/^space\./)],
+  ["PANES", acts(/^pane\./)],
+  ["TERMINAL", acts(/^terminal\.|^send:/)],
+  ["APP", () => true],
 ];
+
+// What keys.json adds to Herdr's global defaults; keys() doesn't say which is which. Layout sections are all ours.
+const CUSTOM_GLOBAL = new Set(["cmd-ctrl-h", "cmd-ctrl-j", "cmd-ctrl-k", "cmd-ctrl-l"]);
+const isCustom = (k) => k.section.startsWith("layout:") || (k.section === "global" && CUSTOM_GLOBAL.has(k.keys));
+
+const PANEL_KEYS = [
+  ["Files: move", "J K", "j k up down"],
+  ["Files: open or expand", "↩ L", "enter l right"],
+  ["Files: collapse or go up", "H", "h left"],
+  ["Files: leave the open file", "⎋ H", "escape h left"],
+  ["Files: read Markdown", "M", "m"],
+  ["Changes: next or previous file", "J K", "j k up down"],
+  ["New menu: start agent 1-9", "1-9", "1 2 3 4 5 6 7 8 9"],
+].map(([label, keys, raw]) => ({ keys, raw, action: "panel", label }));
 
 const NAMES = {
   "sub-tabs.files": "Files panel", "sub-tabs.changes": "Changes panel", "sub-tabs.log": "Captain's log", "sub-tabs.radio": "Radio",
@@ -69,16 +87,16 @@ function inForce(layout) {
   for (const k of rows) {
     // cmd-3 -> tab.select:3, cmd-alt-3 -> sub-tabs.agent3: the same digit at the end of both
     const digit = /([1-9])$/.exec(k.keys)?.[1], action = digit && k.action.endsWith(digit) ? k.action.slice(0, -1) : null;
-    if (!action) { out.push({ keys: glyphs(k.keys), raw: k.keys, action: k.action, label: label(k.action) }); continue; }
-    const run = runs.get(action) ?? { digits: [], base: k.keys.slice(0, -1), action };
+    if (!action) { out.push({ keys: glyphs(k.keys), raw: k.keys, action: k.action, label: label(k.action), custom: isCustom(k) }); continue; }
+    const run = runs.get(action) ?? { digits: [], base: k.keys.slice(0, -1), action, custom: isCustom(k) };
     if (!runs.has(action)) { runs.set(action, run); out.push(run); }
     run.digits.push(Number(digit));
   }
-  return out.map((r) => {
+  return [...PANEL_KEYS, ...out.map((r) => {
     if (!r.digits) return r;
     const a = Math.min(...r.digits), b = Math.max(...r.digits), span = a === b ? `${a}` : `${a}-${b}`;
-    return { keys: `${glyphs(`${r.base}x`).slice(0, -1)}${span}`, raw: r.base, action: r.action, label: `${label(r.action)}${span}` };
-  });
+    return { keys: `${glyphs(`${r.base}x`).slice(0, -1)}${span}`, raw: r.base, action: r.action, label: `${label(r.action)}${span}`, custom: r.custom };
+  })];
 }
 
 export class KeyList {
@@ -105,8 +123,8 @@ export class KeyList {
 
   render() {
     const left = new Set(), rows = matching(inForce(shared("layout") ?? "sub"), this.filter);
-    const groups = GROUPS.map(([name, re]) => {
-      const mine = rows.filter((r) => !left.has(r) && re.test(r.action));
+    const groups = GROUPS.map(([name, holds]) => {
+      const mine = rows.filter((r) => !left.has(r) && holds(r));
       mine.forEach((r) => left.add(r));
       return [name, mine];
     }).filter(([, mine]) => mine.length);
