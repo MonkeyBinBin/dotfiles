@@ -1,0 +1,1 @@
+{ "name": "helm-bridge", "version": "0.3.0", "description": "Inside the Herdr app, reports what this session is up to and why it is waiting as terminal labels the sub interface draws, and as state for helm-spinner", "types": "./types/index.d.ts" }

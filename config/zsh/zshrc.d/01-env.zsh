@@ -41,9 +41,12 @@ else
   export EDITOR="vim"
 fi
 
-# ── Claude Code mods（RPG 風格）──
-# Not set in settings.json because its env overrides the shell. Skipped inside
-# Herdr (every herdr-core terminal has HC_TERMINAL_ID), whose own UI clashes.
-if [[ -z ${HC_TERMINAL_ID:-} ]]; then
+# ── Claude Code mods ──
+# Not set in settings.json because its env overrides the shell. Inside Herdr (every
+# herdr-core terminal has HC_TERMINAL_ID) only the helm-* mods made for its sub
+# interface load; the RPG set clashes with its UI.
+if [[ -n ${HC_TERMINAL_ID:-} ]]; then
+  export CLAUDE_CODE_PLUGIN_DIRS="$HOME/.claude/mods/helm-bridge:$HOME/.claude/mods/helm-spinner"
+else
   export CLAUDE_CODE_PLUGIN_DIRS="$HOME/.claude/mods/rpg-hud:$HOME/.claude/mods/slime-band:$HOME/.claude/mods/skill-bar:$HOME/.claude/mods/rpg-spinner:$HOME/.claude/mods/rpg-battle:$HOME/.claude/mods/rpg-prompt:$HOME/.claude/mods/rpg-quest"
 fi

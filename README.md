@@ -291,8 +291,11 @@ dotfiles**——否則 cmux 更新格式時 repo 內的手寫版本會悄悄失�
 
 `claude-mods` 套件收錄 `config/claude-mods/.claude/mods/<mod>/`，由 `CLAUDE_CODE_PLUGIN_DIRS`
 （`config/zsh/zshrc.d/01-env.zsh` export）載入。不放在 `settings.json` 的 `env`，因為那裡會蓋掉 shell
-的值；在 Herdr app 裡（有 `HC_TERMINAL_ID`）不 export，mods 不載入。目前收錄 `rpg-hud`、
-`rpg-battle`、`rpg-prompt`、`rpg-quest`、`rpg-spinner`、`slime-band`、`skill-bar`。
+的值。一般終端機載入 `rpg-hud`、`rpg-battle`、`rpg-prompt`、`rpg-quest`、`rpg-spinner`、`slime-band`、
+`skill-bar`；在 Herdr app 裡（有 `HC_TERMINAL_ID`）只載入搭配潛艇介面的 `helm-bridge`、`helm-spinner`。Herdr 的 `programs.json`
+以 `zsh -ic` 啟動 Claude，才會走到這段分支。
+
+`helm-bridge` 把 session 的狀態寫成 terminal label（`cc.sos`、`cc.op`、`cc.o2`、`cc.fuel`、`cc.hull`），由 `sub` mod 在 pane header 以 pixelfx 圖示與艦長日誌顯示。`helm-spinner` 把 spinner 換成 3 行 Braille 潛艇與聲波、計時和狀態膠囊（潛艇由 `helm-spinner/tools/bake-icons.py` 烘成 Braille），回合結束行是結束狀態圖示與數據膠囊。Herdr 內的 Claude Code 畫不出 Image，也不適合在終端機放小圖，精緻素材都放在 Herdr 介面（`scripts/herdr-sub/fx/sub/helm-*.js`）。
 
 此套件**刻意不用** `--no-folding`：plugin loader 讀 `hooks/hooks.json` 時不跟隨 symlink，且 module
 realpath 落在 plugin 目錄外會被判為 path traversal，逐檔 symlink 會讓 mod 整個載入失敗。folding 後
