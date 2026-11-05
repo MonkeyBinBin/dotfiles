@@ -173,13 +173,27 @@ if git_status=$(git --no-optional-locks -C "$cwd" status --porcelain=v2 --branch
     # Lines not yet committed, against HEAD: ` 3 files changed, 93 insertions(+), 67 deletions(-)`.
     # Only a dirty tree is asked, and a repository with no commit yet has no HEAD to diff against.
     if [ -n "$dirty" ]; then
-        changes=""
+        changes="" added=0 removed=0
         if shortstat=$(git --no-optional-locks -C "$cwd" diff --shortstat HEAD 2>/dev/null); then
-            added=0 removed=0
             [[ $shortstat =~ ([0-9]+)\ insertion ]] && added=${BASH_REMATCH[1]}
             [[ $shortstat =~ ([0-9]+)\ deletion ]] && removed=${BASH_REMATCH[1]}
-            [ "$added" -gt 0 ] || [ "$removed" -gt 0 ] && changes=" ${c_green}+${added}${reset} ${c_red}-${removed}${reset}"
         fi
+        # git diff skips untracked files, so count their lines too. This runs on every refresh:
+        # binaries, symlinks and files over 1 MiB are left out to keep it cheap.
+        if [[ $git_status == *$'\n? '* ]]; then
+            untracked=$(cd "$cwd" 2>/dev/null && git --no-optional-locks ls-files -z --others --exclude-standard -- :/ 2>/dev/null | perl -0ne '
+                chomp;
+                lstat;
+                next unless -f _ && -s _ <= 1048576 && open(my $fh, "<", $_);
+                local $/;
+                my $data = <$fh> // "";
+                next if substr($data, 0, 8000) =~ /\0/;
+                $lines += ($data =~ tr/\n//);
+                $lines++ if length($data) && $data !~ /\n\z/;
+                END { print $lines + 0 }' 2>/dev/null)
+            [[ $untracked =~ ^[0-9]+$ ]] && added=$(( added + untracked ))
+        fi
+        [ "$added" -gt 0 ] || [ "$removed" -gt 0 ] && changes=" ${c_green}+${added}${reset} ${c_red}-${removed}${reset}"
         seg+="${changes:- ${c_amber}uncommitted${reset}}"
     fi
 fi
