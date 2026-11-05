@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Status line for Claude Code: plain labels, numbers first, nothing to decode.
 #
-#   line 1: model and effort, folder, branch and uncommitted lines, PR, context used, session time
+#   line 1: model and effort, folder, branch and uncommitted lines, PR, context used
 #   line 2: the account's usage limits (5h, 7d, spend cap): how much is used and when each resets
 #   each line wraps between its segments to fit COLUMNS. Bars and percentages are what is USED;
 #   a gauge turns amber at 70% and red at 90%.
@@ -55,7 +55,6 @@ fields=$(jq -r '
   "pr=\(.pr.number | i)",
   "pr_state=\(.pr.review_state | n)",
   "pr_url=\(.pr.url | n)",
-  "dur_ms=\(.cost.total_duration_ms // 0 | i)",
   "ctx_used=\(.context_window.used_percentage | used)",
   "ctx_level=\(.context_window.used_percentage | level)",
   "ctx_size=\(.context_window.context_window_size // 0 | i)",
@@ -95,14 +94,6 @@ fmt_k() {
     elif [ "$n" -ge 100000 ]; then printf '%dk' $(( (n + 500) / 1000 ))
     elif [ "$n" -ge 1000 ]; then awk -v n="$n" 'BEGIN { printf "%.1fk", n / 1e3 }'
     else printf '%d' "$n"
-    fi
-}
-
-fmt_duration() {
-    local s=$(( $1 / 1000 ))
-    if [ "$s" -ge 3600 ]; then printf '%dh%02dm' $(( s / 3600 )) $(( s % 3600 / 60 ))
-    elif [ "$s" -ge 60 ]; then printf '%dm' $(( s / 60 ))
-    else printf '%ds' "$s"
     fi
 }
 
@@ -213,7 +204,6 @@ if [ -n "$f_ctx_used" ]; then
     [ "$f_cache_warm" = "true" ] && [ -n "$f_cache_pct" ] && tail+=" ${dim}· cache hit${reset} ${c_white}${f_cache_pct}%${reset}"
     line1+=("$(resource context "$f_ctx_used" "$f_ctx_level" "$width" "$tail")")
 fi
-[ "${f_dur_ms:-0}" -gt 0 ] 2>/dev/null && line1+=("${dim}session${reset} ${c_white}$(fmt_duration "$f_dur_ms")${reset}")
 [ -n "$f_vim" ] && line1+=("${c_purple}${f_vim}${reset}")
 
 # ── Line 2: the account's limits ───────────────────────────
