@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, mock, test } from 'claude-code/testing'
 
 import { closingPills, countEdit, endingOf, figuresOf } from './register'
 import type { Tally } from './register'
@@ -64,7 +64,92 @@ test('the sub moves', () => {
   for (const frame of ICON_ART.sub!) expect(frame).toHaveLength(ROWS)
 })
 
-test('the clock reads minutes, then hours', () => {
-  expect(clockOf(20_000)).toBe('00:20')
-  expect(clockOf(3_725_000)).toBe('1:02:05')
+test('the clock reads seconds, minutes, then hours, and fits its room at the longest', () => {
+  expect(clockOf(20_000)).toBe('20s')
+  expect(clockOf(252_000)).toBe('4m 12s')
+  expect(clockOf(3_725_000)).toBe('1h 02m')
+  expect(clockOf(3_599_000).length).toBeLessThanOrEqual(7)
+  expect(clockOf(43_500_000).length).toBeLessThanOrEqual(7)
+})
+
+test('the clock is a pill, an icon and the time on one ground, as wide as its text', () => {
+  const cellsOf = (ms: number) => {
+    const words = new Uint32Array(Uint8Array.from(atob(rowCells(MOTION.thinking, 3, ms, CALM)), c => c.charCodeAt(0)).buffer)
+    const columns = columnsOf(CALM)
+    const row = Array.from({ length: columns }, (_, x) => words.slice((columns + x) * 3, (columns + x + 1) * 3))
+    return { codes: String.fromCodePoint(...row.map(cell => cell[0]!)), row }
+  }
+  for (const ms of [5000, 252_000, 43_500_000]) {
+    const { codes, row } = cellsOf(ms)
+    const start = codes.indexOf('\ue0b6'), end = codes.indexOf('\ue0b4')
+    expect(codes.slice(start, end + 1)).toBe(`\ue0b6 \uf017  ${clockOf(ms)} \ue0b4`)
+    for (const cell of row.slice(start + 1, end)) expect(cell[2]).toBe(0x173b42)
+  }
+})
+
+const SPINNER = { word: 'Sauteing', message: null, suffix: '…', mode: 'thinking' as const }
+const FRAME_MS = 120
+
+test('a row outlasts a few refused blits, and goes once they keep coming', async ($, on) => {
+  const clock = mock.clock(on)
+  on('env.get', () => ({ value: 't9' }))
+  let blits = 0
+  let refuse = (_: number) => true
+  on('ui.blit', async () => {
+    blits += 1
+    return { value: refuse(blits) ? { deny: 'not mounted' } : {} }
+  })
+  on('ui.render', { component: 'Spinner' }, async ($$, e) => {
+    const { Text } = $$.ui.resolve(e)
+    return <Text>{e.props.word}</Text>
+  })
+  await $.ui.mount({ plugin: 'helm-spinner', surface: 'terminal', component: 'Spinner', props: SPINNER })
+
+  refuse = n => n <= 3
+  await clock.advance(FRAME_MS * 12)
+  expect(blits).toBeGreaterThanOrEqual(12)
+
+  blits = 100
+  refuse = () => true
+  await clock.advance(FRAME_MS * 30)
+  expect(blits).toBeLessThanOrEqual(108)
+})
+
+const textOf = async (line: { findAll: (query: { type: string }) => Promise<{ text: string }[]> }) =>
+  (await line.findAll({ type: 'Text' })).map(found => found.text).join('')
+
+test("the figures go to their turn's closing line, not an older one drawn meanwhile", async ($, on) => {
+  on('env.get', () => ({ value: 't9' }))
+  on('tool.call', () => ({ result: {} }))
+  on('clock.now', () => ({ value: 1000 }))
+  on('session.usage', () => ({ value: { context: {}, rateLimits: [], cost: { usd: 1 } } }) as never)
+  on('turn.start', () => ({ turnId: 't' }))
+  on('turn.complete', () => ({ text: '' }))
+  const lineOf = (id: string, durationMs: number) =>
+    $.ui.mount({ plugin: 'helm-spinner', surface: 'terminal', component: 'TurnDuration', requestId: id, props: { word: 'Baked', durationMs } })
+
+  await $.turn.start({ text: 'go', turnId: 't' } as never)
+  await $.tool.call({ tool: 'Write', file_path: '/a', content: 'x' })
+  await $.turn.complete({ answer: '', durationMs: 90_000, isAborted: false, turnId: 't', reason: 'answer' } as never)
+
+  expect(await textOf(await lineOf('old', 5000))).not.toContain('+1')
+  expect(await textOf(await lineOf('new', 90_400))).toContain('+1')
+})
+
+test("a subagent's end isn't the turn's", async ($, on) => {
+  on('env.get', () => ({ value: 't9' }))
+  on('tool.call', () => ({ result: {} }))
+  on('clock.now', () => ({ value: 1000 }))
+  on('session.usage', () => ({ value: { context: {}, rateLimits: [], cost: { usd: 1 } } }) as never)
+  on('turn.start', () => ({ turnId: 't' }))
+  on('turn.complete', () => ({ text: '' }))
+
+  await $.turn.start({ text: 'go', turnId: 't' } as never)
+  await $.tool.call({ tool: 'Write', file_path: '/a', content: 'x' })
+  await $.turn.start({ text: 'help', turnId: 's', agentId: 'a1' } as never)
+  await $.turn.complete({ answer: '', durationMs: 7000, isAborted: false, turnId: 's', agentId: 'a1', reason: 'answer' } as never)
+  await $.turn.complete({ answer: '', durationMs: 90_000, isAborted: false, turnId: 't', reason: 'answer' } as never)
+
+  const line = await $.ui.mount({ plugin: 'helm-spinner', surface: 'terminal', component: 'TurnDuration', requestId: 'l', props: { word: 'Baked', durationMs: 90_000 } })
+  expect(await textOf(line)).toContain('+1')
 })

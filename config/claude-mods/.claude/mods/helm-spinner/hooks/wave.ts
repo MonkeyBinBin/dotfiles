@@ -1,6 +1,6 @@
 // The spinner's row, three tall: the sub and a sound wave in braille, which gives two by four dots a cell, thin enough for a line
-// and sharp at any size, with one color a cell (the sub is drawn by hand, icons.ts); the dive's clock; and status pills, a rounded
-// block of color round a Nerd Font icon, which breathe, and flash at critical. All Raster cells, so they tick without a redraw;
+// and sharp at any size, with one color a cell (the sub is drawn by hand, icons.ts); the dive's clock in a quiet pill; and status
+// pills, a rounded block of color round a Nerd Font icon, which breathe, and flash at critical. All Raster cells, so they tick without a redraw;
 // a Raster takes nothing past the Basic Multilingual Plane, which rules out Material icons here. Colors are themes/sub.json's.
 import { ICON_ART } from './icons'
 
@@ -16,7 +16,6 @@ export const MOTION = {
 } as const satisfies Record<string, Motion>
 export const ALARM: Motion = { ink: 0xff5a4a, amplitude: 5.5, speed: 0.6, jitter: 2 }
 
-const MUTED = 0x8ab8b4
 const GOLD = 0xf0d07a
 const RED = 0xff5a4a
 const DEFAULT_COLOR = 0x01000000
@@ -26,7 +25,7 @@ const HULL_AT = 3
 
 export const ROWS = 3
 const WAVE_COLUMNS = 32
-const CLOCK_COLUMNS = 7 // h:mm:ss
+const CLOCK_TEXT_COLUMNS = 7 // 59m 59s, 12h 05m
 const CLOCK_ROW = 1
 const TICKS_A_FRAME = 3 // how long an icon holds each frame of its motion
 const GAP = 1
@@ -59,8 +58,8 @@ const fade = (color: number, k: number) =>
 
 export function clockOf(ms: number) {
   const total = Math.max(0, Math.floor(ms / 1000)), h = Math.floor(total / 3600), m = Math.floor(total / 60) % 60, s = total % 60
-  const two = (n: number) => String(n).padStart(2, '0')
-  return h > 0 ? `${h}:${two(m)}:${two(s)}` : `${two(m)}:${two(s)}`
+  if (h > 0) return `${h}h ${String(m).padStart(2, '0')}m`
+  return m > 0 ? `${m}m ${s}s` : `${s}s`
 }
 
 const PILL_ICONS: Record<string, number> = {
@@ -81,6 +80,11 @@ const RIGHT_CAP = 0xe0b4
 // A cap, a space, the icon, two spaces, a cap: the terminal draws an icon across its own cell and a blank one after it, so the
 // second space is what balances the first.
 const PILL_COLUMNS = 6
+// The turn's closing line's pill, as this one becomes it: quiet, not breathing. It's as wide as its text, within the row's room for the longest.
+const CLOCK_ICON = 0xf017
+const CLOCK_INK = 0xa8e8c4
+const CLOCK_GROUND = 0x173b42
+const CLOCK_COLUMNS = PILL_COLUMNS + CLOCK_TEXT_COLUMNS + 1
 
 export type Pill = [icon: string, ink: number, isCritical: boolean]
 
@@ -134,9 +138,11 @@ export function rowCells(motion: Motion, tick: number, elapsedMs: number, status
   }
   at += WAVE_COLUMNS + GAP
 
-  const clock = clockOf(elapsedMs).padEnd(CLOCK_COLUMNS)
-  for (let i = 0; i < CLOCK_COLUMNS; i++) put(at + i, CLOCK_ROW, clock.charCodeAt(i), MUTED)
-  at += CLOCK_COLUMNS
+  const face = [0x20, CLOCK_ICON, 0x20, 0x20, ...[...clockOf(elapsedMs)].map(ch => ch.charCodeAt(0)), 0x20]
+  put(at, CLOCK_ROW, LEFT_CAP, CLOCK_GROUND)
+  face.forEach((code, i) => put(at + 1 + i, CLOCK_ROW, code, CLOCK_INK, CLOCK_GROUND))
+  put(at + 1 + face.length, CLOCK_ROW, RIGHT_CAP, CLOCK_GROUND)
+  at += face.length + 2
 
   for (const [icon, ink, isCritical] of pillsOf(status)) {
     at += GAP

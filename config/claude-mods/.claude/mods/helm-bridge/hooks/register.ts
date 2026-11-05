@@ -9,8 +9,8 @@ import type { Live, Sos } from '../types'
 //   cc.o2=<percent>               context window used, in steps of five
 //   cc.fuel=<percent>             the fullest rate-limit window, in steps of five
 //   cc.hull=<count>               main loop tool calls failed in a row
-// helm-spinner reads the same from this mod's state. Does nothing outside a Herdr app terminal. A failed label is dropped: a
-// display must never get in Claude's way.
+// helm-spinner reads the same from this mod's state. Does nothing outside a Herdr app terminal. All of it runs in a queue no
+// tool or prompt waits on, and a failed label is dropped: a display must never get in Claude's way.
 
 const MAX = 48
 const STEP = 5
@@ -18,6 +18,8 @@ const KEYS = ['cc.sos', 'cc.op', 'cc.o2', 'cc.fuel', 'cc.hull'] as const
 const sos = atom({ plugin: 'helm-bridge', key: 'sos' } as const, null as Sos | null)
 const IDLE: Live = { op: '', hull: 0, o2: 0, fuel: 0 }
 const live = atom({ plugin: 'helm-bridge', key: 'live' } as const, IDLE)
+// The programs whose second word names a subcommand. Anyone else's could be a password or a token.
+const SUBCOMMANDS = new Set(['git', 'gh', 'npm', 'pnpm', 'yarn', 'bun', 'docker', 'kubectl', 'brew', 'cargo'])
 
 // The kind of work a tool call is.
 export function kindOf(tool: string): string {
@@ -32,7 +34,7 @@ export function kindOf(tool: string): string {
 export const stepOf = (percent: number) => Math.floor(percent / STEP) * STEP
 
 // A label is visible to everything that lists terminals, so it carries the shape of the request, never a whole command:
-// the program and its subcommand, a file's name, a URL's host.
+// the program, a well-known one's subcommand, a file's name, a URL's host.
 export function sosReason(tool: string, input: unknown): string {
   const fields = (typeof input === 'object' && input !== null ? input : {}) as Record<string, unknown>
   const text = (key: string) => (typeof fields[key] === 'string' ? (fields[key] as string) : '')
@@ -41,9 +43,8 @@ export function sosReason(tool: string, input: unknown): string {
 
   let target = ''
   if (tool === 'Bash') {
-    const words = text('command').trim().split(/\s+/)
-    target = words.slice(0, 2).filter(w => /^[\w.-]+$/.test(w)).join(' ')
-    if (words.length > 0 && !/^[\w.-]+$/.test(words[0]!)) target = ''
+    const [program = '', second = ''] = text('command').trim().split(/\s+/)
+    if (/^[\w.-]+$/.test(program)) target = SUBCOMMANDS.has(program) && /^[a-z][a-z-]*$/.test(second) ? `${program} ${second}` : program
   } else if (text('file_path') || text('notebook_path')) {
     target = (text('file_path') || text('notebook_path')).split('/').pop() ?? ''
   } else if (tool === 'WebFetch') {
@@ -57,8 +58,21 @@ export function sosReason(tool: string, input: unknown): string {
 
 // undefined until read; null outside Herdr.
 let terminal: string | null | undefined
-let waiting: { tool: string; agent: string | undefined } | undefined
+// What's waiting on the person, oldest first. `id` is the call's, unless the prompt came with no call under way to pin it on.
+type Wait = { id: string | undefined; tool: string; agent: string | undefined; reason: string; since?: number }
+let waits: Wait[] = []
+// Every label's value as it should be, and as Herdr last took it: what a failed write leaves apart is sent again with the next.
+const UNKNOWN = '\0'
+const wanted = new Map<string, string>()
 const sent = new Map<string, string>()
+const calls = new Map<string, { tool: string; agent: string | undefined; args: Record<string, unknown> }>() // the calls under way, by tool_use_id
+let queue: Promise<unknown> = Promise.resolve()
+
+// One at a time, in the order the events came: an update reads what the last one wrote, and labels land in order.
+function show(work: () => Promise<unknown>) {
+  queue = queue.then(work).catch(() => undefined)
+  return queue
+}
 
 async function terminalOf($: EngineInterface) {
   if (terminal === undefined) terminal = (await $.env.get('HC_TERMINAL_ID').catch(() => undefined)) || null
@@ -69,12 +83,13 @@ async function terminalOf($: EngineInterface) {
 async function publish($: EngineInterface, labels: Record<string, string>) {
   const at = await terminalOf($)
   if (!at) return
-  const changed = Object.entries(labels).filter(([key, value]) => (sent.get(key) ?? '') !== value)
+  for (const [key, value] of Object.entries(labels)) wanted.set(key, value)
+  const changed = [...wanted].filter(([key, value]) => (sent.get(key) ?? '') !== value)
   if (changed.length === 0) return
-  for (const [key, value] of changed) sent.set(key, value)
-  await $.process
+  const ran = await $.process
     .run(['hc', 'label', at, ...changed.map(([key, value]) => `${key}=${value}`)], { timeoutMs: 2000 })
     .catch(() => undefined)
+  for (const [key, value] of changed) sent.set(key, ran?.exitCode === 0 ? value : UNKNOWN)
 }
 
 const numeric = (value: number) => (value > 0 ? String(value) : '')
@@ -98,86 +113,125 @@ async function measure($: EngineInterface) {
   await setLive($, state => ({ ...state, o2: usage.context.percent ?? 0, fuel }))
 }
 
-async function raise($: EngineInterface, tool: string, agent: string | undefined, reason: string) {
+async function showSos($: EngineInterface) {
   if (!(await terminalOf($))) return
-  waiting = { tool, agent }
-  const since = await $.clock.now()
-  await update($, sos, () => ({ reason, since })).catch(() => undefined)
-  await publish($, { 'cc.sos': reason })
+  const first = waits[0]
+  if (first) first.since ??= await $.clock.now()
+  const value = first ? { reason: first.reason, since: first.since! } : null
+  await update($, sos, () => value).catch(() => undefined)
+  await publish($, { 'cc.sos': first?.reason ?? '' })
 }
 
-async function clear($: EngineInterface) {
-  if (!waiting) return
-  waiting = undefined
-  await update($, sos, () => null).catch(() => undefined)
-  await publish($, { 'cc.sos': '' })
+const isSameLoop = (one: { tool: string; agent: string | undefined }, other: { tool: string; agent: string | undefined }) =>
+  one.tool === other.tool && one.agent === other.agent
+
+// The call a prompt is about, though it doesn't name one: of those of its tool with no prompt yet, the one with these arguments.
+function callAsked(tool: string, agent: string | undefined, input: unknown) {
+  const free = [...calls].filter(([id, call]) => isSameLoop(call, { tool, agent }) && !waits.some(wait => wait.id === id))
+  const fields = Object.entries((typeof input === 'object' && input) || {})
+  const same = free.find(([, call]) => fields.every(([key, value]) => JSON.stringify(call.args[key]) === JSON.stringify(value)))
+  return (same ?? free[0])?.[0]
+}
+
+function settle($: EngineInterface, keep: (wait: Wait) => boolean) {
+  const left = waits.filter(keep)
+  if (left.length === waits.length) return
+  waits = left
+  void show(() => showSos($))
+}
+
+// A call's prompt, or one that came with no call under way to pin it on and could be this one's.
+function answered($: EngineInterface, id: string, tool: string, agent: string | undefined) {
+  const wait = waits.find(w => w.id === id) ?? waits.find(w => w.id === undefined && isSameLoop(w, { tool, agent }))
+  settle($, w => w !== wait)
 }
 
 // A reload or a crash can leave labels behind; `sent` starts empty, so name them all.
 async function clearAll($: EngineInterface) {
-  const at = await terminalOf($)
-  if (!at) return
-  sent.clear()
+  if (!(await terminalOf($))) return
+  waits = []
+  for (const key of KEYS) sent.set(key, UNKNOWN)
   await update($, sos, () => null).catch(() => undefined)
   await update($, live, () => IDLE).catch(() => undefined)
-  await $.process.run(['hc', 'label', at, ...KEYS.map(key => `${key}=`)], { timeoutMs: 2000 }).catch(() => undefined)
+  await publish($, Object.fromEntries(KEYS.map(key => [key, ''])))
 }
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const result = await next(e)
-    await clearAll($)
-    await measure($)
+    void show(async () => {
+      await clearAll($)
+      await measure($)
+    })
     return result
   })
 
+  // The last thing to run before the process goes, so it's waited for.
   on('session.end', async ($, e, next) => {
-    await clearAll($)
+    await show(() => clearAll($))
     return next(e)
   })
 
   on('session.measure', async ($, e, next) => {
     const result = await next(e)
-    await measure($)
+    void show(() => measure($))
     return result
   })
 
   // Asked with nothing beneath deciding: the prompt is about to wait on the person.
   on('classic.PermissionRequest', async ($, e, next) => {
     const result = await next(e)
-    if (result.decision === undefined) await raise($, e.tool_name, e.agent_id, sosReason(e.tool_name, e.tool_input))
+    if (result.decision === undefined) {
+      const id = callAsked(e.tool_name, e.agent_id, e.tool_input)
+      waits.push({ id, tool: e.tool_name, agent: e.agent_id, reason: sosReason(e.tool_name, e.tool_input) })
+      void show(() => showSos($))
+    }
     return result
   })
 
   // A prompted tool has been answered once its call is over; a question waits for as long as the call runs.
   on('tool.call', async ($, e, next) => {
     const isMain = e.agentId === undefined
-    if (isMain) await setLive($, state => ({ ...state, op: kindOf(e.tool) }))
-    if (e.tool === 'AskUserQuestion') await raise($, e.tool, e.agentId, 'Question')
+    calls.set(e.tool_use_id, { tool: e.tool, agent: e.agentId, args: e as unknown as Record<string, unknown> })
+    if (isMain) void show(() => setLive($, state => ({ ...state, op: kindOf(e.tool) })))
+    if (e.tool === 'AskUserQuestion') {
+      waits.push({ id: e.tool_use_id, tool: e.tool, agent: e.agentId, reason: 'Question' })
+      void show(() => showSos($))
+    }
     try {
       const ran = await next(e)
-      if (isMain) await setLive($, state => ({ ...state, hull: ran.isError === true ? state.hull + 1 : 0 }))
+      if (isMain) void show(() => setLive($, state => ({ ...state, hull: ran.isError === true ? state.hull + 1 : 0 })))
       return ran
     } finally {
-      if (waiting?.tool === e.tool && waiting.agent === e.agentId) await clear($)
+      calls.delete(e.tool_use_id)
+      answered($, e.tool_use_id, e.tool, e.agentId)
     }
+  })
+
+  // No event says a prompt was answered, but the run-in-background pill only shows under a tool that's running.
+  on('ui.render', { component: 'ToolProgress' }, async ($, e, next) => {
+    const call = calls.get(e.props.tool_use_id)
+    if (call) answered($, e.props.tool_use_id, call.tool, call.agent)
+    return next(e)
   })
 
   // The person typed, or the turn ended on a refusal or an interrupt: nothing of this turn's is still waiting.
   on('prompt.submit', async ($, e, next) => {
-    await clear($)
+    settle($, () => false)
     return next(e)
   })
 
   on('turn.start', async ($, e, next) => {
-    await setLive($, state => ({ ...state, op: '', hull: 0 }))
+    if (e.agentId === undefined) void show(() => setLive($, state => ({ ...state, op: '', hull: 0 })))
     return next(e)
   })
 
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
-    if (waiting && waiting.agent === undefined) await clear($)
-    await setLive($, state => ({ ...state, op: '' }))
+    if (e.agentId === undefined) {
+      settle($, wait => wait.agent !== undefined)
+      void show(() => setLive($, state => ({ ...state, op: '' })))
+    }
     return result
   })
 }

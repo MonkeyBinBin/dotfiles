@@ -1,6 +1,6 @@
 import type { EngineInterface, Register } from 'claude-code'
 
-import { ALARM, columnsOf, MOTION, pillsOf, rowCells, ROWS } from './wave'
+import { ALARM, clockOf, columnsOf, MOTION, pillsOf, rowCells, ROWS } from './wave'
 import type { Motion, Status } from './wave'
 
 // The spinner as three rows: a braille sound wave moving to suit what's going on, the sub, the dive's clock and status pills, in place of the
@@ -9,6 +9,8 @@ import type { Motion, Status } from './wave'
 
 const FRAME_MS = 120
 const TICKS_TO_LOOK = 4 // how often the status is read again from helm-bridge
+const MAX_MISSES = 8 // refused blits in a row before a row counts as gone: one can be refused on the way to a redraw
+const SAME_TURN_MS = 2000 // how far a closing line's duration can be from what turn.complete said
 const SPACER_ROWS = 1 // the engine's spinner opens with a blank row
 const CLOCK_ICON = '\uf017'
 const FILE_ICON = '\uf15b'
@@ -16,11 +18,6 @@ const LEFT_CAP = '\ue0b6'
 const RIGHT_CAP = '\ue0b4'
 // themes/sub.json's: its raised surface for the pills, as these stay in the transcript and shouldn't shout.
 const INK = { pill: '#173b42', text: '#a8e8c4', dim: '#5a8a8c', gold: '#f0d07a', added: '#5cff9a', removed: '#ff9a8a' }
-
-const durationOf = (ms: number) => {
-  const total = Math.round(ms / 1000), m = Math.floor(total / 60), s = total % 60
-  return m > 0 ? `${m}m ${s}s` : `${s}s`
-}
 
 export type Tally = { files: Set<string>; added: number; removed: number; costAtStart: number | undefined }
 
@@ -55,7 +52,7 @@ export function figuresOf(tally: Tally, cost: number | undefined, ended = 'answe
 
 // A turn's pills, as [text, ink]: how long it took, then only what it did. Segments of one pill are side by side.
 export function closingPills(durationMs: number, figures: Figures | undefined): [string, string][][] {
-  const pills: [string, string][][] = [[[`${CLOCK_ICON} ${durationOf(durationMs)}`, INK.text]]]
+  const pills: [string, string][][] = [[[`${CLOCK_ICON} ${clockOf(durationMs)}`, INK.text]]]
   if (figures && figures.files > 0) pills.push([[`${FILE_ICON} ${figures.files}`, INK.text]])
   if (figures && figures.added + figures.removed > 0) pills.push([[`+${figures.added}`, INK.added], [' ', INK.text], [`−${figures.removed}`, INK.removed]])
   if (figures && figures.spent > 0) pills.push([[`$${figures.spent.toFixed(2)}`, INK.gold]])
@@ -67,10 +64,11 @@ const EDITS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit'])
 let inHerdr: boolean | undefined
 let isCompacting = false
 let tally: Tally = { files: new Set(), added: 0, removed: 0, costAtStart: undefined }
-// What the closing line of the turn that just ended adds, until that line first draws; then what each line drew.
-let pending: Figures | undefined
+// What the closing line of the turn that just ended adds, until that line first draws; then what each line drew. A line's only
+// tie to its turn is the duration, and without it an older line drawn now would take these figures.
+let pending: { figures: Figures; durationMs: number } | undefined
 const tails = new Map<string, Figures>()
-const rows = new Map<string, Motion>() // the spinner rows on screen, and how each one's wave moves
+const rows = new Map<string, { motion: Motion; misses: number }>() // the spinner rows on screen, and how each one's wave moves
 let ticker: (() => void) | undefined
 let tick = 0
 let diveStart = 0
@@ -99,12 +97,18 @@ async function lookAtBridge($: EngineInterface) {
 function animate($: EngineInterface) {
   tick += 1
   if (tick % TICKS_TO_LOOK === 0) void lookAtBridge($).catch(() => undefined)
-  for (const [requestId, motion] of rows) {
-    const drop = () => rows.delete(requestId)
+  for (const [requestId, row] of rows) {
+    const missed = () => {
+      row.misses += 1
+      if (row.misses >= MAX_MISSES && rows.get(requestId) === row) rows.delete(requestId)
+    }
     void $.ui
-      .blit({ requestId, key: 'helm-wave', cells: rowCells(isSos ? ALARM : motion, tick, now - diveStart, status), columns: columnsOf(status), rows: ROWS })
-      .then(shown => void (shown.deny !== undefined && drop()))
-      .catch(drop)
+      .blit({ requestId, key: 'helm-wave', cells: rowCells(isSos ? ALARM : row.motion, tick, now - diveStart, status), columns: columnsOf(status), rows: ROWS })
+      .then(shown => {
+        if (shown.deny === undefined) row.misses = 0
+        else missed()
+      })
+      .catch(missed)
   }
 }
 
@@ -117,7 +121,7 @@ const costNow = async ($: EngineInterface) => (await $.session.usage().catch(() 
 
 export const register: Register = on => {
   on('turn.start', async ($, e, next) => {
-    if (await herdr($)) {
+    if (e.agentId === undefined && (await herdr($))) {
       diveStart = await $.clock.now()
       now = diveStart
       tally = { files: new Set(), added: 0, removed: 0, costAtStart: await costNow($) }
@@ -134,7 +138,7 @@ export const register: Register = on => {
 
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
-    if (await herdr($)) pending = figuresOf(tally, await costNow($), e.reason)
+    if (e.agentId === undefined && (await herdr($))) pending = { figures: figuresOf(tally, await costNow($), e.reason), durationMs: e.durationMs }
     return result
   })
 
@@ -152,7 +156,7 @@ export const register: Register = on => {
   on('ui.render', { component: 'Spinner' }, async ($, e, next) => {
     if (e.surface !== 'terminal' || !(await herdr($))) return next(e)
     const motion = isCompacting ? ALARM : MOTION[e.props.mode]
-    rows.set(e.requestId, motion)
+    rows.set(e.requestId, { motion, misses: 0 })
     await lookAtBridge($).catch(() => undefined)
     ticker ??= $.clock.every(FRAME_MS, () => animate($))
     const shownMotion = isSos ? ALARM : motion
@@ -168,8 +172,8 @@ export const register: Register = on => {
   // A line waiting on background agents still has that to say.
   on('ui.render', { component: 'TurnDuration' }, async ($, e, next) => {
     if (!(await herdr($)) || e.surface !== 'terminal' || e.props.waitingFor || e.props.isExpanded) return next(e)
-    if (pending !== undefined && !tails.has(e.requestId)) {
-      tails.set(e.requestId, pending)
+    if (pending !== undefined && !tails.has(e.requestId) && Math.abs(e.props.durationMs - pending.durationMs) <= SAME_TURN_MS) {
+      tails.set(e.requestId, pending.figures)
       pending = undefined
     }
     const figures = tails.get(e.requestId)
