@@ -36,7 +36,7 @@ const PANEL_KEYS = [
 
 const NAMES = {
   "sub-tabs.files": "Files panel", "sub-tabs.changes": "Changes panel", "sub-tabs.log": "Captain's log", "sub-tabs.radio": "Radio",
-  "sub-tabs.keys": "This list", "sub-tabs.new": "New menu (agents)", "sub-tabs.agent": "Go to contact C", "layout.toggle:helm": "Right column",
+  "sub-tabs.keys": "This list", "sub-tabs.new": "New menu (agents)", "sub-tabs.sos": "Next SOS", "sub-tabs.agent": "Go to contact C", "layout.toggle:helm": "Right column",
   "agent.next": "Next agent", "agent.prev": "Previous agent",
   "tab.new": "New tab", "tab.close": "Close tab", "tab.next": "Next tab", "tab.prev": "Previous tab", "tab.rename": "Rename tab", "tab.select:": "Go to tab ",
   "space.new": "New space", "space.next": "Next space", "space.prev": "Previous space", "space.rename": "Rename space", "space.select:": "Go to space ",

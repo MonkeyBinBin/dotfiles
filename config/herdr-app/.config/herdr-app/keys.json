@@ -70,6 +70,7 @@
     "cmd-shift-r": "sub-tabs.radio",
     "cmd-/": "sub-tabs.keys",
     "cmd-shift-n": "sub-tabs.new",
+    "cmd-shift-s": "sub-tabs.sos",
     "cmd-alt-1": "sub-tabs.agent1",
     "cmd-alt-2": "sub-tabs.agent2",
     "cmd-alt-3": "sub-tabs.agent3",

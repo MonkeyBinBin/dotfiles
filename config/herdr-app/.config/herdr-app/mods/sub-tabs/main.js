@@ -2,14 +2,15 @@
 // riveted on the hull (the shown one brass, the rest steel) with its status lamp, + and the side panel buttons as
 // plates too, and a brass porthole badge at the right end (click: the captain's log). Behaviour is unchanged: select, drag to move,
 // double-click to rename, right-click menu, + menu, side panel buttons remembered per space. An unnamed tab goes by its
-// agent's title. Key commands (keys.json): sub-tabs.files, .changes, .log, .radio, .keys, .new and .agent1-9, which goes to contact C1-C9.
+// agent's title. Key commands (keys.json): sub-tabs.files, .changes, .log, .radio, .keys, .new, .agent1-9, which goes to contact C1-C9, and .sos, which goes to the next one waiting on the person.
 import { View, div, image, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { battleLight, onAlert } from "./kit/battle-light.js";
 import { byContact } from "./kit/contacts.js";
+import { sosEscorts } from "./kit/escorts.js";
 import { framed } from "./kit/frame.js";
 import { sprite } from "./kit/sprite.js";
-import { agents, spaces, panes, run, openOverlay, closeOverlay, shared, setShared, theme, window, layout, settings, nextCommand } from "herdr";
+import { agents, spaces, panes, focused, notify, run, openOverlay, closeOverlay, shared, setShared, theme, window, layout, settings, nextCommand } from "herdr";
 
 const ART = "mods/sub/assets";
 // the side panels the sub always offers (the app's own "workspace.panels" comes from its welcome screen)
@@ -43,9 +44,26 @@ export default class Tabs extends View {
     if (c === "radio") return this.toggle("radio", 560, 430);
     if (c === "keys") return this.toggle("keys", 780, 600);
     if (c === "new") return this.toggleNew();
+    if (c === "sos") return this.nextSos();
     const contact = /^agent([1-9])$/.exec(c);
     const agent = contact && byContact(agents())[Number(contact[1]) - 1];
     if (agent) run("agent.focus", { terminal: agent.address });
+  }
+
+  // Each press moves on to the next one waiting: agents by contact, then escorts, which have no pane and open in a peek.
+  // A peek leaves the focus where it was, so after one the count goes on from the peek.
+  nextSos() {
+    const crew = byContact(agents()).filter((a) => a.status === "blocked").map((a) => a.address);
+    const queue = [...crew, ...sosEscorts().map((e) => e.address)];
+    if (!queue.length) return notify({ title: "No SOS", timeout: 2000 });
+    const here = focused()?.terminal;
+    const at = queue.indexOf(!this.sosPeek && queue.includes(here) ? here : this.lastSos);
+    const next = queue[(at + 1) % queue.length];
+    const peek = !crew.includes(next);
+    if (this.sosPeek && !peek) run("overlay.close"); // the last peek would cover the agent
+    this.lastSos = next;
+    this.sosPeek = peek;
+    run(peek ? "terminal.peek" : "agent.focus", { terminal: next });
   }
 
   togglePanel(id) {
