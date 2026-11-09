@@ -1,0 +1,1 @@
+{ "name": "key-hints", "version": "0.1.0", "description": "A row of key hint pills above the prompt that changes with what Claude is doing: idle, working, or background agents running" }
