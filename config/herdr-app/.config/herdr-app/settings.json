@@ -5,6 +5,7 @@
     "done": "mods/sub/sounds/done.mp3",
     "blocked": "mods/sub/sounds/blocked.mp3"
   },
+  "font_ligatures": false,
   "telemetry": false,
   "minimum_contrast": 1.0,
   "appearance": "dark"
