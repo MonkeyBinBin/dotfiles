@@ -63,7 +63,9 @@ selection_bg = "#504945"
 # Most reliable direct bindings are ctrl+letter, function keys, and explicit modified chords.
 # alt+..., cmd/super, and punctuation-with-modifiers may depend on your terminal/tmux setup.
 # prefix = "ctrl+b"
-prefix = "ctrl+b"
+# Not ctrl+b: Claude Code uses it to background a running task (task:background).
+# ctrl+q has no Claude Code binding and no common shell use.
+prefix = "ctrl+q"
 
 # --- tmux-aligned overrides ---
 # Keys not listed here keep herdr defaults, which already match tmux:
