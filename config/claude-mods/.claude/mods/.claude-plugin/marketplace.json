@@ -1,0 +1,7 @@
+{
+  "name": "claude-mods-local",
+  "owner": { "name": "dotfiles" },
+  "plugins": [
+    { "name": "abyssal-helm", "source": "./abyssal-helm", "description": "Desktop-only deep-sea look: abyssal palette, sonar backdrop, dive band, sonar tool rows" }
+  ]
+}

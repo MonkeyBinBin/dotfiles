@@ -1,0 +1,1 @@
+{ "name": "abyssal-helm", "version": "0.1.0", "description": "Deep-sea submarine control room: abyssal palette, sonar backdrop, dive mission band and sonar-styled tool rows (desktop app only)", "types": "./types/index.d.ts" }
