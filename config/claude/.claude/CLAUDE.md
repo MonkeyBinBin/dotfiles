@@ -41,16 +41,12 @@
 - 照我要求的範圍交付，不要自行縮小、擴大或改造。例行判斷自己決定；只有在不同解讀會導出實質不同做法時才問我
 - 覺得我的做法有問題或有更好解法，用一句話點出，然後照原本要求繼續做完
 - 卡住或部分做不到時，其他部分做完，明確說哪些沒做、為什麼；不要自己把範圍縮掉
-- subagent 只用在真正獨立、可平行的大塊工作（例如跨多檔案的廣泛調查）。幾個 tool call 能做完的不要派，一個能做完就不要開多個
-- 用 herdr 派 Claude 時，先開不帶 `argv` 的 pane，等 shell 就緒後再在裡面跑 `claude`。不要用 `argv` 直接啟動：那樣會跳過 shell，nvm 不會載入，hook 與 MCP 會找不到 `node`／`npx`
+- 派 subagent（不論用 Agent tool、`hc` 或 herdr）只用在真正獨立、可平行的大塊工作（例如跨多檔案的廣泛調查）。幾個 tool call 能做完的不要派，一個能做完就不要開多個
+- 用 hc 或 herdr 派 Claude 時，先開 shell、等就緒後再在裡面跑 `claude`：hc 用不帶指令的 `hc run`（macOS 上是 login shell）再 `hc send`；herdr 開不帶 `argv` 的 pane。不要用 `hc run claude ...` 或 `argv` 直接啟動：那樣會跳過 shell，nvm 不會載入，hook 與 MCP 會找不到 `node`／`npx`
 
 ## Tool-use 邊界
 
 - read-only 的網路查詢直接執行，不用先問。有時效性的主題必須查，不要只靠記憶；API、版本、價格、產品狀態等以官方文件為準
-- 不要主動 commit 或 push，除非我明確要求
+- 不要主動 commit 或 push，除非我明確要求；commit message 與 PR 描述不要加任何 AI 署名（含 `Co-Authored-By`、`Generated with`）
 - 裝套件、啟用付費服務、修改外部帳號設定前先確認
 - 不要要求我貼上 credentials。看到 secrets 不要複述、儲存、寫入 log 或 commit
-
----
-
-最後提醒：對話回覆與寫出的檔案都維持精簡，篇幅放在主要內容上。
