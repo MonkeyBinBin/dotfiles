@@ -44,17 +44,31 @@ export function modeOf(isWorking: boolean, agents: readonly AgentInfo[]): Mode {
   return agents.some(agent => LIVE.has(agent.status)) ? 'agents' : 'idle'
 }
 
-// Cells a pill takes: caps, padding, key, icon (Ghostty widens it over the blank after it), the word, the gap to the next.
-const widthOf = (hint: Hint, withWord: boolean) => hint.key.length + 6 + (withWord ? hint.word.length + 1 : 0) + 1
+// Cells a pill takes: two caps, the pad before the key, the key and its blank, the icon and the blank after it (Ghostty widens
+// the icon over that blank), the word, the closing pad. Pills sit one cell apart.
+const widthOf = (hint: Hint, withWord: boolean) => hint.key.length + 7 + (withWord ? hint.word.length : 0)
 
 export type Words = 'all' | 'unfamiliar' | 'none'
-const fits = (hints: readonly Hint[], columns: number, words: Words) =>
-  hints.reduce((sum, hint) => sum + widthOf(hint, words === 'all' || (words === 'unfamiliar' && !hint.isFamiliar)), 0) <= columns
-
-// One row whatever the width: the familiar keys' words go first, then the rest; the keys and icons always stay.
-export const wordsFor = (hints: readonly Hint[], columns: number): Words =>
-  fits(hints, columns, 'all') ? 'all' : fits(hints, columns, 'unfamiliar') ? 'unfamiliar' : 'none'
 const showsWord = (hint: Hint, words: Words) => words === 'all' || (words === 'unfamiliar' && !hint.isFamiliar)
+const rowWidth = (hints: readonly Hint[], words: Words) =>
+  hints.reduce((sum, hint) => sum + widthOf(hint, showsWord(hint, words)), 0) + Math.max(0, hints.length - 1)
+
+export type Layout = { shown: readonly Hint[]; words: Words }
+
+// Always one row. As it runs short: the familiar keys' words go, then the familiar keys themselves, then the remaining words,
+// then pills from the end until the rest fit.
+export function layoutFor(hints: readonly Hint[], columns: number): Layout {
+  const unfamiliar = hints.filter(hint => !hint.isFamiliar)
+  const tries: Layout[] = [
+    { shown: hints, words: 'all' },
+    { shown: hints, words: 'unfamiliar' },
+    { shown: unfamiliar, words: 'all' },
+  ]
+  for (const layout of tries) if (rowWidth(layout.shown, layout.words) <= columns) return layout
+  let shown = unfamiliar
+  while (shown.length > 0 && rowWidth(shown, 'none') > columns) shown = shown.slice(0, -1)
+  return { shown, words: 'none' }
+}
 
 let drawnMode: Mode | undefined
 let ticker: Timer | undefined
@@ -76,15 +90,15 @@ export const register: Register = on => {
     ticker ??= $.clock.every(LOOK_MS, () => void look($).catch(() => undefined))
     const mode = modeOf(e.props.isWorking, await agentsNow($))
     drawnMode = mode
-    const hints = HINTS[mode]
-    const words = wordsFor(hints, e.props.bodyColumns)
+    const { shown, words } = layoutFor(HINTS[mode], e.props.bodyColumns)
     const { Box, Text } = $.ui.resolve(e)
     return (
       <Box flexDirection="column">
       {below}
-      <Box flexDirection="row" columnGap={1} marginTop={1}>
-        {hints.map(hint => (
-          <Box key={hint.key} flexDirection="row">
+      {/* Pills never shrink: one squeezed by the row wraps its own text onto a second line. */}
+      <Box flexDirection="row" columnGap={1} marginTop={1} overflow="hidden">
+        {shown.map(hint => (
+          <Box key={hint.key} flexDirection="row" flexShrink={0}>
             <Text color={INK.pill}>{LEFT_CAP}</Text>
             <Text backgroundColor={INK.pill}> </Text>
             <Text color={hint.isDanger ? INK.danger : INK.gold} backgroundColor={INK.pill}>{hint.key} </Text>
