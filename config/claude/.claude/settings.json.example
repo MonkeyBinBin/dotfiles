@@ -62,7 +62,17 @@
       "Bash(wget * | sh*)",
       "Bash(eval *)",
       "Bash(npm publish*)",
-      "Bash(dotnet nuget push *)"
+      "Bash(dotnet nuget push *)",
+      "Read(.env)",
+      "Read(.env.*)",
+      "Read(*.env)",
+      "Read(!.env.example)",
+      "Read(~/.ssh/**)",
+      "Read(~/.aws/**)",
+      "Read(~/.gnupg/**)",
+      "Read(~/.config/gh/**)",
+      "Read(~/.netrc)",
+      "Read(~/.npmrc)"
     ],
     "defaultMode": "auto"
   },
