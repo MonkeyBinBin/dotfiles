@@ -13,7 +13,8 @@ description: 建立符合約定式提交（Conventional Commits）格式的 git 
 
 ```bash
 git status
-git diff --cached 2>/dev/null || git diff
+git diff --cached
+git diff
 git branch --show-current
 git log --oneline -10 2>/dev/null || echo "（初始專案，尚無 commit 歷史）"
 git log -5 --pretty=format:"%s%n%b" 2>/dev/null || echo "（初始專案，預設使用繁體中文）"
