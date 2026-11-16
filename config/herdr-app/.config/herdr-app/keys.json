@@ -62,6 +62,9 @@
     "cmd-ctrl-k": "pane.go:up",
     "cmd-ctrl-l": "pane.go:right"
   },
+  "layout:dispatch": {
+    "cmd-p": "dispatch.search"
+  },
   "layout:sub": {
     "cmd-b": "layout.toggle:helm",
     "cmd-shift-e": "sub-tabs.files",

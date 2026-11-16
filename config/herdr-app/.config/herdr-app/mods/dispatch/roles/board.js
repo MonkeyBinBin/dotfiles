@@ -8,10 +8,12 @@
 //   done     ARRIVED      in yellow
 //   blocked  SIGNAL STOP  in red on red flaps, the row and its lamp pulsing
 //   idle     DEPOT        in steel blue
-// A row's click goes to that agent; a platform's click shows that space (hover it for the space's name).
+// A row's click goes to that agent; a platform's click shows that space (hover it for the space's name). A click on the
+// line, or cmd-p (keys.json: dispatch.search), drops the line search from it.
 import { div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { spaces, run, playSound, checking, setAgentOrder } from "herdr";
+import { spaces, run, playSound, checking, setAgentOrder, openOverlay, closeOverlay, nextCommand, shared, setShared } from "herdr";
+import { OPEN_KEY, SEARCH, searchHeight } from "./search.js";
 import { Flaps, flapText, pages, tile } from "../flap.js";
 import { ICON, INK, LAMP, STATUS_INK, WORD, boardOrder, since, trains } from "../state.js";
 
@@ -41,6 +43,11 @@ export class Board {
   constructor(cx) {
     this.flaps = new Flaps();
     this.look = TIERS[0];
+    // a search left open by an earlier run is gone now; forget it
+    cx.timer.after(0, () => setShared(OPEN_KEY, null));
+    cx.spawn(async () => {
+      for (;;) if ((await nextCommand()) === "search") this.toggleSearch(true);
+    });
     this.size = { width: 1200, height: 230 };
     this.heard = null;
     this.soundAt = 0;
@@ -99,6 +106,24 @@ export class Board {
   }
 
   // The line you're on, its name on flaps that turn over when you change line.
+  // The line search drops from the LINE flaps, its right edge on the board's. While it's open, cmd-p goes to the
+  // search itself (it closes), and a click on the line closes it by landing beside it: neither opens it again.
+  toggleSearch(fromKey = false) {
+    const st = shared(OPEN_KEY) ?? {};
+    if (st.open) {
+      if (!fromKey) closeOverlay(st.id);
+      return;
+    }
+    if (Date.now() - (st.closedAt ?? 0) < 400) return;
+    const rows = Math.min(SEARCH.rows, spaces().length);
+    // the board sits 10 px in from the window (the layout's padding); the line row ends about 140 px down the window
+    openOverlay({
+      mod: "dispatch", props: { role: "search" }, kind: "popup", frame: "none",
+      width: SEARCH.width, height: searchHeight(rows),
+      at: { x: Math.max(10, 10 + this.size.width - 14 - SEARCH.width), y: 146 },
+    });
+  }
+
   // A name longer than the flaps turns over between its parts, like a long station name on a Solari board.
   line(cx, now, drawn) {
     const name = spaces().find((sp) => sp.active)?.name ?? "";
@@ -117,7 +142,11 @@ export class Board {
         cx.timer.after(LINE_PAGE_MS, turn);
       }
     }
-    return h_flex().gap(8).items_center()
+    return h_flex().id("line").gap(8).items_center().rounded(4)
+      .tooltip("Search lines (⌘P)")
+      .hover((st) => st.opacity(0.85))
+      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+      .on_click(() => this.toggleSearch())
       .child(div().w(30).flex_none().text_size(11).text_color(INK.creamDim).child("LINE"))
       .child(flapText(this.flaps, "line", parts[this.linePage % parts.length], LINE_COLS, now, drawn, LOOK));
   }
