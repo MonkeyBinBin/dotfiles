@@ -36,18 +36,21 @@ function linkFor(rel) {
 const links = new Set(), mods = new Set();
 let timer = null;
 
+// the mods built on the shared kit: the sub's and dispatch
+const usesKit = (name) => name.startsWith("sub") || name === "dispatch";
+
 function copyMod(name) {
-  // the shared kit goes into every sub mod (mods can't import across folders), the source copy too
-  if (name.startsWith("sub")) spawnSync("rsync", ["-a", "--delete", kit + "/", join(pkg, "mods", name, "kit") + "/"], { stdio: "inherit" });
+  // the shared kit goes into every mod that uses it (mods can't import across folders), the source copy too
+  if (usesKit(name)) spawnSync("rsync", ["-a", "--delete", kit + "/", join(pkg, "mods", name, "kit") + "/"], { stdio: "inherit" });
   const r = spawnSync("rsync", ["-a", "--delete", "--exclude", "gpui-kit.d.ts", "--exclude", "jsconfig.json",
     join(pkg, "mods", name) + "/", join(home, "mods", name) + "/"], { stdio: "inherit" });
   console.log(r.status === 0 ? `copied mods/${name}` : `rsync failed for mods/${name}`);
 }
 
-// a kit change reaches every sub mod
+// a kit change reaches every mod that uses it
 watch(kit, (_event, file) => {
   if (!file || file.startsWith(".")) return;
-  const subs = spawnSync("ls", [join(pkg, "mods")], { encoding: "utf8" }).stdout.split("\n").filter((n) => n.startsWith("sub"));
+  const subs = spawnSync("ls", [join(pkg, "mods")], { encoding: "utf8" }).stdout.split("\n").filter(usesKit);
   for (const m of subs) mods.add(m);
   clearTimeout(timer);
   timer = setTimeout(flush, 150);

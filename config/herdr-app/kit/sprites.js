@@ -292,5 +292,105 @@ export const SPRITES = {
   "helm-icon-fuel-critical": {
     "n": 12,
     "period": 6000
+  },
+  "train-emu-working": {
+    "n": 4,
+    "period": 1333
+  },
+  "train-emu-done": {
+    "n": 1,
+    "period": 333
+  },
+  "train-emu-blocked": {
+    "n": 2,
+    "period": 667
+  },
+  "train-emu-idle": {
+    "n": 1,
+    "period": 333
+  },
+  "train-emu-halt": {
+    "n": 1,
+    "period": 333
+  },
+  "train-bullet-working": {
+    "n": 4,
+    "period": 1333
+  },
+  "train-bullet-done": {
+    "n": 1,
+    "period": 333
+  },
+  "train-bullet-blocked": {
+    "n": 2,
+    "period": 667
+  },
+  "train-bullet-idle": {
+    "n": 1,
+    "period": 333
+  },
+  "train-bullet-halt": {
+    "n": 1,
+    "period": 333
+  },
+  "train-dmu-working": {
+    "n": 4,
+    "period": 1333
+  },
+  "train-dmu-done": {
+    "n": 1,
+    "period": 333
+  },
+  "train-dmu-blocked": {
+    "n": 2,
+    "period": 667
+  },
+  "train-dmu-idle": {
+    "n": 1,
+    "period": 333
+  },
+  "train-dmu-halt": {
+    "n": 1,
+    "period": 333
+  },
+  "train-loco-working": {
+    "n": 4,
+    "period": 1333
+  },
+  "train-loco-done": {
+    "n": 1,
+    "period": 333
+  },
+  "train-loco-blocked": {
+    "n": 2,
+    "period": 667
+  },
+  "train-loco-idle": {
+    "n": 1,
+    "period": 333
+  },
+  "train-loco-halt": {
+    "n": 1,
+    "period": 333
+  },
+  "train-tram-working": {
+    "n": 4,
+    "period": 1333
+  },
+  "train-tram-done": {
+    "n": 1,
+    "period": 333
+  },
+  "train-tram-blocked": {
+    "n": 2,
+    "period": 667
+  },
+  "train-tram-idle": {
+    "n": 1,
+    "period": 333
+  },
+  "train-tram-halt": {
+    "n": 1,
+    "period": 333
   }
 };

@@ -103,8 +103,37 @@ const SUB_ASSETS = {
   jelly: sub("sub/sea", [0, 0, 20, 18], { opts: { kind: "jelly" }, ...sheet(12, 2) }),
 };
 
+// Dispatch: the track map's trains, one sheet per status in its livery (the dispatch mod plays them with kit/sprite.js).
+// Each model keeps its own livery whatever it's doing (darkest to lightest); the status shows only in its lamps,
+// windows and doors, and in the signal beside it.
+const LIVERY = {
+  emu: ["#7a4a12", "#c8801e", "#ffb03a", "#ffe0a0"], // orange belt on stainless
+  bullet: ["#1a3a7a", "#2a5ab8", "#4a8ae8", "#a8c8ff"], // blue stripe on white
+  dmu: ["#4a1a1a", "#7a2a24", "#a8423a", "#d87a6a"], // maroon under cream
+  loco: ["#1a3a2a", "#2a5a3e", "#3e7a56", "#7ab896"], // a green locomotive
+  tram: ["#0e4a52", "#1a6e78", "#2a9aa4", "#8ad8de"], // teal skirt and roof
+};
+const LOOKS = { working: sheet(4), done: still, blocked: sheet(2), idle: still };
+const train = (model, state, palette, frames) => ({ fx: "dispatch/train", crop: [-62, -34, 63, 1], mod: "dispatch", alpha: true, edge: 0, opts: { model, state, palette }, ...frames });
+const scene = (crop, opts) => ({ fx: "dispatch/scene", crop, mod: "dispatch", alpha: true, edge: 0, png: true, opts });
+// every model in every look; `halt` is a running train standing at the platform, its wheels still
+export const TRAIN_MODELS = ["emu", "bullet", "dmu", "loco", "tram"];
+const DISPATCH_ASSETS = {
+  ...Object.fromEntries(TRAIN_MODELS.flatMap((model) => [
+    ...Object.entries(LOOKS).map(([state, frames]) => [`train-${model}-${state}`, train(model, state, LIVERY[model], frames)]),
+    [`train-${model}-halt`, train(model, "working", LIVERY[model], still)],
+  ])),
+  // the scenery: strips wider than any lane (the mod cuts them), the shed, the platform, a signal per aspect
+  "scene-back": scene([0, -90, 640, 0], { kind: "back" }),
+  "scene-track": scene([0, -3, 640, 14], { kind: "track" }),
+  ...Object.fromEntries(["brick", "steel", "timber", "sawtooth"].map((style) => [`scene-depot-${style}`, scene([0, -68, 150, 0], { kind: "depot", style })])),
+  ...Object.fromEntries(["modern", "heritage", "rural", "glass"].map((style) => [`scene-platform-${style}`, scene([0, -57, 150, 0], { kind: "platform", style })])),
+  ...Object.fromEntries(["red", "yellow", "green", "dark"].map((aspect) => [`signal-${aspect}`, scene([-3, -51, 4, 0], { kind: "signal", aspect })])),
+};
+
 export const ASSETS = {
   ...SUB_ASSETS,
+  ...DISPATCH_ASSETS,
 };
 
 // What kit/sprite.js needs per sheet; a partial bake keeps the rest.
@@ -254,6 +283,7 @@ function bakeSweep() {
 }
 
 mkdirSync(join(MODS, "sub", "assets"), { recursive: true });
+mkdirSync(join(MODS, "dispatch", "assets"), { recursive: true });
 const pick = process.argv.slice(2);
 for (const [name, a] of Object.entries(ASSETS)) if (!pick.length || pick.includes(name)) await bake(name, a);
 if (!pick.length || pick.includes("frames")) await bakeFrames();

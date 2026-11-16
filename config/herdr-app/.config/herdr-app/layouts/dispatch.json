@@ -1,0 +1,63 @@
+{
+  "id": "root",
+  "type": "column",
+  "theme": "dispatch",
+  "ui_font": "Cubic 11",
+  "preview": "layouts/dispatch.svg",
+  "titlebar": "none",
+  "traffic_lights": [24, 26],
+  "background": "#07090b",
+  "terminal_padding": [16, 18],
+  "terminal_opacity": 0.35,
+  "padding": [10, 10],
+  "gap": 10,
+  "children": [
+    {
+      "id": "board",
+      "type": "block",
+      "size": { "px": 236 },
+      "window_drag": true,
+      "radius": 10,
+      "content": { "mod": "dispatch", "props": { "role": "board" } }
+    },
+    {
+      "id": "middle",
+      "type": "row",
+      "gap": 10,
+      "resizable": true,
+      "children": [
+        {
+          "id": "main",
+          "type": "block",
+          "background": { "image": "mods/dispatch/assets/platform.png", "fit": "cover" },
+          "radius": 10,
+          "content": {
+            "tab": "active",
+            "pane": {
+              "gap": 8,
+              "radius": 10,
+              "lone": true,
+              "border": { "width": 2, "color": "#00000000" },
+              "focus": { "width": 2, "color": "#e8a03a" },
+              "header": {
+                "content": { "mod": "dispatch", "props": { "role": "pane" } },
+                "height": 44,
+                "position": "top",
+                "reveal": "always"
+              }
+            }
+          }
+        },
+        {
+          "id": "tracks",
+          "type": "block",
+          "size": { "px": 440 },
+          "min": 400,
+          "max": 640,
+          "radius": 10,
+          "content": { "mod": "dispatch", "props": { "role": "tracks" } }
+        }
+      ]
+    }
+  ]
+}

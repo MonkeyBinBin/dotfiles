@@ -12,7 +12,7 @@ const SHARP = 50, EXACT_SHARP = 1000; // gate steepness: a gate's ramp lasts 1/S
 
 export function sprite(name, w, h = w, opts = {}) {
   const { n, period } = SPRITES[name] ?? { n: 1 }; // an unknown name draws nothing, as a missing image does
-  const src = `${ART}/${name}.png`;
+  const src = `${opts.art ?? ART}/${name}.png`; // `art`: another mod's assets folder
   if (n === 1) return image(src).w(w).h(h);
   // Where a gate stands at its frame's edge: fully open for the overlap, halfway when `exact`.
   const S = n * (opts.exact ? EXACT_SHARP : SHARP), edge = opts.exact ? 0.5 : 1, wave = (from, to) => ({ from, to, period: opts.period ?? period, easing: "linear" });
