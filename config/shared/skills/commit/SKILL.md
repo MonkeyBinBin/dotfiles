@@ -90,12 +90,7 @@ git log -5 --pretty=format:"%s%n%b" 2>/dev/null || echo "（初始專案，預�
 
 ## 參數支援
 
-若使用者提供參數：
-- `$1`: type（例如 feat, fix, docs）
-- `$2`: scope（例如 auth, api, ui）
-- `$3`: message 主旨
-
-有參數則使用，無則根據 diff 自動判斷。
+使用者呼叫時可依序帶 type、scope、主旨（例如 `/commit fix auth 修正登入逾時`）。有帶就照用，沒帶的部分根據 diff 判斷。
 
 ## 嚴格禁止規則
 
