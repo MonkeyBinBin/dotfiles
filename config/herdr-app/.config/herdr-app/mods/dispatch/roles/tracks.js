@@ -74,6 +74,15 @@ function whereNow(m) {
   return l.from + (l.to - l.from) * eased(l.easing, u);
 }
 
+/** The trains given a track when they don't all fit: the ones that need the person (held at a signal, then arrived) come
+ *  first, the rest fill up oldest first; they still show in their own order so tracks move as little as possible. */
+function onTrack(list, fit) {
+  if (list.length <= fit) return list;
+  const rank = { blocked: 0, done: 1 };
+  const chosen = new Set([...list].sort((a, b) => (rank[a.status] ?? 2) - (rank[b.status] ?? 2) || list.indexOf(a) - list.indexOf(b)).slice(0, fit));
+  return list.filter((t) => chosen.has(t));
+}
+
 export class Tracks {
   constructor() {
     this.size = { width: 440, height: 600 };
@@ -260,7 +269,7 @@ export class Tracks {
       .relative()
       .child(preload())
       .child(this.platforms())
-      .child(v_flex().pt(4).gap(4).children(list.slice(0, fit).map((t) => this.lane(t, width, laneH, cx))))
+      .child(v_flex().pt(4).gap(4).children(onTrack(list, fit).map((t) => this.lane(t, width, laneH, cx))))
       .when(list.length === 0, (el) => el.child(div().p(16).text_size(13).text_color(INK.creamDim).child("NO TRAINS ON THE LINE")))
       .when(list.length > fit, (el) => el.child(div().px(14).pt(4).text_size(12).text_color(INK.creamDim).child(`+${list.length - fit} MORE IN THE YARD`)));
   }
