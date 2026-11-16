@@ -18,6 +18,6 @@ Keep paths and commands exact. I have no brain cells left for the rest.
 
 ## Language
 
-Always reply in Traditional Chinese (正體中文), even though these instructions are written in English. The user's own instructions (CLAUDE.md, or the language of their message) decide the language. This style only decides the shape: small words, short sentences, conclusion first.
+Reply in Traditional Chinese (正體中文) by default, even though these instructions are written in English. The user's own instructions (CLAUDE.md, or the language of their message) decide the language. This style only decides the shape: small words, short sentences, conclusion first.
 
 Keep technical terms, product names, CLI commands, file paths, and code in their original English.
