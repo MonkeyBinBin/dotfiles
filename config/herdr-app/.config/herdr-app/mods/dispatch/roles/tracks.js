@@ -32,6 +32,8 @@ const DEPOT_STYLES = ["brick", "steel", "timber", "sawtooth"];
 
 // How a train moves: braking into a stand, pulling away, shunting; ms per px of travel, clamped.
 const ARRIVE_MS = 5600, DWELL_MS = 2800, DEPART_MS = 4400, HEADWAY_MS = 1800, LEG_LEAD = 60;
+// a track opening for a new agent, or closing after its agent has gone and its train has pulled out
+const OPEN_MS = 500, CLOSE_MS = 600, LANE_GAP = 4;
 const shuntMs = (dx) => Math.max(1600, Math.min(6000, Math.abs(dx) * 12));
 
 const piece = (name, { w, h }) => image(`${ART}/${name}.png`).w(w).h(h);
@@ -78,7 +80,7 @@ function whereNow(m) {
  *  first, the rest fill up oldest first; they still show in their own order so tracks move as little as possible. */
 function onTrack(list, fit) {
   if (list.length <= fit) return list;
-  const rank = { blocked: 0, done: 1 };
+  const rank = { blocked: 0, done: 1, gone: 3 };
   const chosen = new Set([...list].sort((a, b) => (rank[a.status] ?? 2) - (rank[b.status] ?? 2) || list.indexOf(a) - list.indexOf(b)).slice(0, fit));
   return list.filter((t) => chosen.has(t));
 }
@@ -88,6 +90,9 @@ export class Tracks {
     this.size = { width: 440, height: 600 };
     // per train: where it's headed (px), its current leg, which sprite, its journey's token and run number
     this.runs = new Map();
+    this.order = []; // addresses, first seen first
+    this.lastSeen = new Map(); // address -> its train as last seen, for a gone agent's track
+    this.started = false;
     this.platformOf = new Map();
     this.nextPlatform = Math.floor(Math.random() * PLATFORM_STYLES.length);
     this.depotOf = new Map();
@@ -102,7 +107,13 @@ export class Tracks {
     const key = t.agent.address, st = t.status, W = this.size.width, at = spots(W).at;
     let m = this.runs.get(key);
     const first = !m;
-    if (!m) this.runs.set(key, (m = { x: at.offLeft, ms: 1, easing: "linear", leg: null, look: "working", token: 0, run: 0, model: modelOf(key) }));
+    if (!m) this.runs.set(key, (m = { x: at.offLeft, ms: 1, easing: "linear", leg: null, look: "working", token: 0, run: 0, model: modelOf(key),
+      born: this.started, grown: !this.started }));
+    // a track for a new agent opens out first
+    if (first && this.started) cx.timer.after(30, (cx) => {
+      m.grown = true;
+      cx.notify();
+    });
     m.status = st;
     const token = ++m.token;
     // each leg's timer hands its own cx to the next (a cx must never be kept for later)
@@ -139,6 +150,25 @@ export class Tracks {
     const leaving = m.leg && m.leg.to >= at.offRight - 4 && Date.now() < m.leg.start + m.leg.ms;
     const after = leaving ? m.leg.start + m.leg.ms - Date.now() + HEADWAY_MS : 0;
 
+    if (st === "gone") {
+      // the agent has gone: its train pulls out to the right from wherever it is, then the track closes up
+      const close = (cx) => {
+        m.closing = true;
+        later(cx, CLOSE_MS, () => (m.closed = true));
+      };
+      if (leaving) later(cx, Math.max(0, after - HEADWAY_MS) + 200, close);
+      else if (onLine) {
+        freeze();
+        m.look = "working";
+        later(cx, LEG_LEAD, (cx) => {
+          const ms = Math.round(DEPART_MS * Math.min(1, (at.offRight - m.x) / (at.offRight - at.platform)) + 600);
+          go(at.offRight, ms, "ease-in");
+          later(cx, ms + 200, close);
+        });
+      } else close(cx);
+      return;
+    }
+
     if (st === "working") {
       // a service: run in braking to a stand at the platform, stand there, pull away, the next one after a headway
       const service = (cx) => {
@@ -170,8 +200,8 @@ export class Tracks {
     }
 
     const target = at[{ done: "platform", blocked: "signal", idle: "depot" }[st]];
-    if (first) {
-      // already there when the board opens
+    if (first && !this.started) {
+      // already there when the board opens (a train for a new agent runs in instead)
       Object.assign(m, { x: target, ms: 1 });
       return stand(cx, st);
     }
@@ -233,34 +263,56 @@ export class Tracks {
     const resting = { done: "platform", blocked: "signal", idle: "depot" }[t.status];
     if (resting && m.look === t.status && (!m.leg || Date.now() > m.leg.start + m.leg.ms)) m.x = at[resting];
     const rail = h - RAIL_FROM_BOTTOM;
-    const color = STATUS_INK[t.status];
+    const gone = t.status === "gone";
+    const color = gone ? INK.steelDim : STATUS_INK[t.status];
     // the train: a new element per run, so a fresh run starts off the left end instead of sliding back there
     const consist = div().id(`train-${key}-${m.run}`).absolute().top(rail - WHEELS).left(Math.round(m.x))
       .transition("left", { duration: m.ms, easing: m.easing })
       .child(train(m.model, m.look));
-    return div().id(`lane-${key}`).relative().w(w).h(h).flex_none().overflow_hidden()
-      .on_click(() => run("agent.focus", { terminal: key }))
+    const lane = div().id(`lane-${key}`).absolute().left(0).top(LANE_GAP).w(w).h(h).overflow_hidden()
+      .when(!gone, (el) => el.on_click(() => run("agent.focus", { terminal: key })))
       .child(div().absolute().left(0).top(rail - BACK.h).child(piece("scene-back", BACK)))
       .child(div().absolute().left(0).top(rail - DEPOT.h).child(piece(`scene-depot-${this.depot(key)}`, DEPOT)))
       .child(div().absolute().left(platformX).top(rail - PLATFORM.h).child(piece(`scene-platform-${this.platform(key)}`, PLATFORM)))
-      .child(div().absolute().left(signalX).top(rail + SIGNAL.foot - SIGNAL.h).child(piece(`signal-${ASPECT[t.status]}`, SIGNAL)))
+      .child(div().absolute().left(signalX).top(rail + SIGNAL.foot - SIGNAL.h).child(piece(`signal-${ASPECT[t.status] ?? "dark"}`, SIGNAL)))
       .child(div().absolute().left(0).top(rail - TRACK.above).child(piece("scene-track", TRACK)))
       .child(consist)
       // the train's code, on a plate at the track's corner
       .child(div().absolute().left(6).top(4).text_size(11).px(4).rounded(2).bg("#07090bcc").border_1().border_color(color).text_color(color).child(t.code))
       .hover((s) => s.opacity(0.92));
+    // the slot the track sits in: it opens out for a new agent and closes up after one has gone, so the tracks
+    // below slide rather than jump
+    const open = !m.closing && m.grown;
+    return div().id(`slot-${key}`).relative().w(w).flex_none().overflow_hidden()
+      .h(open ? h + LANE_GAP : 0).opacity(open ? 1 : 0)
+      .transition("height", { duration: m.closing ? CLOSE_MS : OPEN_MS, easing: "ease-in-out" })
+      .transition("opacity", { duration: m.closing ? CLOSE_MS : OPEN_MS, easing: "ease-in-out" })
+      .child(lane);
   }
 
   render(cx) {
-    const list = trains();
+    const live = trains();
+    const byKey = new Map(live.map((t) => [t.agent.address, t]));
+    // tracks in the order their agents first showed up; a gone agent's track stays until it has closed
+    for (const t of live) {
+      if (!this.order.includes(t.agent.address)) this.order.push(t.agent.address);
+      this.lastSeen.set(t.agent.address, t);
+    }
+    this.order = this.order.filter((k) => {
+      if (byKey.has(k)) return true;
+      const m = this.runs.get(k);
+      if (m && !m.closed) return true; // still pulling out or closing up
+      // closed, or it never had a track (it was in the yard): let it go
+      this.runs.delete(k);
+      this.lastSeen.delete(k);
+      return false;
+    });
+    const list = this.order.map((k) => byKey.get(k) ?? { ...this.lastSeen.get(k), status: "gone" });
     const { width, height } = this.size;
     const room = height - PLATFORMS_H - 8;
-    const fit = Math.max(1, Math.floor(room / LANE_MIN));
-    const laneH = Math.max(LANE_MIN, Math.min(LANE_H, Math.floor(room / Math.max(1, Math.min(list.length, fit)))));
-    // forget the journeys of trains that left
-    const here = new Set(list.map((t) => t.agent.address));
-    for (const k of this.runs.keys()) if (!here.has(k)) this.runs.delete(k);
-    return v_flex().id("tracks").size_full().bg(INK.board).overflow_hidden()
+    const fit = Math.max(1, Math.floor(room / (LANE_MIN + LANE_GAP)));
+    const laneH = Math.max(LANE_MIN, Math.min(LANE_H, Math.floor(room / Math.max(1, Math.min(list.length, fit))) - LANE_GAP));
+    const view = v_flex().id("tracks").size_full().bg(INK.board).overflow_hidden()
       .on_size_change((size, cx) => {
         if (size.width === this.size.width && size.height === this.size.height) return;
         this.size = size;
@@ -269,8 +321,11 @@ export class Tracks {
       .relative()
       .child(preload())
       .child(this.platforms())
-      .child(v_flex().pt(4).gap(4).children(onTrack(list, fit).map((t) => this.lane(t, width, laneH, cx))))
+      .child(v_flex().children(onTrack(list, fit).map((t) => this.lane(t, width, laneH, cx))))
       .when(list.length === 0, (el) => el.child(div().p(16).text_size(13).text_color(INK.creamDim).child("NO TRAINS ON THE LINE")))
       .when(list.length > fit, (el) => el.child(div().px(14).pt(4).text_size(12).text_color(INK.creamDim).child(`+${list.length - fit} MORE IN THE YARD`)));
+    // trains seen from now on are new agents: their tracks open and their trains run in
+    this.started = true;
+    return view;
   }
 }
