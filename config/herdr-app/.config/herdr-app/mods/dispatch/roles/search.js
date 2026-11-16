@@ -93,7 +93,7 @@ export class Search {
 
   row(r, i, now, drawn) {
     const on = i === this.sel, st = r.s.status ?? "idle";
-    const plate = tile({ ch: platformLabel(r.idx), seq: null }, { ...PLAT, color: on ? INK.plateText : INK.cream, ...(on ? { bg: INK.plate, bgLo: "#d08c2c" } : {}) });
+    const plate = tile({ ch: platformLabel(r.idx), seq: null }, { ...PLAT, color: on ? INK.plateText : INK.cream, ...(on ? { bg: INK.plate, bgLo: INK.plateLo } : {}) });
     return h_flex().id(`sr-${r.s.id}`).h(SEARCH.rowH).px(6).gap(10).items_center().rounded(4)
       .when(on, (el) => el.bg("#e8a03a1f"))
       .on_hover((hovered, cx) => {

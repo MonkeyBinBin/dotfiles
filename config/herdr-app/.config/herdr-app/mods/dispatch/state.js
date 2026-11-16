@@ -10,7 +10,7 @@ export const INK = {
   cream: "#f2ead8", creamDim: "#8a8476", stopFlap: "#3a0d0a", stopFlapLo: "#45110d",
   amber: "#ffb03a", amberDim: "#8a5c1c", amberFaint: "#3a2a12",
   green: "#5cf08a", yellow: "#ffe05a", red: "#ff4a3a", redDeep: "#4a0e0a", steel: "#6a8aa8", steelDim: "#34465a",
-  rail: "#5a4a36", plate: "#e8a03a", plateText: "#1e1406",
+  rail: "#5a4a36", plate: "#e8a03a", plateLo: "#d08c2c", plateText: "#1e1406",
 };
 
 // Who needs the person first.

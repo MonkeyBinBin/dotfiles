@@ -36,8 +36,8 @@ function linkFor(rel) {
 const links = new Set(), mods = new Set();
 let timer = null;
 
-// the mods built on the shared kit: the sub's and dispatch
-const usesKit = (name) => name.startsWith("sub") || name === "dispatch";
+// the mods built on the shared kit: the sub's and dispatch's
+const usesKit = (name) => name.startsWith("sub") || name.startsWith("dispatch");
 
 function copyMod(name) {
   // the shared kit goes into every mod that uses it (mods can't import across folders), the source copy too

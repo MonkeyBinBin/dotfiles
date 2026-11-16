@@ -49,6 +49,26 @@
           }
         },
         {
+          "id": "panel",
+          "type": "column",
+          "hidden": true,
+          "size": { "px": 400 },
+          "min": 300,
+          "max": 900,
+          "radius": 10,
+          "children": [
+            {
+              "id": "panel-body",
+              "type": "stack",
+              "active": "files",
+              "children": [
+                { "id": "files", "type": "block", "content": { "mod": "dispatch-files" } },
+                { "id": "changes", "type": "block", "content": { "mod": "dispatch-changes" } }
+              ]
+            }
+          ]
+        },
+        {
           "id": "tracks",
           "type": "block",
           "size": { "px": 440 },

@@ -1,0 +1,9 @@
+{
+  "place": "none",
+  "title": "Changes",
+  "cloned_from": {
+    "name": "changes",
+    "version": "0.1.12"
+  },
+  "focusable": true
+}

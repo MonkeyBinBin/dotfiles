@@ -10,9 +10,12 @@
 //   idle     DEPOT        in steel blue
 // A row's click goes to that agent; a platform's click shows that space (hover it for the space's name). A click on the
 // line, or cmd-p (keys.json: dispatch.search), drops the line search from it.
+// Left of the clock, FILES and CHANGES on small flaps (amber while open) open the side panel between the pane and the
+// track map (dispatch-files / dispatch-changes, the waybill); cmd-shift-e / cmd-shift-g (dispatch.files, .changes) too.
+// Each space remembers which panel it had open.
 import { div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { spaces, run, playSound, checking, setAgentOrder, openOverlay, closeOverlay, nextCommand, shared, setShared } from "herdr";
+import { spaces, run, playSound, checking, setAgentOrder, openOverlay, closeOverlay, nextCommand, shared, setShared, layout } from "herdr";
 import { OPEN_KEY, SEARCH, searchHeight } from "./search.js";
 import { Flaps, flapText, pages, tile } from "../flap.js";
 import { ICON, INK, LAMP, STATUS_INK, WORD, boardOrder, since, trains } from "../state.js";
@@ -36,6 +39,19 @@ const SOUND_GAP_MS = 1500;
 const PLAT = { w: 22, h: 28, size: 18, gap: 6, perRow: 9, rows: 2 };
 const LINE_COLS = 13;
 const LINE_PAGE_MS = 3000; // a line name too long for its flaps turns over between its parts this often
+// the side panels, and their keys' small flaps (Cubic 11 stays crisp at 11 px)
+const PANELS = [["files", "FILES", "⇧⌘E"], ["changes", "CHANGES", "⇧⌘G"]];
+const KEY_LOOK = { w: 13, h: 20, size: 11, gap: 1, color: INK.cream };
+const KEY_LIT = { ...KEY_LOOK, color: INK.plateText, bg: INK.plate, bgLo: INK.plateLo };
+
+function find(node, id) {
+  if (node?.id === id) return node;
+  for (const child of node?.children ?? []) {
+    const found = find(child, id);
+    if (found) return found;
+  }
+  return null;
+}
 
 const cellsWidth = (n, look = LOOK) => n * look.w + (n - 1) * look.gap;
 
@@ -46,9 +62,14 @@ export class Board {
     // a search left open by an earlier run is gone now; forget it
     cx.timer.after(0, () => setShared(OPEN_KEY, null));
     cx.spawn(async () => {
-      for (;;) if ((await nextCommand()) === "search") this.toggleSearch(true);
+      for (;;) {
+        const c = await nextCommand();
+        if (c === "search") this.toggleSearch(true);
+        else if (PANELS.some(([id]) => id === c)) this.togglePanel(c);
+      }
     });
     this.size = { width: 1200, height: 230 };
+    try { this.panels = JSON.parse(localStorage.getItem("dispatch.panels") ?? "{}"); } catch { this.panels = {}; }
     this.heard = null;
     this.soundAt = 0;
     // the TIME column and the clock move on the minute
@@ -151,12 +172,60 @@ export class Board {
       .child(flapText(this.flaps, "line", parts[this.linePage % parts.length], LINE_COLS, now, drawn, LOOK));
   }
 
+  togglePanel(id) {
+    const root = layout(), panel = find(root, "panel");
+    if (panel && !panel.hidden && find(root, "panel-body")?.active === id) return run("layout.hide", { id: "panel" });
+    run("layout.select", { stack: "panel-body", child: id });
+    run("layout.show", { id: "panel" });
+  }
+
+  // The side panel is remembered per space (as on the sub's tab bar): switching shows that space's choice (closed if it
+  // never had one), and opening or closing it records it.
+  syncPanel(space, panel, body) {
+    if (!space || !panel) return;
+    const now = panel.hidden ? null : body?.active ?? null;
+    if (space.id !== this.space) {
+      const first = this.space === undefined;
+      this.space = space.id; this.pending = null;
+      if (!(first && !(space.id in this.panels))) {
+        const stored = this.panels[space.id] ?? null, want = PANELS.some(([id]) => id === stored) ? stored : null;
+        if (want !== now) {
+          this.pending = { want, until: Date.now() + 1000 };
+          if (want) { run("layout.select", { stack: "panel-body", child: want }); run("layout.show", { id: "panel" }); }
+          else run("layout.hide", { id: "panel" });
+          return;
+        }
+      }
+    }
+    // Until the restore lands (or something else won), the old state isn't a choice.
+    if (this.pending) {
+      if (this.pending.want !== now && Date.now() < this.pending.until) return;
+      this.pending = null;
+    }
+    if (this.panels[space.id] === now) return;
+    this.panels[space.id] = now;
+    try { localStorage.setItem("dispatch.panels", JSON.stringify(this.panels)); } catch {}
+  }
+
+  // The panel keys left of the clock: a word on small flaps each, amber while its panel is open.
+  panelKeys(now, drawn) {
+    const root = layout(), panel = find(root, "panel"), body = find(root, "panel-body");
+    this.syncPanel(spaces().find((sp) => sp.active), panel, body);
+    const open = panel && !panel.hidden ? body?.active : null;
+    return h_flex().gap(8).items_center().children(PANELS.map(([id, word, keys]) =>
+      div().id(`panel-${id}`).flex_none().tooltip(`${word[0]}${word.slice(1).toLowerCase()} (${keys})`)
+        .hover((st) => st.opacity(0.85))
+        .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+        .on_click(() => this.togglePanel(id))
+        .child(flapText(this.flaps, `panel-${id}`, word, word.length, now, drawn, open === id ? KEY_LIT : KEY_LOOK))));
+  }
+
   // A platform: a numbered flap tile (amber for the line you're on) over the space's status lamp.
   platform(space, n) {
     const lit = space.active;
     const label = n < 9 ? String(n + 1) : String.fromCharCode(65 + n - 9); // 1..9, then A, B, ...
     const face = tile({ ch: label, seq: null }, { w: PLAT.w, h: PLAT.h, size: PLAT.size, color: lit ? INK.plateText : INK.cream,
-      ...(lit ? { bg: INK.plate, bgLo: "#d08c2c" } : {}) });
+      ...(lit ? { bg: INK.plate, bgLo: INK.plateLo } : {}) });
     return v_flex().id(`plat-${space.id}`).flex_none().gap(3).items_center()
       .tooltip(space.name)
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
@@ -205,7 +274,7 @@ export class Board {
       })
       .child(v_flex().flex_1().min_w(0).overflow_hidden().child(this.head(destCols)).children(rows))
       .child(v_flex().w(SIDE_W).flex_none().pt(10).gap(8)
-        .child(h_flex().justify_end().child(this.clock(now, drawn)))
+        .child(h_flex().justify_between().items_center().child(this.panelKeys(now, drawn)).child(this.clock(now, drawn)))
         .child(this.line(cx, now, drawn))
         .child(this.platforms()));
     this.flaps.settle(cx, now, drawn);
