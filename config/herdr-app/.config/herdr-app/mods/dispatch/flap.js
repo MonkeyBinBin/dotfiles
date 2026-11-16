@@ -29,6 +29,25 @@ export function glyphs(text, cols) {
   return out;
 }
 
+/** Text too long for `cols` columns, split into pages that each fit (breaking after a space, dash or underscore where
+ *  one is near the end of a page), for a board that turns over between them. Text that fits is one page. */
+export function pages(text, cols) {
+  const chars = Array.from(String(text ?? "").toUpperCase());
+  const width = (list) => list.reduce((n, ch) => n + (WIDE.test(ch) ? 2 : 1), 0);
+  if (width(chars) <= cols) return [chars.join("")];
+  const out = [];
+  let rest = chars;
+  while (rest.length) {
+    let take = 0, used = 0;
+    while (take < rest.length && used + (WIDE.test(rest[take]) ? 2 : 1) <= cols) used += WIDE.test(rest[take++]) ? 2 : 1;
+    // prefer to break just after a separator in the page's second half
+    for (let k = take; k > Math.ceil(take * 0.5) && take < rest.length; k--) if (/[\s\-_/.]/.test(rest[k - 1])) { take = k; break; }
+    out.push(rest.slice(0, take).join("").trim());
+    rest = rest.slice(take);
+  }
+  return out;
+}
+
 // The flaps between two characters: forward through the drum, or a short shuffle for one that isn't on it.
 function run(from, to) {
   const a = DRUM.indexOf(from), b = DRUM.indexOf(to);

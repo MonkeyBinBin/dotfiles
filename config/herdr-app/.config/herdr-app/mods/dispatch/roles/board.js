@@ -1,8 +1,9 @@
 // The departure board across the top: a Solari split-flap board, one row per agent (TRAIN, DESTINATION, STATUS, TIME),
 // whoever needs the person first at the top. When a row changes, its cells turn over to the new words with the clatter
 // of the flaps; rows that trade places turn too. On the right a flap clock, then the line (space) you're on as a row of
-// flaps that turns over when you change line, and the platforms: a numbered flap tile per space with its status lamp
-// under it (the current one lit amber), seven to a row, two rows at most, then +N.
+// flaps that turns over when you change line (a name too long for it turns over between its parts), and the
+// platforms: a numbered flap tile per space with its status lamp under it (the current one lit amber), nine to a row,
+// two rows at most, then +N.
 //   working  RUNNING      in amber, the train icon rolling
 //   done     ARRIVED      in yellow
 //   blocked  SIGNAL STOP  in red on red flaps, the row and its lamp pulsing
@@ -11,7 +12,7 @@
 import { div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { spaces, run, playSound, checking, setAgentOrder } from "herdr";
-import { Flaps, flapText, tile } from "../flap.js";
+import { Flaps, flapText, pages, tile } from "../flap.js";
 import { ICON, INK, LAMP, STATUS_INK, WORD, boardOrder, since, trains } from "../state.js";
 
 const LOOK = { w: 16, h: 28, size: 22, gap: 2, color: INK.cream };
@@ -23,14 +24,15 @@ const TIERS = [
   { w: 11, h: 18, size: 11, gap: 1, row: 21, icon: 16 },
 ].map((t) => ({ ...t, color: INK.cream }));
 const HEAD_H = 30;
-const SIDE_W = 232;
+const SIDE_W = 320;
 const COLS = { code: 3, status: 11, time: 3 };
 const ICON_W = 30;
 const GAP = 14; // between the columns
 const SOUND_GAP_MS = 1500;
 // the platforms: tiles per row, rows at most
-const PLAT = { w: 22, h: 28, size: 18, gap: 6, perRow: 7, rows: 2 };
-const LINE_COLS = 10;
+const PLAT = { w: 22, h: 28, size: 18, gap: 6, perRow: 9, rows: 2 };
+const LINE_COLS = 14;
+const LINE_PAGE_MS = 3000; // a line name too long for its flaps turns over between its parts this often
 
 const cellsWidth = (n, look = LOOK) => n * look.w + (n - 1) * look.gap;
 
@@ -96,11 +98,27 @@ export class Board {
   }
 
   // The line you're on, its name on flaps that turn over when you change line.
-  line(now, drawn) {
-    const here = spaces().find((sp) => sp.active);
+  // A name longer than the flaps turns over between its parts, like a long station name on a Solari board.
+  line(cx, now, drawn) {
+    const name = spaces().find((sp) => sp.active)?.name ?? "";
+    const parts = pages(name, LINE_COLS);
+    if (name !== this.lineName) {
+      this.lineName = name;
+      this.linePage = 0;
+      const token = (this.linePaging = (this.linePaging ?? 0) + 1);
+      if (parts.length > 1) {
+        const turn = (cx) => {
+          if (this.linePaging !== token) return;
+          this.linePage++;
+          cx.notify();
+          cx.timer.after(LINE_PAGE_MS, turn);
+        };
+        cx.timer.after(LINE_PAGE_MS, turn);
+      }
+    }
     return h_flex().gap(8).items_center()
       .child(div().w(30).flex_none().text_size(11).text_color(INK.creamDim).child("LINE"))
-      .child(flapText(this.flaps, "line", here?.name ?? "", LINE_COLS, now, drawn, LOOK));
+      .child(flapText(this.flaps, "line", parts[this.linePage % parts.length], LINE_COLS, now, drawn, LOOK));
   }
 
   // A platform: a numbered flap tile (amber for the line you're on) over the space's status lamp.
@@ -158,7 +176,7 @@ export class Board {
       .child(v_flex().flex_1().min_w(0).overflow_hidden().child(this.head(destCols)).children(rows))
       .child(v_flex().w(SIDE_W).flex_none().pt(10).gap(8)
         .child(h_flex().justify_end().child(this.clock(now, drawn)))
-        .child(this.line(now, drawn))
+        .child(this.line(cx, now, drawn))
         .child(this.platforms()));
     this.flaps.settle(cx, now, drawn);
     return view;
