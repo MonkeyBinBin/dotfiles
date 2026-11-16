@@ -15,12 +15,13 @@ import { spaces, run, playSound, checking, setAgentOrder } from "herdr";
 import { Flaps, flapText, pages, tile } from "../flap.js";
 import { ICON, INK, LAMP, STATUS_INK, WORD, boardOrder, since, trains } from "../state.js";
 
-const LOOK = { w: 16, h: 28, size: 22, gap: 2, color: INK.cream };
+// 18 wide: Cubic 11's widest capitals (M, W) are about 18 px at 22 px and would be clipped by a narrower flap
+const LOOK = { w: 18, h: 28, size: 22, gap: 2, color: INK.cream };
 // The rows' flaps shrink as trains are added, so more of them fit on the board before it says "+N MORE": the largest
 // size that fits every train (Cubic 11 stays crisp at 22 and 11 px). The clock and the line keep the full size.
 const TIERS = [
-  { w: 16, h: 28, size: 22, gap: 2, row: 34, icon: 22 },
-  { w: 14, h: 24, size: 22, gap: 2, row: 28, icon: 20 },
+  { w: 18, h: 28, size: 22, gap: 2, row: 34, icon: 22 },
+  { w: 18, h: 24, size: 22, gap: 2, row: 28, icon: 20 },
   { w: 11, h: 18, size: 11, gap: 1, row: 21, icon: 16 },
 ].map((t) => ({ ...t, color: INK.cream }));
 const HEAD_H = 30;
@@ -31,7 +32,7 @@ const GAP = 14; // between the columns
 const SOUND_GAP_MS = 1500;
 // the platforms: tiles per row, rows at most
 const PLAT = { w: 22, h: 28, size: 18, gap: 6, perRow: 9, rows: 2 };
-const LINE_COLS = 14;
+const LINE_COLS = 13;
 const LINE_PAGE_MS = 3000; // a line name too long for its flaps turns over between its parts this often
 
 const cellsWidth = (n, look = LOOK) => n * look.w + (n - 1) * look.gap;

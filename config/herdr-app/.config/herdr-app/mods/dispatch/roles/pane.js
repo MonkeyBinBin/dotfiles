@@ -15,7 +15,7 @@ import { Flaps, flapText } from "../flap.js";
 
 const WARN_AT = 70, CRITICAL_AT = 90;
 // the arrival board's flaps, and how long each page shows before it turns over
-const FLAP = { w: 15, h: 26, size: 22, gap: 2, color: INK.cream };
+const FLAP = { w: 18, h: 26, size: 22, gap: 2, color: INK.cream }; // wide enough for M and W
 const PAGE_MS = 4000;
 const levelInk = (v) => (v >= CRITICAL_AT ? INK.red : v >= WARN_AT ? INK.amber : INK.green);
 
