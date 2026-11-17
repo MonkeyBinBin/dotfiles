@@ -1,7 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 
 import { closingPills, countEdit, DISPATCH_INK, endingOf, figuresOf, sceneOf } from './register'
-import { boardClockOf, modelOf, runOf, trainBlocksOf, trainCells, trainColumnsOf, TRAIN_MODELS, TRAIN_ROWS } from './train'
+import { boardClockOf, modelOf, runOf, trainSignsOf, trainCells, trainColumnsOf, TRAIN_MODELS, TRAIN_ROWS } from './train'
 import type { Tally } from './register'
 import { ICON_ART } from './icons'
 import { ALARM, clockOf, columnsOf, glowOf, MOTION, pillsOf, rowCells, ROWS, waveAt } from './wave'
@@ -164,7 +164,7 @@ test('the dispatch layout draws this terminal\'s train from the track map, any o
   expect(sceneOf(shared('dispatch', { t5b: 'zeppelin' }), 't5b').kind).toBe('train')
 })
 
-test('every train fills four rows of Raster cells, its clock and blocks beside it', () => {
+test('every train fills four rows of Raster cells, its clock and signs beside it', () => {
   const busy = { op: 'bash', hull: 3, o2: 84, fuel: 95 }
   for (const model of TRAIN_MODELS) {
     const cells = trainCells(model, runOf(MOTION['tool-use'], false), 9, 20_000, busy)
@@ -196,7 +196,7 @@ test('the board clock reads like a station clock, and its room holds the widest 
   expect(at(5_000)).toBe(at(3_599_000))
 })
 
-test('a block for the work, then one for each gauge past amber, critical ones flashing', () => {
-  expect(trainBlocksOf(CALM)).toEqual([])
-  expect(trainBlocksOf({ op: 'edit', hull: 3, o2: 75, fuel: 95 })).toEqual([['edit', 'service', false], ['o2', 'gauge', false], ['fuel', 'gauge', true], ['hull', 'gauge', true]])
+test('a sign for the work, then one for each gauge past amber, critical ones flashing', () => {
+  expect(trainSignsOf(CALM)).toEqual([])
+  expect(trainSignsOf({ op: 'edit', hull: 3, o2: 75, fuel: 95 })).toEqual([['edit', 'service', false], ['o2', 'gauge', false], ['fuel', 'gauge', true], ['hull', 'gauge', true]])
 })

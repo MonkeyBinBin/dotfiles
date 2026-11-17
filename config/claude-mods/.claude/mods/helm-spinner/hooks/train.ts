@@ -1,6 +1,6 @@
 // The spinner in Herdr's dispatch layout, four rows tall: the agent's own train (the model the track map gave its terminal,
 // in that model's livery) in a 2.5D oblique view, with the track, masts and contact wire streaming past at the speed of what's
-// going on; then a departure board's LED clock and blocks for the work and the gauges. Braille, so one colour a cell: each livery is banded to the cell rows
+// going on; then a departure board's LED: the clock and pictograms for the work and the gauges. Braille, so one colour a cell: each livery is banded to the cell rows
 // (roof and the band over the windows, the windows, the band under them), and faces are told apart by a seam of unlit dots.
 // Like the track map's sprites, a train never changes colour: what it's doing shows in its speed, sparks, smoke and lamps.
 import type { Motion, Status } from './wave'
@@ -219,24 +219,21 @@ function drawScene(c: ReturnType<typeof canvas>, model: TrainModel, run: Run, ti
   }
 }
 
-// Beside the train, a departure board's LED: the run's clock in amber 5x7 dot-matrix figures, its colon beating each second;
-// the kind of work as a square service-type block in its own colour (a rapid's orange, a limited express's red...); and the
-// cab's gauges past amber (water = context, coal = rate limit, wrench = failures, the pane header's icons) as blocks the same
-// size, dark with an amber icon, the whole block flashing red at critical. Everything sits centred on the third row. An icon
-// goes on a block's second cell with a blank after it, which the terminal draws it across: the middle two of four.
-const SERVICE: Record<string, [icon: number, ground: number]> = {
-  edit: [0xf040, 0xff8a2a], // pencil, a rapid's orange
-  bash: [0xf120, 0xe8423a], // terminal, a limited express's red
-  read: [0xf002, 0x3aa864], // magnifying glass, a local's green
-  web: [0xf0ac, 0x3a7ae8], // globe, an express's blue
-  agent: [0xf135, 0xa070e8], // rocket, a special's violet
-  gear: [0xf013, 0x8a949e], // any other tool, out-of-service grey
+// Beside the train, a departure board's LED, all of it amber-on-black dot matrix seven dots tall: the run's clock, its colon
+// beating each second; the kind of work as a pictogram lit in its service type's colour (a rapid's orange, a limited
+// express's red...); and the cab's gauges past amber (water = context, coal = rate limit, a warning sign for failures) as
+// amber pictograms, red and blinking at critical. Each sign has a cell's gap before it, so no two share a cell's one colour.
+const SERVICE: Record<string, number> = {
+  edit: 0xff8a2a, // a rapid's orange
+  bash: 0xe8423a, // a limited express's red
+  read: 0x3aa864, // a local's green
+  web: 0x3a7ae8, // an express's blue
+  agent: 0xa070e8, // a special's violet
+  gear: 0x8a949e, // any other tool, out-of-service grey
 }
-const GAUGES: Record<'o2' | 'fuel' | 'hull', number> = { o2: 0xf043, fuel: 0xf06d, hull: 0xf0ad } // tint, fire, wrench
 const WARN_AT = 70, CRITICAL_AT = 90, HULL_AT = 3
-const BLOCK_COLUMNS = 4
-const UPPER_HALF = 0x2580, LOWER_HALF = 0x2584
-const WHITE_ICON = 0xffffff
+const SIGN_COLUMNS = 4 // eight dots of room for a seven-dot pictogram
+const SIGN_TOP = 7 // the top dot row of figures and pictograms: centred on the third row
 
 // The figures, five dots wide and seven tall; the colon one wide.
 const FONT: Record<string, string[]> = {
@@ -247,11 +244,22 @@ const FONT: Record<string, string[]> = {
   8: ['01110', '10001', '10001', '01110', '10001', '10001', '01110'], 9: ['01110', '10001', '10001', '01111', '00001', '00010', '01100'],
   ':': ['0', '0', '1', '0', '1', '0', '0'],
 }
+// The pictograms, seven by seven: the work's kinds, then the gauges (o2 water, fuel coal, hull a warning sign).
+const PICTOGRAMS: Record<string, string[]> = {
+  edit: ['0000011', '0000111', '0001110', '0011100', '0111000', '1010000', '1100000'], // pencil
+  bash: ['1000000', '0100000', '0010000', '0100000', '1000000', '0000000', '0001111'], // prompt
+  read: ['0111000', '1000100', '1000100', '1000100', '0111100', '0000010', '0000001'], // magnifying glass
+  web: ['0011100', '0101010', '1001001', '1111111', '1001001', '0101010', '0011100'], // globe
+  agent: ['0001000', '0011100', '0010100', '0011100', '0111110', '1011101', '0010100'], // rocket
+  gear: ['0001000', '0111110', '0100010', '1100011', '0100010', '0111110', '0001000'], // gear
+  o2: ['0001000', '0010100', '0100010', '1000001', '1000001', '0100010', '0011100'], // water drop
+  fuel: ['0001000', '0011000', '0111100', '0111110', '1111011', '1110011', '0111110'], // flame
+  hull: ['0001000', '0010100', '0010100', '0101010', '0100010', '1001001', '1111111'], // warning sign
+}
 const glyphWidth = (ch: string) => FONT[ch]![0]!.length
 const dotsWide = (text: string) => [...text].reduce((n, ch) => n + glyphWidth(ch) + 1, -1)
-// Room for the widest reading, 59:59, so the row keeps its width as the clock runs; shorter readings sit right, by the blocks.
+// Room for the widest reading, 59:59, so the row keeps its width as the clock runs; shorter readings sit right, by the signs.
 const CLOCK_COLUMNS = Math.ceil(dotsWide('00:00') / 2)
-const CLOCK_TOP = 7 // the figures' top dot row: centred on the third row with the blocks
 
 /** A station clock's reading: minutes and seconds, then hours and minutes past the hour. */
 export function boardClockOf(ms: number) {
@@ -259,24 +267,32 @@ export function boardClockOf(ms: number) {
   return h > 0 ? `${h}:${String(m).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}`
 }
 
-export type Block = [icon: string, kind: 'service' | 'gauge', isCritical: boolean]
-/** The blocks beside the clock: the work, then each gauge past amber. */
-export function trainBlocksOf(status: Status): Block[] {
-  const blocks: Block[] = []
-  if (status.op && SERVICE[status.op]) blocks.push([status.op, 'service', false])
-  if (status.o2 >= WARN_AT) blocks.push(['o2', 'gauge', status.o2 >= CRITICAL_AT])
-  if (status.fuel >= WARN_AT) blocks.push(['fuel', 'gauge', status.fuel >= CRITICAL_AT])
-  if (status.hull >= HULL_AT) blocks.push(['hull', 'gauge', true])
-  return blocks
+export type Sign = [pictogram: string, kind: 'service' | 'gauge', isCritical: boolean]
+/** The signs beside the clock: the work, then each gauge past amber. */
+export function trainSignsOf(status: Status): Sign[] {
+  const signs: Sign[] = []
+  if (status.op && SERVICE[status.op] !== undefined) signs.push([status.op, 'service', false])
+  if (status.o2 >= WARN_AT) signs.push(['o2', 'gauge', status.o2 >= CRITICAL_AT])
+  if (status.fuel >= WARN_AT) signs.push(['fuel', 'gauge', status.fuel >= CRITICAL_AT])
+  if (status.hull >= HULL_AT) signs.push(['hull', 'gauge', true])
+  return signs
 }
 
-export const trainColumnsOf = (status: Status) => SCENE_COLUMNS + GAP * 2 + CLOCK_COLUMNS + trainBlocksOf(status).length * (GAP + BLOCK_COLUMNS)
+export const trainColumnsOf = (status: Status) => SCENE_COLUMNS + GAP * 2 + CLOCK_COLUMNS + trainSignsOf(status).length * (GAP + SIGN_COLUMNS)
 
 export function trainCells(model: TrainModel, run: Run, tick: number, elapsedMs: number, status: Status): string {
   const columns = trainColumnsOf(status)
   const words = new Uint32Array(columns * TRAIN_ROWS * 3)
   for (let i = 0; i < columns * TRAIN_ROWS; i++) words.set([0x20, DEFAULT_COLOR, DEFAULT_COLOR], i * 3)
-  const put = (x: number, y: number, code: number, ink: number, ground = DEFAULT_COLOR) => words.set([code, ink, ground], (y * columns + x) * 3)
+  const put = (x: number, y: number, code: number, ink: number) => words.set([code, ink, DEFAULT_COLOR], (y * columns + x) * 3)
+  // lit dots, isLit(x, y) over a field `width` cells wide from column `left`, in one ink
+  const led = (left: number, width: number, ink: number, isLit: (x: number, y: number) => boolean) => {
+    for (let cy = 0; cy < TRAIN_ROWS; cy++) for (let cx = 0; cx < width; cx++) {
+      let bits = 0
+      for (let r = 0; r < 4; r++) for (let s = 0; s < 2; s++) if (isLit(cx * 2 + s, cy * 4 + r)) bits |= DOTS[r]![s]!
+      if (bits) put(left + cx, cy, BRAILLE + bits, ink)
+    }
+  }
 
   const c = canvas()
   drawScene(c, model, run, tick)
@@ -288,38 +304,26 @@ export function trainCells(model: TrainModel, run: Run, tick: number, elapsedMs:
   // the clock, right-aligned in its room, the colon lit for the first half of each second
   const text = boardClockOf(elapsedMs)
   const isBeat = Math.floor(elapsedMs / 500) % 2 === 0
-  const left = SCENE_COLUMNS + GAP * 2, shift = CLOCK_COLUMNS * 2 - dotsWide(text)
-  const isLit = (x: number, y: number) => {
-    let at = shift
+  const shift = CLOCK_COLUMNS * 2 - dotsWide(text)
+  let at = SCENE_COLUMNS + GAP * 2
+  led(at, CLOCK_COLUMNS, INK.amber, (x, y) => {
+    let from = shift
     for (const ch of text) {
       const w = glyphWidth(ch)
-      if (x >= at && x < at + w) return FONT[ch]![y - CLOCK_TOP]?.[x - at] === '1' && (ch !== ':' || isBeat)
-      at += w + 1
+      if (x >= from && x < from + w) return FONT[ch]![y - SIGN_TOP]?.[x - from] === '1' && (ch !== ':' || isBeat)
+      from += w + 1
     }
     return false
-  }
-  for (let cy = 0; cy < TRAIN_ROWS; cy++) for (let cx = 0; cx < CLOCK_COLUMNS; cx++) {
-    let bits = 0
-    for (let r = 0; r < 4; r++) for (let s = 0; s < 2; s++) if (isLit(cx * 2 + s, cy * 4 + r)) bits |= DOTS[r]![s]!
-    if (bits) put(left + cx, cy, BRAILLE + bits, INK.amber)
-  }
+  })
+  at += CLOCK_COLUMNS
 
-  // the blocks: a half row over, a full row with the icon, a half row under, so each stands two rows tall on the third row
-  let at = left + CLOCK_COLUMNS
   const isLitBeat = Math.floor(tick / 4) % 2 === 0
-  for (const [name, kind, isCritical] of trainBlocksOf(status)) {
+  for (const [name, kind, isCritical] of trainSignsOf(status)) {
     at += GAP
-    const [icon, ground, ink] =
-      kind === 'service' ? [SERVICE[name]![0], SERVICE[name]![1], WHITE_ICON]
-      : isCritical ? [GAUGES[name as keyof typeof GAUGES], isLitBeat ? INK.red : fade(INK.red, 0.45), INK.plateText]
-      : [GAUGES[name as keyof typeof GAUGES], INK.flap, INK.amber]
-    for (let x = 0; x < BLOCK_COLUMNS; x++) {
-      put(at + x, 1, LOWER_HALF, ground)
-      put(at + x, 2, 0x20, ink, ground)
-      put(at + x, 3, UPPER_HALF, ground)
-    }
-    put(at + 1, 2, icon, ink, ground)
-    at += BLOCK_COLUMNS
+    const ink = kind === 'service' ? SERVICE[name]! : isCritical ? (isLitBeat ? INK.red : fade(INK.red, 0.35)) : INK.amber
+    const rows = PICTOGRAMS[name]!
+    led(at, SIGN_COLUMNS, ink, (x, y) => rows[y - SIGN_TOP]?.[x] === '1')
+    at += SIGN_COLUMNS
   }
   return btoa(String.fromCharCode(...new Uint8Array(words.buffer)))
 }

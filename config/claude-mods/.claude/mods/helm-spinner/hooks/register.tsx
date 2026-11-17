@@ -1,6 +1,6 @@
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
-import { modelOf, runOf, trainBlocksOf, trainCells, trainColumnsOf, TRAIN_ROWS } from './train'
+import { modelOf, runOf, trainSignsOf, trainCells, trainColumnsOf, TRAIN_ROWS } from './train'
 import type { TrainModel } from './train'
 import { ALARM, clockOf, columnsOf, MOTION, pillsOf, rowCells, ROWS } from './wave'
 import type { Motion, Status } from './wave'
@@ -113,7 +113,7 @@ async function lookAtHerdr($: EngineInterface) {
   }
 }
 
-const shownOf = () => JSON.stringify([scene, scene.kind === 'train' ? trainBlocksOf(status) : pillsOf(status), isSos])
+const shownOf = () => JSON.stringify([scene, scene.kind === 'train' ? trainSignsOf(status) : pillsOf(status), isSos])
 const sizeOf = () => (scene.kind === 'train' ? { columns: trainColumnsOf(status), rows: TRAIN_ROWS } : { columns: columnsOf(status), rows: ROWS })
 function cellsOf(motion: Motion) {
   const isAlarm = isSos || motion === ALARM
