@@ -58,10 +58,16 @@ export function since(ms, now = Date.now()) {
 const labelsOf = (a) => terminals().find((t) => t.address === a.address)?.labels ?? {};
 export const workIcon = (a) => labelsOf(a)["cc.op"] || "";
 export const stopReason = (a) => labelsOf(a)["cc.sos"] || "";
+// What a working train is doing, from the kind of tool it's on this turn (helm-bridge's cc.op), when it hasn't said
+const WORK = { edit: "EDITING FILES", bash: "RUNNING COMMANDS", read: "READING CODE", web: "ON THE WEB", agent: "WITH A HELPER", gear: "USING TOOLS" };
+
 /** The board's remark for a train, given its terminal: why it stopped, else what the agent last reported ("Running
- *  tests", a summary), on one line. */
-const remarkOf = (a, term) =>
-  ((a.status === "blocked" && term?.labels?.["cc.sos"]) || term?.report?.msg || "").replace(/\s+/g, " ").trim();
+ *  tests", a summary), else what kind of work it's on, on one line. */
+const remarkOf = (a, term) => {
+  const labels = term?.labels ?? {};
+  const said = (a.status === "blocked" && labels["cc.sos"]) || term?.report?.msg || (a.status === "working" && WORK[labels["cc.op"]]) || "";
+  return said.replace(/\s+/g, " ").trim();
+};
 
 /** The cab's gauges: water = context used, coal = budget used (0..100), wrench = failed calls in a row. */
 export function gaugesOf(a) {
