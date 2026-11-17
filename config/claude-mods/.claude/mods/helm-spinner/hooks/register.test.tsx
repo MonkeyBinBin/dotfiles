@@ -1,6 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { closingPills, countEdit, endingOf, figuresOf } from './register'
+import { closingPills, countEdit, DISPATCH_INK, endingOf, figuresOf, sceneOf } from './register'
+import { boardClockOf, modelOf, runOf, trainBlocksOf, trainCells, trainColumnsOf, TRAIN_MODELS, TRAIN_ROWS } from './train'
 import type { Tally } from './register'
 import { ICON_ART } from './icons'
 import { ALARM, clockOf, columnsOf, glowOf, MOTION, pillsOf, rowCells, ROWS, waveAt } from './wave'
@@ -152,4 +153,50 @@ test("a subagent's end isn't the turn's", async ($, on) => {
 
   const line = await $.ui.mount({ plugin: 'helm-spinner', surface: 'terminal', component: 'TurnDuration', requestId: 'l', props: { word: 'Baked', durationMs: 90_000 } })
   expect(await textOf(line)).toContain('+1')
+})
+
+test('the dispatch layout draws this terminal\'s train from the track map, any other layout the sub', () => {
+  const shared = (layout: string, trains: Record<string, string> = {}) => JSON.stringify({ layout, 'dispatch.trains': trains })
+  expect(sceneOf(shared('sub'), 't5b')).toEqual({ kind: 'sub' })
+  expect(sceneOf(shared('dispatch', { t5b: 'tram' }), 't5b')).toEqual({ kind: 'train', model: 'tram' })
+  // not drawn yet: the track map's own pick from the terminal's number
+  expect(sceneOf(shared('dispatch'), 't7c')).toEqual({ kind: 'train', model: modelOf({}, 't7c') })
+  expect(sceneOf(shared('dispatch', { t5b: 'zeppelin' }), 't5b').kind).toBe('train')
+})
+
+test('every train fills four rows of Raster cells, its clock and blocks beside it', () => {
+  const busy = { op: 'bash', hull: 3, o2: 84, fuel: 95 }
+  for (const model of TRAIN_MODELS) {
+    const cells = trainCells(model, runOf(MOTION['tool-use'], false), 9, 20_000, busy)
+    expect(atob(cells).length).toBe(trainColumnsOf(busy) * TRAIN_ROWS * 12)
+    const words = new Uint32Array(Uint8Array.from(atob(cells), c => c.charCodeAt(0)).buffer)
+    for (let i = 0; i < words.length; i += 3) expect(words[i]!).toBeLessThanOrEqual(0xffff)
+  }
+  expect(trainColumnsOf(busy)).toBeGreaterThan(trainColumnsOf(CALM))
+})
+
+test('the train runs faster the harder the work, and stands at the signal when held', () => {
+  const speeds = (['thinking', 'requesting', 'responding', 'tool-use'] as const).map(mode => runOf(MOTION[mode], false).speed)
+  expect([...speeds].sort((a, b) => a - b)).toEqual(speeds)
+  expect(runOf(MOTION['tool-use'], true)).toMatchObject({ speed: 0, isHeld: true })
+  expect(runOf(MOTION.thinking, false).sparks).toBe(0)
+  expect(runOf(MOTION['tool-use'], false).sparks).toBeGreaterThan(0)
+})
+
+test('the dispatch closing line arrives under the chequered flag in the board\'s inks', () => {
+  expect(endingOf('answer', DISPATCH_INK)).toEqual(['', DISPATCH_INK.gold])
+  expect(endingOf('answer')[0]).not.toBe(endingOf('answer', DISPATCH_INK)[0])
+  expect(closingPills(5000, undefined, DISPATCH_INK)[0]![0]![1]).toBe(DISPATCH_INK.text)
+})
+
+test('the board clock reads like a station clock, and its room holds the widest reading so the row keeps its width', () => {
+  expect([5_000, 83_000, 3_599_000, 3_900_000].map(boardClockOf)).toEqual(['0:05', '1:23', '59:59', '1:05'])
+  expect(trainColumnsOf(CALM)).toBe(trainColumnsOf({ ...CALM }))
+  const at = (ms: number) => atob(trainCells('emu', runOf(MOTION.thinking, false), 1, ms, CALM)).length
+  expect(at(5_000)).toBe(at(3_599_000))
+})
+
+test('a block for the work, then one for each gauge past amber, critical ones flashing', () => {
+  expect(trainBlocksOf(CALM)).toEqual([])
+  expect(trainBlocksOf({ op: 'edit', hull: 3, o2: 75, fuel: 95 })).toEqual([['edit', 'service', false], ['o2', 'gauge', false], ['fuel', 'gauge', true], ['hull', 'gauge', true]])
 })
