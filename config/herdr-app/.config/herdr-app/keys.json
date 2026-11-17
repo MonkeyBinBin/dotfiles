@@ -63,6 +63,7 @@
     "cmd-ctrl-l": "pane.go:right"
   },
   "layout:dispatch": {
+    "cmd-b": "layout.toggle:tracks",
     "cmd-p": "dispatch.search",
     "cmd-shift-e": "dispatch.files",
     "cmd-shift-g": "dispatch.changes"

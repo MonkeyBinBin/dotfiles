@@ -124,6 +124,7 @@ const DISPATCH_ASSETS = {
     [`train-${model}-halt`, train(model, "working", LIVERY[model], still)],
   ])),
   // the scenery: strips wider than any lane (the mod cuts them), the shed, the platform, a signal per aspect
+  "scene-sky": { fx: "dispatch/sky", crop: [0, -720, 640, 0], mod: "dispatch", alpha: true, edge: 0, png: true },
   "scene-back": scene([0, -90, 640, 0], { kind: "back" }),
   "scene-track": scene([0, -3, 640, 14], { kind: "track" }),
   ...Object.fromEntries(["brick", "steel", "timber", "sawtooth"].map((style) => [`scene-depot-${style}`, scene([0, -68, 150, 0], { kind: "depot", style })])),

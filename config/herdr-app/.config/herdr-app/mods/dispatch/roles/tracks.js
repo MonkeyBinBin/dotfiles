@@ -10,6 +10,7 @@
 //   done     it pulls into the platform and stands there with its doors open; yellow signal
 //   blocked  it brakes to a stand at the red signal
 //   idle     it is shunted into the shed and parked there, lamps out; signal dark
+// The tracks sit at the column's foot like a yard; the room above them is night sky (scene-sky), stars and a moon.
 // A track's click goes to that agent; a platform's click shows that tab, + opens a new one.
 import { div, image } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
@@ -23,6 +24,7 @@ const LANE_H = 96, LANE_MIN = 80;
 const RAIL_FROM_BOTTOM = 14;
 // Every piece is baked at 4x and shown at a quarter: one art pixel to a point. Sizes in points.
 const TRAIN_W = 125, TRAIN_H = 35, WHEELS = 35; // the wheels stand WHEELS below the sprite's top
+const SKY = { w: 640, h: 720, ink: "#05080e" }; // scene-sky's size, and the night at its foot (and at scene-back's top)
 const BACK = { w: 640, h: 90 }, TRACK = { w: 640, h: 17, above: 3 }, DEPOT = { w: 150, h: 68 }, PLATFORM = { w: 150, h: 57 }, SIGNAL = { w: 7, h: 51, foot: 3 };
 const ASPECT = { working: "green", done: "yellow", blocked: "red", idle: "dark" };
 // the platform styles (scene.js): each new track takes the next one in turn (from a random start) and keeps it
@@ -321,9 +323,13 @@ export class Tracks {
       .relative()
       .child(preload())
       .child(this.platforms())
-      .child(v_flex().children(onTrack(list, fit).map((t) => this.lane(t, width, laneH, cx))))
-      .when(list.length === 0, (el) => el.child(div().p(16).text_size(13).text_color(INK.creamDim).child("NO TRAINS ON THE LINE")))
-      .when(list.length > fit, (el) => el.child(div().px(14).pt(4).text_size(12).text_color(INK.creamDim).child(`+${list.length - fit} MORE IN THE YARD`)));
+      // the yard: the tracks stacked at the column's foot under one night sky that fills whatever room they leave
+      .child(v_flex().flex_1().min_h(0).bg(SKY.ink)
+        .child(div().flex_1().min_h(0).relative().overflow_hidden()
+          .child(div().absolute().left(0).bottom(0).child(piece("scene-sky", SKY)))
+          .when(list.length === 0, (el) => el.child(div().absolute().left(0).top(0).p(16).text_size(13).text_color(INK.creamDim).child("NO TRAINS ON THE LINE"))))
+        .child(v_flex().flex_none().children(onTrack(list, fit).map((t) => this.lane(t, width, laneH, cx))))
+        .when(list.length > fit, (el) => el.child(div().flex_none().px(14).pt(4).pb(4).text_size(12).text_color(INK.creamDim).child(`+${list.length - fit} MORE IN THE YARD`))));
     // trains seen from now on are new agents: their tracks open and their trains run in
     this.started = true;
     return view;
