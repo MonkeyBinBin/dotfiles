@@ -16,8 +16,22 @@ import { Flaps, flapText } from "../flap.js";
 const WARN_AT = 70, CRITICAL_AT = 90;
 // the arrival board's flaps, and how long each page shows before it turns over
 const FLAP = { w: 18, h: 26, size: 22, gap: 2, color: INK.cream }; // wide enough for M and W
-const BOARD_RESERVE = 360; // px of the header kept free right of the board
 const PAGE_MS = 4000;
+// Header widths in px, from the elements below: the row's padding and gap, the board's chrome around its flaps (padding,
+// lamp, gap), and what can sit right of the board. The reason gets at least REASON_MIN before the board takes the rest.
+const ROW = { pad: 28, gap: 12 }, BOARD_CHROME = 27, CHEVRONS_W = 60, ICON_W = 18, BUTTON_W = 22, GAUGE_W = 64, FAULTS_W = 45;
+const REASON_MIN = 140;
+
+/** The px the header needs besides the board's flaps: its fixed parts, then the wider of what shows on hover (the
+ *  buttons) and what shows otherwise, so the board doesn't resize as the pointer comes and goes. */
+function reserveFor({ alert, reason, work, gauges }) {
+  const item = (w) => ROW.gap + w;
+  const fixed = ROW.pad + BOARD_CHROME + item(0) + (alert ? item(CHEVRONS_W) : 0); // item(0): the spacer's gap
+  const buttons = 4 * item(BUTTON_W);
+  const status = (reason ? item(ICON_W) + item(REASON_MIN) : 0) + (work ? item(ICON_W) : 0)
+    + (gauges ? 2 * item(GAUGE_W) + item(FAULTS_W) : 0);
+  return fixed + Math.max(buttons, status);
+}
 const levelInk = (v) => (v >= CRITICAL_AT ? INK.red : v >= WARN_AT ? INK.amber : INK.green);
 
 function bar(icon, value) {
@@ -76,10 +90,10 @@ export class PaneHeader {
   }
 
   // The nameplate board: a lamp, then a run of flaps showing the page for the status.
-  board(cx, { st, t, name, on }) {
+  board(cx, { st, t, name, reserve }) {
     const now = Date.now(), drawn = new Set();
-    // the board takes what the header's right side doesn't need: chevrons, gauges, hover buttons
-    const cols = Math.max(12, Math.min(64, Math.floor((this.width - BOARD_RESERVE) / (FLAP.w + FLAP.gap))));
+    // the board takes whatever the rest of the header doesn't need
+    const cols = Math.max(12, Math.min(64, Math.floor((this.width - reserve) / (FLAP.w + FLAP.gap))));
     const alert = t && (st === "done" || st === "blocked");
     const first = alert && this.page === 0;
     const text = !alert ? name : first ? `${t.code} ${st === "done" ? "ARRIVED" : "SIGNAL STOP"}` : t.dest;
@@ -105,7 +119,7 @@ export class PaneHeader {
   render(cx, p) {
     const me = panes().find((x) => x.pane === p.pane);
     if (!me) return div();
-    const pane = me.pane, on = me.focused, st = me.status;
+    const pane = me.pane, st = me.status;
     const t = trains().find((x) => x.agent.pane === pane);
     const folder = me.cwd ? me.cwd.split("/").filter(Boolean).pop() ?? "/" : "";
     const name = t ? `${t.code} · ${t.dest}` : `${me.program?.name ?? "shell"}${folder ? ` · ${folder}` : ""}`;
@@ -121,6 +135,7 @@ export class PaneHeader {
       this.status = st;
     }
     const alert = Boolean(t) && (st === "done" || st === "blocked");
+    const reserve = reserveFor({ alert, reason, work, gauges: showGauges });
     return h_flex().id(`ph-${pane}`).relative().overflow_hidden().size_full().px(14).gap(12).items_center()
       .bg(INK.board).border_b(1).border_color(stopped ? INK.redDeep : INK.steelDim)
       .when(stopped, (el) => el.child(div().absolute().top(0).left(0).size_full().bg(INK.redDeep).loop("opacity", { from: 0, to: 0.8, period: 1100 })))
@@ -134,7 +149,7 @@ export class PaneHeader {
         cx.notify();
       })
       .on_click(() => run("pane.focus", { pane }))
-      .child(this.board(cx, { st, t, name, on }))
+      .child(this.board(cx, { st, t, name, reserve }))
       .when(alert, (el) => el.child(chevrons(st === "done" ? INK.yellow : INK.red)))
       .child(div().flex_1())
       .when(!this.hovered && Boolean(reason), (el) => el
