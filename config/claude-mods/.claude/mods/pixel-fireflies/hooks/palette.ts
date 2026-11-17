@@ -6,6 +6,8 @@ import { makeColors } from './make-colors.js'
 export const palette = makeColors({
   label: 'Pixel Fireflies',
   only: 'dark',
+  // Code blocks are colored by the surface's own highlighter (Shiki), not by the roles below: pick its theme.
+  codeTheme: { dark: 'vitesse-dark' },
   roles: {
     accent: '#b9e33a', // keywords, focus, links: a firefly's glow
     success: '#4fbf8a', // strings, added lines: dew-cool grass
