@@ -8,7 +8,7 @@
 // CSS keyframes (step-end keeps it on the pixel grid). pixelfx (https://github.com/patch-gg/pixelfx, MIT) is
 // cloned to $PIXELFX_DIR (default ~/.cache/pixelfx) on first use.
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -39,13 +39,15 @@ function partsModule() {
     if (next === src) throw new Error(`pixelfx fireflies.js changed: ${re} no longer matches`);
     src = next;
   }
-  const file = join(mkdtempSync(join(tmpdir(), "pixel-fireflies-")), "fireflies.mjs");
-  writeFileSync(file, src);
-  return file;
+  const dir = mkdtempSync(join(tmpdir(), "pixel-fireflies-"));
+  writeFileSync(join(dir, "fireflies.mjs"), src);
+  return dir;
 }
 
 const { createFrame, createFx, composite, fit, toHex, mix, WHITE } = await import(pathToFileURL(join(SRC, "core/index.js")).href);
-const mod = await import(pathToFileURL(partsModule()).href);
+// Once imported the module lives in memory, so its folder goes right away, even if the import fails.
+const partsDir = partsModule();
+const mod = await import(pathToFileURL(join(partsDir, "fireflies.mjs")).href).finally(() => rmSync(partsDir, { recursive: true, force: true }));
 
 const { meta } = mod;
 const [W, H] = meta.size, [OX, OY] = meta.origin, D = meta.duration;
