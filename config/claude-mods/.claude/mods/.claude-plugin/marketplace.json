@@ -1,0 +1,7 @@
+{
+  "name": "claude-mods-local",
+  "owner": { "name": "dotfiles" },
+  "plugins": [
+    { "name": "pixel-fireflies", "source": "./pixel-fireflies", "description": "Desktop-only sample: pixelfx fireflies over a night meadow as the backdrop" }
+  ]
+}

@@ -295,17 +295,25 @@ dotfiles**——否則 cmux 更新格式時 repo 內的手寫版本會悄悄失�
 `skill-bar`；在 Herdr app 裡（有 `HC_TERMINAL_ID`）只載入搭配潛艇介面的 `helm-bridge`、`helm-spinner`。Herdr 的 `programs.json`
 以 `zsh -ic` 啟動 Claude，才會走到這段分支。
 
-桌面 app 不經過 zsh 直接啟動 engine，`CLAUDE_CODE_PLUGIN_DIRS` 傳不進去，所以桌面佈景 `abyssal-helm`
+桌面 app 不經過 zsh 直接啟動 engine，`CLAUDE_CODE_PLUGIN_DIRS` 傳不進去，所以桌面佈景 `pixel-fireflies`
 改由本機 marketplace 安裝：`config/claude-mods/.claude/mods/.claude-plugin/marketplace.json`
 （`claude-mods-local`，`source` 為相對路徑，直接讀 repo 內的資料夾）。初次設定：
 
 ```bash
 claude plugin marketplace add ~/dotfiles/config/claude-mods/.claude/mods
-claude plugin install abyssal-helm@claude-mods-local --scope user
+claude plugin install pixel-fireflies@claude-mods-local --scope user
 ```
 
-user scope 會讓它在所有 session 載入，但 mod 內每個 `ui.render` 都只在 `desktop` surface 繪製，終端機
-本來也不畫 theme，因此只有桌面看得到。改檔後在 session 內跑 `/reload-plugins` 或開新 session 生效。
+user scope 會讓它在所有 session 載入，但 `Backdrop` 只在 `desktop` surface 繪製，終端機本來也不畫 theme，
+因此只有桌面看得到。安裝後執行的是 `~/.claude/plugins/cache/claude-mods-local/` 的副本，改檔要先調高
+`plugin.json` 的 `version` 再跑 `claude plugin update pixel-fireflies@claude-mods-local --scope user`；
+桌面偵測到 `installed_plugins.json` 變更會自動 reload 開著的 session，不必重開。若專案用過 `/custom-theme`，
+內建的 theme-examples 每次 reload 都會重套它的主題蓋掉這個佈景，先在該專案跑 `/custom-theme off`。
+
+`pixel-fireflies` 的背景由 `tools/bake.mjs` 從 [pixelfx](https://github.com/patch-gg/pixelfx)（MIT）的
+`weather/fireflies` 烘成 `hooks/scene.ts`：桌面 scene 會濾掉 raster 且上限 131072 字元，逐格輸出遠超上限，
+所以只取 pixelfx 的螢火蟲路徑、閃爍節奏、sprite 與一張靜態草地，動畫交給 SVG 內的 CSS keyframes。色系在
+`hooks/palette.ts`，以 plugin-authoring skill 附的 `make-colors.js` 產生（只做 dark）。
 
 `helm-bridge` 把 session 的狀態寫成 terminal label（`cc.sos`、`cc.op`、`cc.o2`、`cc.fuel`、`cc.hull`），由 `sub` mod 在 pane header 以 pixelfx 圖示與艦長日誌顯示。`helm-spinner` 把 spinner 換成 3 行 Braille 潛艇與聲波、計時和狀態膠囊（潛艇由 `helm-spinner/tools/bake-icons.py` 烘成 Braille），回合結束行是結束狀態圖示與數據膠囊。Herdr 內的 Claude Code 畫不出 Image，也不適合在終端機放小圖，精緻素材都放在 Herdr 介面（`scripts/herdr-sub/fx/sub/helm-*.js`）。
 
