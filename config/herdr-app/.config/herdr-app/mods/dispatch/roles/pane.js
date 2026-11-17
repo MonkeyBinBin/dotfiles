@@ -16,6 +16,7 @@ import { Flaps, flapText } from "../flap.js";
 const WARN_AT = 70, CRITICAL_AT = 90;
 // the arrival board's flaps, and how long each page shows before it turns over
 const FLAP = { w: 18, h: 26, size: 22, gap: 2, color: INK.cream }; // wide enough for M and W
+const BOARD_RESERVE = 360; // px of the header kept free right of the board
 const PAGE_MS = 4000;
 const levelInk = (v) => (v >= CRITICAL_AT ? INK.red : v >= WARN_AT ? INK.amber : INK.green);
 
@@ -77,7 +78,8 @@ export class PaneHeader {
   // The nameplate board: a lamp, then a run of flaps showing the page for the status.
   board(cx, { st, t, name, on }) {
     const now = Date.now(), drawn = new Set();
-    const cols = Math.max(12, Math.min(34, Math.floor((this.width * 0.5) / (FLAP.w + FLAP.gap))));
+    // the board takes what the header's right side doesn't need: chevrons, gauges, hover buttons
+    const cols = Math.max(12, Math.min(64, Math.floor((this.width - BOARD_RESERVE) / (FLAP.w + FLAP.gap))));
     const alert = t && (st === "done" || st === "blocked");
     const first = alert && this.page === 0;
     const text = !alert ? name : first ? `${t.code} ${st === "done" ? "ARRIVED" : "SIGNAL STOP"}` : t.dest;
