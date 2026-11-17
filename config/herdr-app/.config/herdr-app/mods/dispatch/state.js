@@ -56,17 +56,21 @@ export function since(ms, now = Date.now()) {
 
 // What Claude Code reports on its terminal (the helm-bridge mod): what it's doing, why it stopped, how its tanks are.
 const labelsOf = (a) => terminals().find((t) => t.address === a.address)?.labels ?? {};
-export const workIcon = (a) => labelsOf(a)["cc.op"] || "";
-export const stopReason = (a) => labelsOf(a)["cc.sos"] || "";
+// the two labels read off a terminal's labels: the kind of tool it's on this turn, and why it stopped
+const opOf = (labels) => labels["cc.op"] || "";
+const sosOf = (labels) => labels["cc.sos"] || "";
+export const workIcon = (a) => opOf(labelsOf(a));
+export const stopReason = (a) => sosOf(labelsOf(a));
 // What a working train is doing, from the kind of tool it's on this turn (helm-bridge's cc.op), when it hasn't said
 const WORK = { edit: "EDITING FILES", bash: "RUNNING COMMANDS", read: "READING CODE", web: "ON THE WEB", agent: "WITH A HELPER", gear: "USING TOOLS" };
 
 /** The board's remark for a train, given its terminal: why it stopped, else what the agent last reported ("Running
  *  tests", a summary), else what kind of work it's on, on one line. */
 const remarkOf = (a, term) => {
-  const labels = term?.labels ?? {};
-  const said = (a.status === "blocked" && labels["cc.sos"]) || term?.report?.msg || (a.status === "working" && WORK[labels["cc.op"]]) || "";
-  return said.replace(/\s+/g, " ").trim();
+  const labels = term?.labels ?? {}, op = opOf(labels);
+  const work = a.status === "working" && Object.hasOwn(WORK, op) ? WORK[op] : "";
+  const said = (a.status === "blocked" && sosOf(labels)) || term?.report?.msg || work;
+  return String(said).replace(/\s+/g, " ").trim();
 };
 
 /** The cab's gauges: water = context used, coal = budget used (0..100), wrench = failed calls in a row. */
