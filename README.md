@@ -308,7 +308,7 @@ user scope 會讓它在所有 session 載入，但 `Backdrop` 只在 `desktop` s
 因此只有桌面看得到。安裝後執行的是 `~/.claude/plugins/cache/claude-mods-local/` 的副本，改檔要先調高
 `plugin.json` 的 `version` 再跑 `claude plugin update pixel-fireflies@claude-mods-local --scope user`；
 桌面偵測到 `installed_plugins.json` 變更會自動 reload 開著的 session，不必重開。若專案用過 `/custom-theme`，
-內建的 theme-examples 每次 reload 都會重套它的主題蓋掉這個佈景，先在該專案跑 `/custom-theme off`。
+內建的 theme-examples 每次 reload 都會重套它的主題蓋掉這個佈景，先在該專案跑 `/custom-theme off`。佈景偶爾仍會在切換 session 後消失，所以 mod 每回合開始時（其他 plugin 處理完後）會重套一次，送出下一則訊息就會回來；也因此 `/custom-theme` 選的主題只會維持到下一回合。
 
 `pixel-fireflies` 的背景由 `tools/bake.mjs` 從 [pixelfx](https://github.com/patch-gg/pixelfx)（MIT）的
 `weather/fireflies` 烘成 `hooks/scene.ts`：桌面 scene 會濾掉 raster 且上限 131072 字元，逐格輸出遠超上限，

@@ -23,6 +23,16 @@ export const register: Register = on => {
     return next(e)
   })
 
+  // The built-in theme-examples (/custom-theme) re-follows the project's choice at each turn's start and can clear
+  // the session's theme, and a session switch has been seen to leave it undrawn. Set ours again once the plugins
+  // beneath have run, so a lost look comes back at the next prompt. A failed set never costs the prompt.
+  on('prompt.submit', async ($, e, next) => {
+    const result = await next(e)
+    await $.theme.set(LOOK).catch(() => {})
+
+    return result
+  })
+
   on('ui.render', { component: 'Backdrop' }, ($, e, next) => {
     if (e.surface !== 'desktop' || e.props.scene !== SCENE_NAME) {
       return next(e)
