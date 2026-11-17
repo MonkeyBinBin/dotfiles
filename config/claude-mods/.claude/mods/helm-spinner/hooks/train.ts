@@ -107,9 +107,10 @@ function canvas() {
   return { at, erase, cell }
 }
 
-function drawScene(c: ReturnType<typeof canvas>, model: TrainModel, run: Run, tick: number) {
+// `travelled` is how far the train has come, in dots: a running total, so a change of speed doesn't jump the scenery.
+function drawScene(c: ReturnType<typeof canvas>, model: TrainModel, run: Run, tick: number, travelled: number) {
   const m = LIVERIES[model]
-  const offset = tick * run.speed
+  const offset = travelled
   const blink = Math.floor(tick / 4) % 2 === 0
 
   // the ground: sleepers going by, the far rail
@@ -119,8 +120,7 @@ function drawScene(c: ReturnType<typeof canvas>, model: TrainModel, run: Run, ti
   }
   // masts on the far side with their cantilevers out over the track, and the wire sagging between them; red when held
   for (let x = -MAST_SPAN; x < WIDTH + MAST_SPAN; x++) {
-    const along = mod(x + offset, MAST_SPAN)
-    if (along === 0 || (along < 1 && along + run.speed >= 1)) {
+    if (mod(Math.floor(x + offset), MAST_SPAN) === 0) {
       for (let y = 0; y <= WIRE_Y + 1; y++) c.at(x, y, MAST_Z, INK.steelDim)
       for (let z = WIRE_Z; z <= MAST_Z; z += 0.5) c.at(x, WIRE_Y + 1, z, INK.steelDim)
     }
@@ -280,7 +280,7 @@ export function trainSignsOf(status: Status): Sign[] {
 
 export const trainColumnsOf = (status: Status) => SCENE_COLUMNS + GAP * 2 + CLOCK_COLUMNS + trainSignsOf(status).length * (GAP + SIGN_COLUMNS)
 
-export function trainCells(model: TrainModel, run: Run, tick: number, elapsedMs: number, status: Status): string {
+export function trainCells(model: TrainModel, run: Run, tick: number, travelled: number, elapsedMs: number, status: Status): string {
   const columns = trainColumnsOf(status)
   const words = new Uint32Array(columns * TRAIN_ROWS * 3)
   for (let i = 0; i < columns * TRAIN_ROWS; i++) words.set([0x20, DEFAULT_COLOR, DEFAULT_COLOR], i * 3)
@@ -295,7 +295,7 @@ export function trainCells(model: TrainModel, run: Run, tick: number, elapsedMs:
   }
 
   const c = canvas()
-  drawScene(c, model, run, tick)
+  drawScene(c, model, run, tick, travelled)
   for (let cy = 0; cy < TRAIN_ROWS; cy++) for (let cx = 0; cx < SCENE_COLUMNS; cx++) {
     const shown = c.cell(cx, cy)
     if (shown) put(cx, cy, shown[0], shown[1])

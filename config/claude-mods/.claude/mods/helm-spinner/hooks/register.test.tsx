@@ -167,7 +167,7 @@ test('the dispatch layout draws this terminal\'s train from the track map, any o
 test('every train fills four rows of Raster cells, its clock and signs beside it', () => {
   const busy = { op: 'bash', hull: 3, o2: 84, fuel: 95 }
   for (const model of TRAIN_MODELS) {
-    const cells = trainCells(model, runOf(MOTION['tool-use'], false), 9, 20_000, busy)
+    const cells = trainCells(model, runOf(MOTION['tool-use'], false), 9, 30, 20_000, busy)
     expect(atob(cells).length).toBe(trainColumnsOf(busy) * TRAIN_ROWS * 12)
     const words = new Uint32Array(Uint8Array.from(atob(cells), c => c.charCodeAt(0)).buffer)
     for (let i = 0; i < words.length; i += 3) expect(words[i]!).toBeLessThanOrEqual(0xffff)
@@ -192,11 +192,21 @@ test('the dispatch closing line arrives under the chequered flag in the board\'s
 test('the board clock reads like a station clock, and its room holds the widest reading so the row keeps its width', () => {
   expect([5_000, 83_000, 3_599_000, 3_900_000].map(boardClockOf)).toEqual(['0:05', '1:23', '59:59', '1:05'])
   expect(trainColumnsOf(CALM)).toBe(trainColumnsOf({ ...CALM }))
-  const at = (ms: number) => atob(trainCells('emu', runOf(MOTION.thinking, false), 1, ms, CALM)).length
+  const at = (ms: number) => atob(trainCells('emu', runOf(MOTION.thinking, false), 1, 0, ms, CALM)).length
   expect(at(5_000)).toBe(at(3_599_000))
 })
 
 test('a sign for the work, then one for each gauge past amber, critical ones flashing', () => {
   expect(trainSignsOf(CALM)).toEqual([])
   expect(trainSignsOf({ op: 'edit', hull: 3, o2: 75, fuel: 95 })).toEqual([['edit', 'service', false], ['o2', 'gauge', false], ['fuel', 'gauge', true], ['hull', 'gauge', true]])
+})
+
+test('the scenery is drawn from how far the train has come, so a change of speed carries on where it was', () => {
+  const frame = (run: ReturnType<typeof runOf>, travelled: number) => trainCells('tram', { ...run, sparks: 0, bounce: 0 }, 4, travelled, 0, CALM)
+  // the same distance looks the same whatever speed got it there
+  expect(frame(runOf(MOTION.thinking, false), 42.3)).toBe(frame(runOf(MOTION['tool-use'], false), 42.3))
+  // and a slow train still moves its masts every frame rather than blinking them
+  const slow = runOf(MOTION.thinking, false)
+  const shots = Array.from({ length: 10 }, (_, i) => frame(slow, i * slow.speed))
+  expect(new Set(shots).size).toBeGreaterThan(1)
 })

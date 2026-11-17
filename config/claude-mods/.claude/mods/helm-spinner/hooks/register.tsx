@@ -20,9 +20,10 @@ const FILE_ICON = '\uf15b'
 const LEFT_CAP = '\ue0b6'
 const RIGHT_CAP = '\ue0b4'
 // themes/sub.json's: its raised surface for the pills, as these stay in the transcript and shouldn't shout.
-const INK = { pill: '#173b42', text: '#a8e8c4', dim: '#5a8a8c', gold: '#f0d07a', added: '#5cff9a', removed: '#ff9a8a' }
-// themes/dispatch.json's: the split-flap board's dark flap and cream lettering, its signal colours.
-export const DISPATCH_INK = { pill: '#1b2025', text: '#f2ead8', dim: '#8a8476', gold: '#ffb03a', added: '#5cf08a', removed: '#ff4a3a' }
+// `arrived` is how a turn that got there ends: home at anchor.
+const INK = { pill: '#173b42', text: '#a8e8c4', dim: '#5a8a8c', gold: '#f0d07a', added: '#5cff9a', removed: '#ff9a8a', arrived: '\uf13d' }
+// themes/dispatch.json's: the board's dark flap and cream lettering, its signal colours; a train arrives under the chequered flag.
+export const DISPATCH_INK = { pill: '#1b2025', text: '#f2ead8', dim: '#8a8476', gold: '#ffb03a', added: '#5cf08a', removed: '#ff4a3a', arrived: '\uf11e' }
 type Ink = typeof INK
 // Which layout the Herdr app shows: shared state it keeps in this file, `layout` its name, `dispatch.trains` each terminal's train.
 const HERDR_SHARED = '.config/herdr-app/shared.json'
@@ -51,7 +52,7 @@ export function endingOf(ended: string | undefined, ink: Ink = INK): [string, st
   if (ended === 'aborted') return ['\uf256', ink.dim]
   if (ended === 'refusal') return ['\uf05e', ink.removed]
   if (ended === 'error') return ['\uf071', ink.removed]
-  return [ink === INK ? '\uf13d' : '\uf11e', ink.gold]
+  return [ink.arrived, ink.gold]
 }
 
 export function figuresOf(tally: Tally, cost: number | undefined, ended = 'answer'): Figures {
@@ -84,9 +85,11 @@ let isCompacting = false
 let tally: Tally = { files: new Set(), added: 0, removed: 0, costAtStart: undefined }
 // What the closing line of the turn that just ended adds, until that line first draws; then what each line drew. A line's only
 // tie to its turn is the duration, and without it an older line drawn now would take these figures.
-let pending: { figures: Figures; durationMs: number } | undefined
-const tails = new Map<string, Figures>()
-const rows = new Map<string, { motion: Motion; misses: number }>() // the spinner rows on screen, and how each one moves
+// A closing line keeps the inks of the layout its turn ran in, so a later switch of layout doesn't repaint it.
+let pending: { figures: Figures; durationMs: number; ink: Ink } | undefined
+const tails = new Map<string, { figures: Figures; ink: Ink }>()
+// the spinner rows on screen: how each one moves, and how far its train has come
+const rows = new Map<string, { motion: Motion; misses: number; travelled: number }>()
 let ticker: Timer | undefined
 let tick = 0
 let diveStart = 0
@@ -115,10 +118,11 @@ async function lookAtHerdr($: EngineInterface) {
 
 const shownOf = () => JSON.stringify([scene, scene.kind === 'train' ? trainSignsOf(status) : pillsOf(status), isSos])
 const sizeOf = () => (scene.kind === 'train' ? { columns: trainColumnsOf(status), rows: TRAIN_ROWS } : { columns: columnsOf(status), rows: ROWS })
-function cellsOf(motion: Motion) {
-  const isAlarm = isSos || motion === ALARM
+const runNow = (motion: Motion) => runOf(motion, isSos || motion === ALARM)
+const inkNow = (): Ink => (scene.kind === 'train' ? DISPATCH_INK : INK)
+function cellsOf(motion: Motion, travelled: number) {
   return scene.kind === 'train'
-    ? trainCells(scene.model, runOf(motion, isAlarm), tick, now - diveStart, status)
+    ? trainCells(scene.model, runNow(motion), tick, travelled, now - diveStart, status)
     : rowCells(isSos ? ALARM : motion, tick, now - diveStart, status)
 }
 const rasterKey = () => (scene.kind === 'train' ? 'helm-train' : 'helm-wave')
@@ -143,14 +147,16 @@ async function lookAtBridge($: EngineInterface) {
 
 function animate($: EngineInterface) {
   tick += 1
-  if (tick % TICKS_TO_LOOK === 0) void lookAtBridge($).catch(() => undefined)
+  // nothing on screen, nothing to look at: the ticker outlives the spinner
+  if (tick % TICKS_TO_LOOK === 0 && rows.size > 0) void lookAtBridge($).catch(() => undefined)
   for (const [requestId, row] of rows) {
+    row.travelled += runNow(row.motion).speed
     const missed = () => {
       row.misses += 1
       if (row.misses >= MAX_MISSES && rows.get(requestId) === row) rows.delete(requestId)
     }
     void $.ui
-      .blit({ requestId, key: rasterKey(), cells: cellsOf(row.motion), ...sizeOf() })
+      .blit({ requestId, key: rasterKey(), cells: cellsOf(row.motion, row.travelled), ...sizeOf() })
       .then(shown => {
         if (shown.deny === undefined) row.misses = 0
         else missed()
@@ -188,7 +194,7 @@ export const register: Register = on => {
 
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
-    if (e.agentId === undefined && (await herdr($))) pending = { figures: figuresOf(tally, await costNow($), e.reason), durationMs: e.durationMs }
+    if (e.agentId === undefined && (await herdr($))) pending = { figures: figuresOf(tally, await costNow($), e.reason), durationMs: e.durationMs, ink: inkNow() }
     return result
   })
 
@@ -206,7 +212,7 @@ export const register: Register = on => {
   on('ui.render', { component: 'Spinner' }, async ($, e, next) => {
     if (e.surface !== 'terminal' || !(await herdr($))) return next(e)
     const motion = isCompacting ? ALARM : MOTION[e.props.mode]
-    rows.set(e.requestId, { motion, misses: 0 })
+    rows.set(e.requestId, { motion, misses: 0, travelled: rows.get(e.requestId)?.travelled ?? 0 })
     await lookAtBridge($).catch(() => undefined)
     ticker ??= $.clock.every(FRAME_MS, () => animate($))
     drawnIcons = shownOf()
@@ -214,7 +220,7 @@ export const register: Register = on => {
     const { Box, Raster } = $.ui.resolve(e)
     return (
       <Box marginTop={SPACER_ROWS}>
-        <Raster key={rasterKey()} columns={columns} rows={height} cells={cellsOf(motion)} />
+        <Raster key={rasterKey()} columns={columns} rows={height} cells={cellsOf(motion, rows.get(e.requestId)!.travelled)} />
       </Box>
     )
   })
@@ -223,11 +229,12 @@ export const register: Register = on => {
   on('ui.render', { component: 'TurnDuration' }, async ($, e, next) => {
     if (!(await herdr($)) || e.surface !== 'terminal' || e.props.waitingFor || e.props.isExpanded) return next(e)
     if (pending !== undefined && !tails.has(e.requestId) && Math.abs(e.props.durationMs - pending.durationMs) <= SAME_TURN_MS) {
-      tails.set(e.requestId, pending.figures)
+      tails.set(e.requestId, { figures: pending.figures, ink: pending.ink })
       pending = undefined
     }
-    const figures = tails.get(e.requestId)
-    const ink = scene.kind === 'train' ? DISPATCH_INK : INK
+    const tail = tails.get(e.requestId)
+    const figures = tail?.figures
+    const ink = tail?.ink ?? inkNow()
     const [ending, endingInk] = endingOf(figures?.ended, ink)
     const { Box, Text } = $.ui.resolve(e)
     return (
