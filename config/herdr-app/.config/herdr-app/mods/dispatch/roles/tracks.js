@@ -11,6 +11,7 @@
 //   blocked  it brakes to a stand at the red signal
 //   idle     it is shunted into the shed and parked there, lamps out; signal dark
 // The tracks sit at the column's foot like a yard; the room above them is night sky (scene-sky), stars and a moon.
+// With no agents at all the yard still shows one track, empty: shed and platform with nothing in them, signal dark.
 // A track's click goes to that agent; a platform's click shows that tab, + opens a new one.
 import { div, image } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
@@ -32,6 +33,8 @@ const ASPECT = { working: "green", done: "yellow", blocked: "red", idle: "dark" 
 const PLATFORM_STYLES = ["modern", "heritage", "rural", "glass"];
 // the engine shed styles, taken in turn the same way
 const DEPOT_STYLES = ["brick", "steel", "timber", "sawtooth"];
+// the empty yard's track takes its shed and platform styles like any other, under this key
+const EMPTY_KEY = "(empty)";
 
 // How a train moves: braking into a stand, pulling away, shunting; ms per px of travel, clamped.
 const ARRIVE_MS = 5600, DWELL_MS = 2800, DEPART_MS = 4400, HEADWAY_MS = 1800, LEG_LEAD = 60;
@@ -257,11 +260,31 @@ export class Tracks {
       .child(plate("pf-new", "+", false, null, () => run("tab.new", {})));
   }
 
+  /** A track's night scene without its train: the shed, the platform, the signal showing `aspect`, the rails, and a
+   *  plate at the corner reading `code` in `color`. */
+  scenery(id, key, w, h, aspect, code, color) {
+    const { platformX, signalX } = spots(w);
+    const rail = h - RAIL_FROM_BOTTOM;
+    return div().id(id).absolute().left(0).top(LANE_GAP).w(w).h(h).overflow_hidden()
+      .child(div().absolute().left(0).top(rail - BACK.h).child(piece("scene-back", BACK)))
+      .child(div().absolute().left(0).top(rail - DEPOT.h).child(piece(`scene-depot-${this.depot(key)}`, DEPOT)))
+      .child(div().absolute().left(platformX).top(rail - PLATFORM.h).child(piece(`scene-platform-${this.platform(key)}`, PLATFORM)))
+      .child(div().absolute().left(signalX).top(rail + SIGNAL.foot - SIGNAL.h).child(piece(`signal-${aspect}`, SIGNAL)))
+      .child(div().absolute().left(0).top(rail - TRACK.above).child(piece("scene-track", TRACK)))
+      .child(div().absolute().left(6).top(4).text_size(11).px(4).rounded(2).bg("#07090bcc").border_1().border_color(color).text_color(color).child(code));
+  }
+
+  /** The yard with no agents at all: one empty track, its signal dark, nothing in the shed or at the platform. */
+  emptyYard(w, h) {
+    return div().id("slot-empty").relative().w(w).flex_none().overflow_hidden().h(h + LANE_GAP)
+      .child(this.scenery("lane-empty", EMPTY_KEY, w, h, "dark", "NO SERVICE", INK.creamDim));
+  }
+
   lane(t, w, h, cx) {
     const key = t.agent.address;
     if (this.runs.get(key)?.status !== t.status) this.plan(t, cx);
     const m = this.runs.get(key);
-    const { platformX, signalX, at } = spots(w);
+    const { at } = spots(w);
     // a train that has come to a stand stays at its spot when the track's width changes
     const resting = { done: "platform", blocked: "signal", idle: "depot" }[t.status];
     if (resting && m.look === t.status && (!m.leg || Date.now() > m.leg.start + m.leg.ms)) m.x = at[resting];
@@ -272,16 +295,9 @@ export class Tracks {
     const consist = div().id(`train-${key}-${m.run}`).absolute().top(rail - WHEELS).left(Math.round(m.x))
       .transition("left", { duration: m.ms, easing: m.easing })
       .child(train(m.model, m.look));
-    const lane = div().id(`lane-${key}`).absolute().left(0).top(LANE_GAP).w(w).h(h).overflow_hidden()
+    const lane = this.scenery(`lane-${key}`, key, w, h, ASPECT[t.status] ?? "dark", t.code, color)
       .when(!gone, (el) => el.on_click(() => run("agent.focus", { terminal: key })))
-      .child(div().absolute().left(0).top(rail - BACK.h).child(piece("scene-back", BACK)))
-      .child(div().absolute().left(0).top(rail - DEPOT.h).child(piece(`scene-depot-${this.depot(key)}`, DEPOT)))
-      .child(div().absolute().left(platformX).top(rail - PLATFORM.h).child(piece(`scene-platform-${this.platform(key)}`, PLATFORM)))
-      .child(div().absolute().left(signalX).top(rail + SIGNAL.foot - SIGNAL.h).child(piece(`signal-${ASPECT[t.status] ?? "dark"}`, SIGNAL)))
-      .child(div().absolute().left(0).top(rail - TRACK.above).child(piece("scene-track", TRACK)))
       .child(consist)
-      // the train's code, on a plate at the track's corner
-      .child(div().absolute().left(6).top(4).text_size(11).px(4).rounded(2).bg("#07090bcc").border_1().border_color(color).text_color(color).child(t.code))
       .hover((s) => s.opacity(0.92));
     // the slot the track sits in: it opens out for a new agent and closes up after one has gone, so the tracks
     // below slide rather than jump
@@ -330,9 +346,10 @@ export class Tracks {
       // the yard: the tracks stacked at the column's foot under one night sky that fills whatever room they leave
       .child(v_flex().flex_1().min_h(0).bg(SKY.ink)
         .child(div().flex_1().min_h(0).relative().overflow_hidden()
-          .child(div().absolute().left(0).bottom(0).child(piece("scene-sky", SKY)))
-          .when(list.length === 0, (el) => el.child(div().absolute().left(0).top(0).p(16).text_size(13).text_color(INK.creamDim).child("NO TRAINS ON THE LINE"))))
-        .child(v_flex().flex_none().children(onTrack(list, fit).map((t) => this.lane(t, width, laneH, cx))))
+          .child(div().absolute().left(0).bottom(0).child(piece("scene-sky", SKY))))
+        .child(v_flex().flex_none()
+          .when(list.length === 0, (el) => el.child(this.emptyYard(width, laneH)))
+          .children(onTrack(list, fit).map((t) => this.lane(t, width, laneH, cx))))
         .when(list.length > fit, (el) => el.child(h_flex().flex_none().h(MORE_H).px(14).items_center().text_size(12).text_color(INK.creamDim).child(`+${list.length - fit} MORE IN THE YARD`))));
     // trains seen from now on are new agents: their tracks open and their trains run in
     this.started = true;
