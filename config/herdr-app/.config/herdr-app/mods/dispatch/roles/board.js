@@ -1,4 +1,5 @@
-// The departure board across the top: a Solari split-flap board, one row per agent (TRAIN, DESTINATION, STATUS, TIME),
+// The departure board across the top: a Solari split-flap board, one row per agent (TRAIN, DESTINATION, LINE, STATUS,
+// TIME, then REMARKS where there's room: why it stopped, else what it last reported; the line is the agent's space),
 // whoever needs the person first at the top. When a row changes, its cells turn over to the new words with the clatter
 // of the flaps; rows that trade places turn too. On the right a flap clock, then the line (space) you're on as a row of
 // flaps that turns over when you change line (a name too long for it turns over between its parts), and the
@@ -37,13 +38,16 @@ const TIERS = [
   { w: 11, h: 18, size: 11, gap: 1, row: 21, icon: 16 },
 ].map((t) => ({ ...t, color: INK.cream }));
 const HEAD_H = 30;
+const TOP = 4; // room above the column heads, off the board's top edge
 // The board grows with the trains so a busy line still shows every one: room for each at the largest flaps, from four
 // rows (layouts/dispatch.json's own height) up to the most, where ten still fit at the middle size and more shrink.
-const BOARD_PX = { min: 180, max: 340 };
-const boardPx = (n) => Math.min(BOARD_PX.max, Math.max(BOARD_PX.min, HEAD_H + 12 + n * TIERS[0].row));
+const BOARD_PX = { min: 184, max: 340 };
+const boardPx = (n) => Math.min(BOARD_PX.max, Math.max(BOARD_PX.min, TOP + HEAD_H + 12 + n * TIERS[0].row));
 const SIDE_W = 372;
 const SIDE_ROW = 34; // the right side's rows, the height of the board's first tier
-const COLS = { code: 3, status: 11, time: 3 };
+// the destination takes what's left, up to DEST_MAX, so the status stays within a glance of the code
+const COLS = { code: 3, line: 16, status: 11, time: 3 };
+const DEST_MAX = 32, REMARKS_MIN = 8; // the remarks take the rest, shown when at least REMARKS_MIN flaps fit
 const ICON_W = 30;
 const GAP = 14; // between the columns
 const SOUND_GAP_MS = 1500;
@@ -103,9 +107,10 @@ export class Board {
     cx.timer.after(60000 - (Date.now() % 60000) + 50, tick);
   }
 
-  // The clatter, when what the rows say changes (not the minutes ticking by), at most every SOUND_GAP_MS.
+  // The clatter, when what the rows say changes (not the minutes ticking by, nor the remarks, which change with every
+  // step an agent takes), at most every SOUND_GAP_MS.
   listen(rows, now) {
-    const said = rows.map((r) => `${r.code}|${r.dest}|${r.status}`).join("\n");
+    const said = rows.map((r) => `${r.code}|${r.dest}|${r.line}|${r.status}`).join("\n");
     if (this.heard !== null && said !== this.heard && now - this.soundAt > SOUND_GAP_MS && !checking()) {
       playSound("mods/dispatch/sounds/flap.mp3");
       this.soundAt = now;
@@ -114,16 +119,18 @@ export class Board {
   }
 
   // The column names, over the same columns as the rows. The window buttons sit over the TRAIN column's head.
-  head(destCols) {
+  head(destCols, lineCols, remarkCols) {
     const label = (text, w) => div().w(w).flex_none().text_size(12).text_color(INK.creamDim).child(text);
     return h_flex().h(HEAD_H).px(6).gap(GAP).items_center()
       .child(div().w(ICON_W + GAP + cellsWidth(COLS.code, this.look)).flex_none())
       .child(label("DESTINATION", cellsWidth(destCols, this.look)))
+      .when(lineCols > 0, (el) => el.child(label("LINE", cellsWidth(lineCols, this.look))))
       .child(label("STATUS", cellsWidth(COLS.status, this.look)))
-      .child(label("TIME", cellsWidth(COLS.time, this.look)));
+      .child(label("TIME", cellsWidth(COLS.time, this.look)))
+      .when(remarkCols > 0, (el) => el.child(label("REMARKS", cellsWidth(remarkCols, this.look))));
   }
 
-  row(i, train, destCols, now, drawn) {
+  row(i, train, destCols, lineCols, remarkCols, now, drawn) {
     const st = train?.status;
     const key = `r${i}`;
     const stopped = st === "blocked";
@@ -139,8 +146,11 @@ export class Board {
           : stopped ? div().loop("opacity", { from: 0.3, to: 1, period: 700 }).child(icon) : icon))
       .child(flapText(this.flaps, `${key}c`, train?.code ?? "", COLS.code, now, drawn, look, i * 60))
       .child(flapText(this.flaps, `${key}d`, train?.dest ?? "", destCols, now, drawn, look, i * 60 + 80))
-      .child(flapText(this.flaps, `${key}s`, train && !train.more ? WORD[st] : "", COLS.status, now, drawn, statusLook, i * 60 + 160))
-      .child(flapText(this.flaps, `${key}t`, train ? since(train.since, now) : "", COLS.time, now, drawn, look, i * 60 + 240));
+      .when(lineCols > 0, (el) => el.child(flapText(this.flaps, `${key}l`, train?.line ?? "", lineCols, now, drawn, look, i * 60 + 160)))
+      .child(flapText(this.flaps, `${key}s`, train && !train.more ? WORD[st] : "", COLS.status, now, drawn, statusLook, i * 60 + 240))
+      .child(flapText(this.flaps, `${key}t`, train ? since(train.since, now) : "", COLS.time, now, drawn, look, i * 60 + 320))
+      .when(remarkCols > 0, (el) => el.child(flapText(this.flaps, `${key}r`, train?.remark ?? "", remarkCols, now, drawn,
+        { ...look, color: INK.creamDim }, i * 60 + 400)));
   }
 
   clock(now, drawn) {
@@ -166,7 +176,7 @@ export class Board {
     openOverlay({
       mod: "dispatch", props: { role: "search" }, kind: "popup", frame: "none",
       width: SEARCH.width, height: searchHeight(rows),
-      at: { x: Math.max(10, lineRight - SEARCH.width), y: 10 + HEAD_H + SIDE_ROW + 4 },
+      at: { x: Math.max(10, lineRight - SEARCH.width), y: 10 + TOP + HEAD_H + SIDE_ROW + 4 },
     });
   }
 
@@ -233,7 +243,7 @@ export class Board {
     try { localStorage.setItem("dispatch.panels", JSON.stringify(this.panels)); } catch {}
   }
 
-  // Asks the layout for the board's height for `n` trains whenever it differs (a layout reload puts it back to 180), at
+  // Asks the layout for the board's height for `n` trains whenever it differs (a layout reload puts it back to 184), at
   // most once per RESIZE_WAIT_MS since layout() may lag the resize. Returns the height to lay the rows out for: the one
   // asked for while that resize is on its way, so the rows don't drop a size for a frame and come back.
   fitHeight(root, n) {
@@ -350,28 +360,34 @@ export class Board {
     const root = layout();
     const height = this.fitHeight(root, all.length), { width } = this.size;
     this.hangPa(cx);
-    const room = height - HEAD_H - 12;
+    const room = height - TOP - HEAD_H - 12;
     const rowsOf = (t) => Math.max(1, Math.floor(room / t.row));
     this.look = TIERS.find((t) => rowsOf(t) >= all.length) ?? TIERS.at(-1);
     const look = this.look;
-    const fixed = 12 + ICON_W + cellsWidth(COLS.code, look) + cellsWidth(COLS.status, look) + cellsWidth(COLS.time, look) + GAP * 4 + SIDE_W + 24;
-    const destCols = Math.max(8, Math.floor((width - fixed + look.gap) / (look.w + look.gap)));
+    const cols = (px) => Math.floor((px + look.gap) / (look.w + look.gap));
+    const base = 12 + ICON_W + cellsWidth(COLS.code, look) + cellsWidth(COLS.status, look) + cellsWidth(COLS.time, look) + GAP * 4 + SIDE_W + 24;
+    // on a narrow window the line steps aside before the status and time would be cut off
+    const lineCols = cols(width - base - cellsWidth(COLS.line, look) - GAP) >= 8 ? COLS.line : 0;
+    const fixed = base + (lineCols ? cellsWidth(lineCols, look) + GAP : 0), free = Math.max(8, cols(width - fixed));
+    // the destination up to DEST_MAX and the remarks after it; too little left for remarks goes to the destination
+    const rest = cols(width - fixed - cellsWidth(Math.min(DEST_MAX, free), look) - GAP);
+    const remarkCols = rest >= REMARKS_MIN ? rest : 0, destCols = remarkCols ? Math.min(DEST_MAX, free) : free;
     const fit = rowsOf(look);
     // more trains than rows: the last row says how many more are waiting
     const shown = all.length > fit ? [...all.slice(0, fit - 1), { code: "+++", dest: `${all.length - fit + 1} MORE`, status: "idle", more: true }] : all;
     this.listen(shown, now);
     const rows = Array.from({ length: fit }, (_, i) => {
       const t = shown[i];
-      return this.row(i, t?.more ? { ...t, agent: null, since: null } : t, destCols, now, drawn);
+      return this.row(i, t?.more ? { ...t, agent: null, since: null, remark: "" } : t, destCols, lineCols, remarkCols, now, drawn);
     });
-    const view = h_flex().id("board").size_full().bg(INK.board).gap(16).pr(14).pb(8)
+    const view = h_flex().id("board").size_full().bg(INK.board).gap(16).pt(TOP).pr(14).pb(8)
       .on_size_change((size, cx) => {
         if (size.width === this.size.width && size.height === this.size.height) return;
         this.size = size;
         this.measured = true;
         cx.notify();
       })
-      .child(v_flex().flex_1().min_w(0).overflow_hidden().child(this.head(destCols)).children(rows))
+      .child(v_flex().flex_1().min_w(0).overflow_hidden().child(this.head(destCols, lineCols, remarkCols)).children(rows))
       .child(v_flex().w(SIDE_W).flex_none().self_start()
         .child(h_flex().h(HEAD_H).justify_between().items_center().child(this.panelKeys(root, now, drawn)).child(this.clock(now, drawn)))
         .child(h_flex().h(SIDE_ROW).items_center().child(this.line(cx, now, drawn)))

@@ -24,15 +24,17 @@ export const LAMP = { working: INK.green, done: INK.yellow, blocked: INK.red, id
 
 export const tabsById = () => new Map(spaces().flatMap((s) => s.tabs.map((tb) => [tb.id, tb])));
 
-/** Every agent as a train, oldest first: { agent, code, dest, status, since }. */
+/** Every agent as a train, oldest first: { agent, code, dest, line, remark, status, since }; its line is its space. */
 export function trains() {
-  const tabs = tabsById();
+  const tabs = tabsById(), terms = new Map(terminals().map((t) => [t.address, t]));
   return byContact(agents()).map((a, i) => {
     const tab = tabs.get(a.tab);
     return {
       agent: a,
       code: trainCode(a, i),
       dest: a.title || tab?.name || a.program?.name || a.address,
+      line: a.space_name ?? "",
+      remark: remarkOf(a, terms.get(a.address)),
       status: a.status,
       since: (a.status === "working" ? tab?.working_since : null) ?? tab?.changed_at ?? null,
     };
@@ -56,6 +58,10 @@ export function since(ms, now = Date.now()) {
 const labelsOf = (a) => terminals().find((t) => t.address === a.address)?.labels ?? {};
 export const workIcon = (a) => labelsOf(a)["cc.op"] || "";
 export const stopReason = (a) => labelsOf(a)["cc.sos"] || "";
+/** The board's remark for a train, given its terminal: why it stopped, else what the agent last reported ("Running
+ *  tests", a summary), on one line. */
+const remarkOf = (a, term) =>
+  ((a.status === "blocked" && term?.labels?.["cc.sos"]) || term?.report?.msg || "").replace(/\s+/g, " ").trim();
 
 /** The cab's gauges: water = context used, coal = budget used (0..100), wrench = failed calls in a row. */
 export function gaugesOf(a) {

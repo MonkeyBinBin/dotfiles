@@ -9,14 +9,14 @@
   "traffic_lights": [24, 26],
   "background": "#07090b",
   "terminal_padding": [16, 18],
-  "terminal_opacity": 0.35,
+  "terminal_opacity": 0.45,
   "padding": [10, 10],
   "gap": 10,
   "children": [
     {
       "id": "board",
       "type": "block",
-      "size": { "px": 180 },
+      "size": { "px": 184 },
       "window_drag": true,
       "radius": 10,
       "content": { "mod": "dispatch", "props": { "role": "board" } }
