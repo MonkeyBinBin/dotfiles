@@ -1,6 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 
 import { closingPills, countEdit, DISPATCH_INK, endingOf, figuresOf, sceneOf } from './register'
+import type { SignName } from './train'
 import { boardClockOf, modelOf, pictogramOf, runOf, trainSignsOf, trainCells, trainColumnsOf, TRAIN_MODELS, TRAIN_ROWS } from './train'
 import type { Tally } from './register'
 import { ICON_ART } from './icons'
@@ -211,21 +212,32 @@ test('the scenery is drawn from how far the train has come, so a change of speed
   expect(new Set(shots).size).toBeGreaterThan(1)
 })
 
-test('each pictogram stays seven dots tall in its eight-dot room, and moves', () => {
+test('each pictogram stays seven dots tall in its eight-dot room, and the moving ones move', () => {
   const lit = (rows: string[]) => rows.join('|')
-  for (const name of ['edit', 'bash', 'read', 'web', 'agent', 'gear', 'fuel']) {
-    const frames = Array.from({ length: 24 }, (_, tick) => pictogramOf(name, tick, CALM))
+  const all: SignName[] = ['edit', 'bash', 'read', 'web', 'agent', 'gear', 'o2', 'fuel', 'hull']
+  for (const name of all) {
+    const frames = Array.from({ length: 24 }, (_, tick) => pictogramOf(name, tick, { ...CALM, o2: 85 }))
     for (const rows of frames) {
       expect(rows).toHaveLength(7)
       for (const row of rows) expect(row.length).toBeLessThanOrEqual(8)
     }
-    expect(new Set(frames.map(lit)).size).toBeGreaterThan(1)
+    if (name !== 'o2' && name !== 'hull') expect(new Set(frames.map(lit)).size).toBeGreaterThan(1)
   }
 })
 
-test('the water drop fills as the context does', () => {
-  const dots = (o2: number) => pictogramOf('o2', 0, { ...CALM, o2 }).join('').split('1').length - 1
-  const levels = [70, 80, 90, 100].map(dots)
-  expect([...levels].sort((a, b) => a - b)).toEqual(levels)
-  expect(levels[3]!).toBeGreaterThan(levels[0]!)
+test('a work kind outside the table is no sign at all, never a warning in disguise', () => {
+  expect(trainSignsOf({ ...CALM, op: 'constructor' })).toEqual([])
+  expect(trainSignsOf({ ...CALM, op: 'mcp' })).toEqual([])
+})
+
+test('the water drop fills from the bottom as the context does, one row at 70%, all of it when full, inside its outline', () => {
+  const drop = (o2: number) => pictogramOf('o2', 0, { ...CALM, o2 })
+  const outline = ['0001000', '0010100', '0100010', '1000001', '1000001', '0100010', '0011100'] // the empty drop
+  const filledRows = (rows: string[]) => rows.filter((row, y) => row !== outline[y]).length
+  expect([70, 80, 90, 100].map(o2 => filledRows(drop(o2)))).toEqual([1, 2, 4, 5])
+  // full: every dot between each row's outline edges lit, none outside them
+  drop(100).forEach((row, y) => {
+    const from = outline[y]!.indexOf('1'), to = outline[y]!.lastIndexOf('1')
+    expect(row).toBe(y === 0 || y === 6 ? outline[y] : '0'.repeat(from) + '1'.repeat(to - from + 1) + '0'.repeat(6 - to))
+  })
 })

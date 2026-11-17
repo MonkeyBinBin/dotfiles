@@ -223,7 +223,10 @@ function drawScene(c: ReturnType<typeof canvas>, model: TrainModel, run: Run, ti
 // beating each second; the kind of work as a pictogram lit in its service type's colour (a rapid's orange, a limited
 // express's red...); and the cab's gauges past amber (water = context, coal = rate limit, a warning sign for failures) as
 // amber pictograms, red and blinking at critical. Each sign has a cell's gap before it, so no two share a cell's one colour.
-const SERVICE: Record<string, number> = {
+type ServiceKind = 'edit' | 'bash' | 'read' | 'web' | 'agent' | 'gear'
+type GaugeKind = 'o2' | 'fuel' | 'hull'
+export type SignName = ServiceKind | GaugeKind
+const SERVICE: Record<ServiceKind, number> = {
   edit: 0xff8a2a, // a rapid's orange
   bash: 0xe8423a, // a limited express's red
   read: 0x3aa864, // a local's green
@@ -231,8 +234,11 @@ const SERVICE: Record<string, number> = {
   agent: 0xa070e8, // a special's violet
   gear: 0x8a949e, // any other tool, out-of-service grey
 }
+// own keys only: helm-bridge's op is any string, and 'constructor' is not a kind of work
+const isService = (op: string): op is ServiceKind => Object.hasOwn(SERVICE, op)
 const WARN_AT = 70, CRITICAL_AT = 90, HULL_AT = 3
 const SIGN_COLUMNS = 4 // eight dots of room for a seven-dot pictogram
+const CLOCK_GAP = 3 // between the clock and the first sign, wider than between signs so the time stands apart
 const SIGN_TOP = 7 // the top dot row of figures and pictograms: centred on the third row
 
 // The figures, five dots wide and seven tall; the colon one wide.
@@ -264,12 +270,14 @@ const FLAMES = [
 const DROP = ['0001000', '0010100', '0100010', '1000001', '1000001', '0100010', '0011100']
 const WARNING = ['0001000', '0010100', '0010100', '0101010', '0100010', '1001001', '1111111']
 const GLOBE_OUTLINE = ['0011100', '0100010', '1000001', '1111111', '1000001', '0100010', '0011100']
-const GLOBE_ROWS: [number, number][] = [[2, 4], [1, 5], [0, 6], [0, 6], [0, 6], [1, 5], [2, 4]] // where the outline's inside starts and ends each row
+const MERIDIANS = [2, 3, 4] // the globe's turning meridian, kept off the outline
 
 const set = (row: string, x: number) => (x >= 0 && x < row.length ? row.slice(0, x) + '1' + row.slice(x + 1) : row)
+/** Whether x is inside a row of an outline: between its first and last lit dot. */
+const isInside = (row: string, x: number) => x > row.indexOf('1') && x < row.lastIndexOf('1')
 
 /** A pictogram's dots at this tick: rows of seven (eight when shifted), '1' lit. `status` is for the gauges that show a level. */
-export function pictogramOf(name: string, tick: number, status: Status): string[] {
+export function pictogramOf(name: SignName, tick: number, status: Status): string[] {
   switch (name) {
     case 'edit': {
       const drawn = Math.floor(tick / 3) % 6 // the line under the tip grows, then a new one starts
@@ -282,11 +290,8 @@ export function pictogramOf(name: string, tick: number, status: Status): string[
       return GLASS.map(row => '0'.repeat(at) + row) // seven dots in a sign's eight: shifted a dot right
     }
     case 'web': {
-      const meridian = [3, 4, 5, 1, 2][Math.floor(tick / 3) % 5]! // a meridian goes round, coming back from the far side
-      return GLOBE_OUTLINE.map((row, y) => {
-        const [from, to] = GLOBE_ROWS[y]!
-        return meridian > from && meridian < to ? set(row, meridian) : row
-      })
+      const meridian = MERIDIANS[Math.floor(tick / 3) % MERIDIANS.length]! // one way round, coming back from the far side
+      return GLOBE_OUTLINE.map(row => (isInside(row, meridian) ? set(row, meridian) : row))
     }
     case 'agent':
       return [...ROCKET, EXHAUST[Math.floor(tick / 2) % EXHAUST.length]!]
@@ -297,15 +302,14 @@ export function pictogramOf(name: string, tick: number, status: Status): string[
       const level = 1 + Math.round(Math.max(0, Math.min(1, (status.o2 - WARN_AT) / (100 - WARN_AT))) * 4)
       return DROP.map((row, y) => {
         if (y < 6 - level || y > 5) return row
-        const [from, to] = GLOBE_ROWS[y]!
         let filled = row
-        for (let x = from + 1; x < to; x++) filled = set(filled, x)
+        for (let x = 0; x < row.length; x++) if (isInside(row, x)) filled = set(filled, x)
         return filled
       })
     }
     case 'fuel':
-      return FLAMES[Math.floor(noise(Math.floor(tick / 2), 7) * FLAMES.length)]!
-    default:
+      return FLAMES[Math.floor(noise(Math.floor(tick / 2), 7) * FLAMES.length) % FLAMES.length]! // noise can round up to 1
+    case 'hull':
       return WARNING
   }
 }
@@ -320,18 +324,21 @@ export function boardClockOf(ms: number) {
   return h > 0 ? `${h}:${String(m).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}`
 }
 
-export type Sign = [pictogram: string, kind: 'service' | 'gauge', isCritical: boolean]
+export type Sign = [pictogram: SignName, kind: 'service' | 'gauge', isCritical: boolean]
 /** The signs beside the clock: the work, then each gauge past amber. */
 export function trainSignsOf(status: Status): Sign[] {
   const signs: Sign[] = []
-  if (status.op && SERVICE[status.op] !== undefined) signs.push([status.op, 'service', false])
+  if (isService(status.op)) signs.push([status.op, 'service', false])
   if (status.o2 >= WARN_AT) signs.push(['o2', 'gauge', status.o2 >= CRITICAL_AT])
   if (status.fuel >= WARN_AT) signs.push(['fuel', 'gauge', status.fuel >= CRITICAL_AT])
   if (status.hull >= HULL_AT) signs.push(['hull', 'gauge', true])
   return signs
 }
 
-export const trainColumnsOf = (status: Status) => SCENE_COLUMNS + GAP * 2 + CLOCK_COLUMNS + trainSignsOf(status).length * (GAP + SIGN_COLUMNS)
+export function trainColumnsOf(status: Status) {
+  const signs = trainSignsOf(status).length
+  return SCENE_COLUMNS + GAP * 2 + CLOCK_COLUMNS + (signs > 0 ? CLOCK_GAP - GAP : 0) + signs * (GAP + SIGN_COLUMNS)
+}
 
 export function trainCells(model: TrainModel, run: Run, tick: number, travelled: number, elapsedMs: number, status: Status): string {
   const columns = trainColumnsOf(status)
@@ -368,12 +375,12 @@ export function trainCells(model: TrainModel, run: Run, tick: number, travelled:
     }
     return false
   })
-  at += CLOCK_COLUMNS
+  at += CLOCK_COLUMNS + CLOCK_GAP - GAP
 
   const isLitBeat = Math.floor(tick / 4) % 2 === 0
   for (const [name, kind, isCritical] of trainSignsOf(status)) {
     at += GAP
-    const ink = kind === 'service' ? SERVICE[name]! : isCritical ? (isLitBeat ? INK.red : fade(INK.red, 0.35)) : INK.amber
+    const ink = kind === 'service' && isService(name) ? SERVICE[name] : isCritical ? (isLitBeat ? INK.red : fade(INK.red, 0.35)) : INK.amber
     const rows = pictogramOf(name, tick, status)
     led(at, SIGN_COLUMNS, ink, (x, y) => rows[y - SIGN_TOP]?.[x] === '1')
     at += SIGN_COLUMNS
