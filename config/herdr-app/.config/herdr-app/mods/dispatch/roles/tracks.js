@@ -21,6 +21,7 @@ import { sprite } from "../kit/sprite.js";
 const ART = "mods/dispatch/assets";
 const PLATFORMS_H = 44;
 const LANE_H = 96, LANE_MIN = 80;
+const MORE_H = 24; // the "+N MORE IN THE YARD" line under the tracks
 const RAIL_FROM_BOTTOM = 14;
 // Every piece is baked at 4x and shown at a quarter: one art pixel to a point. Sizes in points.
 const TRAIN_W = 125, TRAIN_H = 35, WHEELS = 35; // the wheels stand WHEELS below the sprite's top
@@ -311,8 +312,11 @@ export class Tracks {
     });
     const list = this.order.map((k) => byKey.get(k) ?? { ...this.lastSeen.get(k), status: "gone" });
     const { width, height } = this.size;
-    const room = height - PLATFORMS_H - 8;
-    const fit = Math.max(1, Math.floor(room / (LANE_MIN + LANE_GAP)));
+    // when not every train gets a track, the line saying how many wait in the yard takes its room from the tracks
+    const fitIn = (h) => Math.max(1, Math.floor(h / (LANE_MIN + LANE_GAP)));
+    let room = height - PLATFORMS_H - 8;
+    if (list.length > fitIn(room)) room -= MORE_H;
+    const fit = fitIn(room);
     const laneH = Math.max(LANE_MIN, Math.min(LANE_H, Math.floor(room / Math.max(1, Math.min(list.length, fit))) - LANE_GAP));
     const view = v_flex().id("tracks").size_full().bg(INK.board).overflow_hidden()
       .on_size_change((size, cx) => {
@@ -329,7 +333,7 @@ export class Tracks {
           .child(div().absolute().left(0).bottom(0).child(piece("scene-sky", SKY)))
           .when(list.length === 0, (el) => el.child(div().absolute().left(0).top(0).p(16).text_size(13).text_color(INK.creamDim).child("NO TRAINS ON THE LINE"))))
         .child(v_flex().flex_none().children(onTrack(list, fit).map((t) => this.lane(t, width, laneH, cx))))
-        .when(list.length > fit, (el) => el.child(div().flex_none().px(14).pt(4).pb(4).text_size(12).text_color(INK.creamDim).child(`+${list.length - fit} MORE IN THE YARD`))));
+        .when(list.length > fit, (el) => el.child(h_flex().flex_none().h(MORE_H).px(14).items_center().text_size(12).text_color(INK.creamDim).child(`+${list.length - fit} MORE IN THE YARD`))));
     // trains seen from now on are new agents: their tracks open and their trains run in
     this.started = true;
     return view;

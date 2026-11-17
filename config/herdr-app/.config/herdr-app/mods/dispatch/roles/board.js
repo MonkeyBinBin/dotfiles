@@ -46,6 +46,7 @@ const SOUND_GAP_MS = 1500;
 // the platforms: tiles per row, rows at most
 const PLAT = { w: 22, h: 28, size: 18, gap: 6, perRow: 9, rows: 2 };
 const LINE_COLS = 13;
+const LINE_LABEL_W = 30, LINE_GAP = 8;
 const LINE_PAGE_MS = 3000; // a line name too long for its flaps turns over between its parts this often
 // the side panels, and their keys' small flaps (Cubic 11 stays crisp at 11 px)
 const PANELS = [["files", "FILES", "⇧⌘E"], ["changes", "CHANGES", "⇧⌘G"]];
@@ -55,6 +56,8 @@ const KEY_LIT = { ...KEY_LOOK, color: INK.plateText, bg: INK.plate, bgLo: INK.pl
 // (layouts/dispatch.json: the panel's and the track map's px, the row's gap)
 const MAIN_MIN = 900;
 const SIZES = { panel: 400, tracks: 440, gap: 10 };
+const ROOM_KEY = "dispatch.tracksAuto"; // set while the track map is stepped aside for the panel, so a reload still brings it back
+const RESIZE_WAIT_MS = 1000; // how long a board resize may take to show in layout() before it's asked for again
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -66,6 +69,7 @@ function find(node, id) {
 }
 
 const cellsWidth = (n, look = LOOK) => n * look.w + (n - 1) * look.gap;
+const LINE_W = LINE_LABEL_W + LINE_GAP + cellsWidth(LINE_COLS); // the LINE label and its flaps
 
 export class Board {
   constructor(cx) {
@@ -82,6 +86,7 @@ export class Board {
     });
     this.size = { width: 1200, height: 230 };
     try { this.panels = JSON.parse(localStorage.getItem("dispatch.panels") ?? "{}"); } catch { this.panels = {}; }
+    try { if (localStorage.getItem(ROOM_KEY)) this.room = { hid: true }; } catch {}
     this.heard = null;
     this.soundAt = 0;
     // the TIME column and the clock move on the minute
@@ -149,11 +154,13 @@ export class Board {
     }
     if (Date.now() - (st.closedAt ?? 0) < 400) return;
     const rows = Math.min(SEARCH.rows, spaces().length);
-    // the board sits 10 px in from the window (the layout's padding); the line row ends below the column heads' strip
+    // The board sits 10 px in from the window (the layout's padding) and the right side SIDE_W in from its right
+    // padding; the search's right edge meets the LINE flaps' and it drops from below their row.
+    const lineRight = 10 + this.size.width - 14 - SIDE_W + LINE_W;
     openOverlay({
       mod: "dispatch", props: { role: "search" }, kind: "popup", frame: "none",
       width: SEARCH.width, height: searchHeight(rows),
-      at: { x: Math.max(10, 10 + this.size.width - 14 - SEARCH.width), y: 10 + HEAD_H + SIDE_ROW + 4 },
+      at: { x: Math.max(10, lineRight - SEARCH.width), y: 10 + HEAD_H + SIDE_ROW + 4 },
     });
   }
 
@@ -175,12 +182,12 @@ export class Board {
         cx.timer.after(LINE_PAGE_MS, turn);
       }
     }
-    return h_flex().id("line").gap(8).items_center().rounded(4)
+    return h_flex().id("line").gap(LINE_GAP).items_center().rounded(4)
       .tooltip("Search lines (⌘P)")
       .hover((st) => st.opacity(0.85))
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
       .on_click(() => this.toggleSearch())
-      .child(div().w(30).flex_none().text_size(11).text_color(INK.creamDim).child("LINE"))
+      .child(div().w(LINE_LABEL_W).flex_none().text_size(11).text_color(INK.creamDim).child("LINE"))
       .child(flapText(this.flaps, "line", parts[this.linePage % parts.length], LINE_COLS, now, drawn, LOOK));
   }
 
@@ -193,7 +200,7 @@ export class Board {
 
   // The side panel is remembered per space (as on the sub's tab bar): switching shows that space's choice (closed if it
   // never had one), and opening or closing it records it.
-  syncPanel(space, panel, body) {
+  syncPanel(root, space, panel, body) {
     if (!space || !panel) return;
     const now = panel.hidden ? null : body?.active ?? null;
     if (space.id !== this.space) {
@@ -214,41 +221,55 @@ export class Board {
       if (this.pending.want !== now && Date.now() < this.pending.until) return;
       this.pending = null;
     }
-    this.makeRoom(panel, now);
+    this.makeRoom(root, panel, now);
     if (this.panels[space.id] === now) return;
     this.panels[space.id] = now;
     try { localStorage.setItem("dispatch.panels", JSON.stringify(this.panels)); } catch {}
   }
 
-  // Asks the layout for the board's height for `n` trains, once per change (layout() may lag the resize).
-  fitHeight(n) {
-    const want = boardPx(n);
-    if (want === this.askedPx) return;
-    this.askedPx = want;
-    if (find(layout(), "board")?.size?.px !== want) run("layout.resize", { id: "board", px: want });
+  // Asks the layout for the board's height for `n` trains whenever it differs (a layout reload puts it back to 180), at
+  // most once per RESIZE_WAIT_MS since layout() may lag the resize. Returns the height to lay the rows out for: the one
+  // asked for while that resize is on its way, so the rows don't drop a size for a frame and come back.
+  fitHeight(root, n) {
+    const want = boardPx(n), now = Date.now();
+    const has = find(root, "board")?.size?.px;
+    if (has !== want && !(this.asked?.px === want && now - this.asked.at < RESIZE_WAIT_MS)) {
+      this.asked = { px: want, at: now };
+      run("layout.resize", { id: "board", px: want });
+    }
+    return this.asked?.px === want && now - this.asked.at < RESIZE_WAIT_MS ? want : this.size.height;
   }
 
   // The track map steps aside when the panel opens on a window too narrow for the pane, panel and map together, and
-  // comes back when the panel closes. Decided once per opening: showing the map again yourself keeps it shown.
-  makeRoom(panel, open) {
-    const tracks = find(layout(), "tracks");
+  // comes back when the panel closes. Decided once per opening; showing the map again yourself (cmd-b) makes it yours:
+  // it's left as you leave it. The stepped-aside mark is kept in localStorage so a reload still brings the map back.
+  makeRoom(root, panel, open) {
+    const tracks = find(root, "tracks");
     if (!tracks) return;
+    const mark = (hid) => {
+      this.room = { hid };
+      try { hid ? localStorage.setItem(ROOM_KEY, "1") : localStorage.removeItem(ROOM_KEY); } catch {}
+    };
     if (!open) {
       if (this.room?.hid && tracks.hidden) run("layout.show", { id: "tracks" });
+      if (this.room) mark(false);
       this.room = null;
       return;
     }
-    if (this.room) return;
+    if (this.room) {
+      if (this.room.hid && !tracks.hidden) mark(false);
+      return;
+    }
     const px = (node, fallback) => node?.size?.px ?? fallback;
     const main = this.size.width - px(panel, SIZES.panel) - px(tracks, SIZES.tracks) - SIZES.gap * 2;
-    this.room = { hid: !tracks.hidden && main < MAIN_MIN };
+    mark(!tracks.hidden && main < MAIN_MIN);
     if (this.room.hid) run("layout.hide", { id: "tracks" });
   }
 
   // The panel keys: a word on small flaps in a key cap with its shortcut, amber while its panel is open.
-  panelKeys(now, drawn) {
-    const root = layout(), panel = find(root, "panel"), body = find(root, "panel-body");
-    this.syncPanel(spaces().find((sp) => sp.active), panel, body);
+  panelKeys(root, now, drawn) {
+    const panel = find(root, "panel"), body = find(root, "panel-body");
+    this.syncPanel(root, spaces().find((sp) => sp.active), panel, body);
     const open = panel && !panel.hidden ? body?.active : null;
     return h_flex().gap(6).items_center().children(PANELS.map(([id, word, keys]) => {
       const lit = open === id;
@@ -294,8 +315,8 @@ export class Board {
     const now = Date.now(), drawn = new Set();
     const all = boardOrder(trains());
     setAgentOrder(all.map((t) => t.agent.address));
-    this.fitHeight(all.length);
-    const { width, height } = this.size;
+    const root = layout();
+    const height = this.fitHeight(root, all.length), { width } = this.size;
     const room = height - HEAD_H - 12;
     const rowsOf = (t) => Math.max(1, Math.floor(room / t.row));
     this.look = TIERS.find((t) => rowsOf(t) >= all.length) ?? TIERS.at(-1);
@@ -318,7 +339,7 @@ export class Board {
       })
       .child(v_flex().flex_1().min_w(0).overflow_hidden().child(this.head(destCols)).children(rows))
       .child(v_flex().w(SIDE_W).flex_none().self_start()
-        .child(h_flex().h(HEAD_H).justify_between().items_center().child(this.panelKeys(now, drawn)).child(this.clock(now, drawn)))
+        .child(h_flex().h(HEAD_H).justify_between().items_center().child(this.panelKeys(root, now, drawn)).child(this.clock(now, drawn)))
         .child(h_flex().h(SIDE_ROW).items_center().child(this.line(cx, now, drawn)))
         .child(div().pt(3).child(this.platforms())));
     this.flaps.settle(cx, now, drawn);
