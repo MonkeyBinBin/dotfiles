@@ -14,6 +14,8 @@
 // their shortcut, amber while open) and the clock; the line on the first row; the platforms from the second.
 // The keys open the side panel between the pane and the track map (dispatch-files / dispatch-changes, the waybill);
 // cmd-shift-e / cmd-shift-g (dispatch.files, .changes) too. Each space remembers which panel it had open.
+// Notifications hang from under the right side as a PA board (dispatch-toast queues them in kit/pa.js; the board opens
+// the window, since only it knows where it is, and moves it when it grows).
 // When the panel would leave the pane narrower than MAIN_MIN, the track map steps aside while it's open and comes back
 // when it closes; showing the track map again yourself (cmd-b) keeps it for that opening.
 import { div, svg } from "gpui-kit";
@@ -22,6 +24,7 @@ import { spaces, run, playSound, checking, setAgentOrder, openOverlay, closeOver
 import { OPEN_KEY, SEARCH, searchHeight } from "./search.js";
 import { Flaps, flapText, pages, tile } from "../flap.js";
 import { ICON, INK, LAMP, STATUS_INK, WORD, boardOrder, since, trains } from "../state.js";
+import { PA } from "../kit/pa.js";
 
 // 18 wide: Cubic 11's widest capitals (M, W) are about 18 px at 22 px and would be clipped by a narrower flap
 const LOOK = { w: 18, h: 28, size: 22, gap: 2, color: INK.cream };
@@ -240,6 +243,31 @@ export class Board {
     return this.asked?.px === want && now - this.asked.at < RESIZE_WAIT_MS ? want : this.size.height;
   }
 
+  // The PA board hangs under the right side while announcements are queued. To move it when the board changes size, a
+  // new one opens in the new spot (a keyed window would stay where it was) and the old one closes itself when it sees
+  // the new one mark itself up in PA.open (only a mod's own overlays close from it, so the board can't). Once the
+  // board's window has been seen up and isn't any more (it emptied, or a layout switch closed it), the next
+  // announcement opens a fresh one.
+  hangPa(cx) {
+    if (!this.measured) return; // nowhere to hang it until the board knows its size
+    const up = shared(PA.open) ?? null;
+    if (this.pa) {
+      if (this.pa.id && up === this.pa.id) this.pa.seen = true;
+      else if (this.pa.seen) this.pa = null;
+    }
+    const now = Date.now();
+    if (!(shared(PA.key) ?? []).some((e) => e.until > now)) return;
+    const at = { x: Math.round(10 + this.size.width - 14 - SIDE_W), y: Math.round(10 + this.size.height) };
+    if (this.pa?.at.x === at.x && this.pa?.at.y === at.y) return;
+    // one still waiting for its turn to open isn't opened at all
+    const prev = this.pa, pa = (this.pa = { id: null, at, seen: false, dropped: false });
+    if (prev) prev.dropped = true;
+    cx.timer.after(0, () => {
+      if (pa.dropped) return;
+      pa.id = openOverlay({ mod: "dispatch-toast", props: { role: "pa" }, kind: "window", frame: "none", width: SIDE_W, at });
+    });
+  }
+
   // The track map steps aside when the panel opens on a window too narrow for the pane, panel and map together, and
   // comes back when the panel closes. Decided once per opening; showing the map again yourself (cmd-b) makes it yours:
   // it's left as you leave it. The stepped-aside mark is kept in localStorage so a reload still brings the map back.
@@ -317,6 +345,7 @@ export class Board {
     setAgentOrder(all.map((t) => t.agent.address));
     const root = layout();
     const height = this.fitHeight(root, all.length), { width } = this.size;
+    this.hangPa(cx);
     const room = height - HEAD_H - 12;
     const rowsOf = (t) => Math.max(1, Math.floor(room / t.row));
     this.look = TIERS.find((t) => rowsOf(t) >= all.length) ?? TIERS.at(-1);
@@ -335,6 +364,7 @@ export class Board {
       .on_size_change((size, cx) => {
         if (size.width === this.size.width && size.height === this.size.height) return;
         this.size = size;
+        this.measured = true;
         cx.notify();
       })
       .child(v_flex().flex_1().min_w(0).overflow_hidden().child(this.head(destCols)).children(rows))

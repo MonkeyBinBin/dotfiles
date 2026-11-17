@@ -1,6 +1,8 @@
 // What the whole railway is up to, shared by every role: each agent is a train with a code, a destination (its title)
 // and a status word, in the inks of a night dispatch office (amber LED on black, signal lamps).
 import { agents, spaces, terminals, shared, setShared } from "herdr";
+import { byContact } from "./kit/contacts.js";
+import { trainCode } from "./kit/trains.js";
 
 export const ICON = "mods/dispatch/icons";
 
@@ -20,30 +22,16 @@ export const STATUS_INK = { working: INK.amber, done: INK.yellow, blocked: INK.r
 // The signal lamp beside each track.
 export const LAMP = { working: INK.green, done: INK.yellow, blocked: INK.red, idle: INK.steelDim };
 
-/** "claude" | "codex" | "gemini" | "other". */
-export function toolOf(a) {
-  const app = `${a.app ?? ""} ${a.program?.key ?? ""} ${a.program?.name ?? ""}`.toLowerCase();
-  if (app.includes("claude")) return "claude";
-  if (app.includes("codex")) return "codex";
-  if (app.includes("gemini")) return "gemini";
-  return "other";
-}
-const LETTER = { claude: "C", codex: "X", gemini: "G", other: "A" };
-
-// Trains are numbered in the order their terminals were made, so a train keeps its number while it runs.
-const made = (address) => Number(address.match(/\d+/)?.[0] ?? 0);
-const byMade = (list) => [...list].sort((a, b) => made(a.address) - made(b.address) || (a.address < b.address ? -1 : 1));
-
 export const tabsById = () => new Map(spaces().flatMap((s) => s.tabs.map((tb) => [tb.id, tb])));
 
 /** Every agent as a train, oldest first: { agent, code, dest, status, since }. */
 export function trains() {
   const tabs = tabsById();
-  return byMade(agents()).map((a, i) => {
+  return byContact(agents()).map((a, i) => {
     const tab = tabs.get(a.tab);
     return {
       agent: a,
-      code: `${LETTER[toolOf(a)]}${String(i + 1).padStart(2, "0")}`,
+      code: trainCode(a, i),
       dest: a.title || tab?.name || a.program?.name || a.address,
       status: a.status,
       since: (a.status === "working" ? tab?.working_since : null) ?? tab?.changed_at ?? null,

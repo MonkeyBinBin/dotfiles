@@ -4,6 +4,7 @@
   "theme": "dispatch",
   "ui_font": "Cubic 11",
   "preview": "layouts/dispatch.svg",
+  "toast": "dispatch-toast",
   "titlebar": "none",
   "traffic_lights": [24, 26],
   "background": "#07090b",
