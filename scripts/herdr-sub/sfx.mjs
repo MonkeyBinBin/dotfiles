@@ -2,7 +2,7 @@
 // Synthesizes the sub's 8-bit alert sounds (square-wave chiptune) into mods/sub/sounds/ as MP3 (via ffmpeg):
 //   done.mp3     a little victory fanfare: an agent finished
 //   blocked.mp3  a two-note alarm: an agent needs you
-// Herdr plays them when settings.json says { "sounds": { "done": ..., "blocked": ... } } (install.sh sets that).
+// The sub's mods play them (kit/alerts.js, from sub-tabs); Herdr's own sounds are off in settings.json.
 //
 //   node scripts/herdr-sub/sfx.mjs
 

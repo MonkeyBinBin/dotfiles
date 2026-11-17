@@ -25,6 +25,7 @@ import { OPEN_KEY, SEARCH, searchHeight } from "./search.js";
 import { Flaps, flapText, pages, tile } from "../flap.js";
 import { ICON, INK, LAMP, STATUS_INK, WORD, boardOrder, since, trains } from "../state.js";
 import { PA } from "../kit/pa.js";
+import { Alerts } from "../kit/alerts.js";
 
 // 18 wide: Cubic 11's widest capitals (M, W) are about 18 px at 22 px and would be clipped by a narrower flap
 const LOOK = { w: 18, h: 28, size: 22, gap: 2, color: INK.cream };
@@ -78,6 +79,8 @@ export class Board {
   constructor(cx) {
     this.flaps = new Flaps();
     this.look = TIERS[0];
+    // the PA's chimes when an agent arrives or comes to a signal stop (scripts/herdr-sub/dispatch-chime.mjs)
+    this.alerts = new Alerts({ done: "mods/dispatch/sounds/done.mp3", blocked: "mods/dispatch/sounds/blocked.mp3" });
     // a search left open by an earlier run is gone now; forget it
     cx.timer.after(0, () => setShared(OPEN_KEY, null));
     cx.spawn(async () => {
@@ -343,6 +346,7 @@ export class Board {
     const now = Date.now(), drawn = new Set();
     const all = boardOrder(trains());
     setAgentOrder(all.map((t) => t.agent.address));
+    this.alerts.watch();
     const root = layout();
     const height = this.fitHeight(root, all.length), { width } = this.size;
     this.hangPa(cx);

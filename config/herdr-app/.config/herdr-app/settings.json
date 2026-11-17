@@ -1,7 +1,7 @@
 {
   "zoom": 1.0,
   "sounds": {
-    "enabled": true,
+    "enabled": false,
     "done": "mods/sub/sounds/done.mp3",
     "blocked": "mods/sub/sounds/blocked.mp3"
   },

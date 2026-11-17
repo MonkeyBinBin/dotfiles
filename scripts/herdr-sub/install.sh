@@ -19,16 +19,3 @@ for mod in "$SRC"/mods/*/; do
   rsync -a --delete --exclude gpui-kit.d.ts --exclude jsconfig.json "$mod" "$DEST/mods/$name/"
   echo "copied mods/$name"
 done
-
-# The sub's 8-bit alerts (scripts/herdr-sub/sfx.mjs), unless settings.json already names other sounds.
-node -e '
-const fs = require("fs"), file = process.argv[1];
-const s = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : {};
-s.sounds ??= { enabled: true };
-let changed = false;
-for (const k of ["done", "blocked"]) {
-  const want = `mods/sub/sounds/${k}.mp3`;
-  if (!s.sounds[k] || /^mods\/(camp|sub)\//.test(s.sounds[k])) changed ||= s.sounds[k] !== want, (s.sounds[k] = want);
-}
-if (changed) fs.writeFileSync(file, JSON.stringify(s, null, 2) + "\n"), console.log("settings.json: sub sounds");
-' "$DEST/settings.json"

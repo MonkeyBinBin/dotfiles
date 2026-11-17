@@ -7,6 +7,7 @@ import { View, div, image, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { battleLight, onAlert } from "./kit/battle-light.js";
 import { byContact } from "./kit/contacts.js";
+import { Alerts } from "./kit/alerts.js";
 import { sosEscorts } from "./kit/escorts.js";
 import { framed } from "./kit/frame.js";
 import { sprite } from "./kit/sprite.js";
@@ -33,6 +34,8 @@ export default class Tabs extends View {
     this.pressed = null;
     this.open = {};
     this.panels = JSON.parse(localStorage.getItem("panels") ?? "{}");
+    // the sub's 8-bit fanfare and alarm when an agent finishes or needs you (scripts/herdr-sub/sfx.mjs)
+    this.alerts = new Alerts({ done: "mods/sub/sounds/done.mp3", blocked: "mods/sub/sounds/blocked.mp3" });
     cx.spawn(async () => {
       for (;;) this.command(await nextCommand());
     });
@@ -118,6 +121,7 @@ export default class Tabs extends View {
   }
 
   render() {
+    this.alerts.watch();
     const t = theme();
     const space = spaces().find(p => p.active);
     const shown = space?.tabs ?? [];
