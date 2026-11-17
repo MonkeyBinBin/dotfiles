@@ -244,17 +244,70 @@ const FONT: Record<string, string[]> = {
   8: ['01110', '10001', '10001', '01110', '10001', '10001', '01110'], 9: ['01110', '10001', '10001', '01111', '00001', '00010', '01100'],
   ':': ['0', '0', '1', '0', '1', '0', '0'],
 }
-// The pictograms, seven by seven: the work's kinds, then the gauges (o2 water, fuel coal, hull a warning sign).
-const PICTOGRAMS: Record<string, string[]> = {
-  edit: ['0000011', '0000111', '0001110', '0011100', '0111000', '1010000', '1100000'], // pencil
-  bash: ['1000000', '0100000', '0010000', '0100000', '1000000', '0000000', '0001111'], // prompt
-  read: ['0111000', '1000100', '1000100', '1000100', '0111100', '0000010', '0000001'], // magnifying glass
-  web: ['0011100', '0101010', '1001001', '1111111', '1001001', '0101010', '0011100'], // globe
-  agent: ['0001000', '0011100', '0010100', '0011100', '0111110', '1011101', '0010100'], // rocket
-  gear: ['0001000', '0111110', '0100010', '1100011', '0100010', '0111110', '0001000'], // gear
-  o2: ['0001000', '0010100', '0100010', '1000001', '1000001', '0100010', '0011100'], // water drop
-  fuel: ['0001000', '0011000', '0111100', '0111110', '1111011', '1110011', '0111110'], // flame
-  hull: ['0001000', '0010100', '0010100', '0101010', '0100010', '1001001', '1111111'], // warning sign
+// The pictograms, seven by seven: the work's kinds, then the gauges (o2 water, fuel coal, hull a warning sign). Each moves to
+// say what it's doing: the pencil draws a line, the prompt's cursor blinks, the glass scans, the globe turns, the rocket's
+// exhaust flickers, the gear turns, the drop holds as much water as the context is full, the flame flickers.
+const PENCIL = ['0000011', '0000111', '0001110', '0011100', '0111000', '1010000']
+const PROMPT = ['1000000', '0100000', '0010000', '0100000', '1000000', '0000000']
+const GLASS = ['0111000', '1000100', '1000100', '1000100', '0111100', '0000010', '0000001']
+const ROCKET = ['0001000', '0011100', '0010100', '0011100', '0111110', '1011101']
+const EXHAUST = ['0010100', '0001000', '0011100', '0010100', '0101010']
+const GEARS = [
+  ['0001000', '0111110', '0100010', '1100011', '0100010', '0111110', '0001000'],
+  ['1000001', '0111110', '0100010', '0100010', '0100010', '0111110', '1000001'],
+]
+const FLAMES = [
+  ['0001000', '0011000', '0111100', '0111110', '1111011', '1110011', '0111110'],
+  ['0000100', '0001100', '0011110', '0111110', '1110111', '1110011', '0111110'],
+  ['0010000', '0011000', '0111100', '0111110', '1101111', '1100111', '0111110'],
+]
+const DROP = ['0001000', '0010100', '0100010', '1000001', '1000001', '0100010', '0011100']
+const WARNING = ['0001000', '0010100', '0010100', '0101010', '0100010', '1001001', '1111111']
+const GLOBE_OUTLINE = ['0011100', '0100010', '1000001', '1111111', '1000001', '0100010', '0011100']
+const GLOBE_ROWS: [number, number][] = [[2, 4], [1, 5], [0, 6], [0, 6], [0, 6], [1, 5], [2, 4]] // where the outline's inside starts and ends each row
+
+const set = (row: string, x: number) => (x >= 0 && x < row.length ? row.slice(0, x) + '1' + row.slice(x + 1) : row)
+
+/** A pictogram's dots at this tick: rows of seven (eight when shifted), '1' lit. `status` is for the gauges that show a level. */
+export function pictogramOf(name: string, tick: number, status: Status): string[] {
+  switch (name) {
+    case 'edit': {
+      const drawn = Math.floor(tick / 3) % 6 // the line under the tip grows, then a new one starts
+      return [...PENCIL, '11' + '1'.repeat(drawn).padEnd(5, '0')]
+    }
+    case 'bash':
+      return [...PROMPT, Math.floor(tick / 4) % 2 === 0 ? '0001111' : '0000000']
+    case 'read': {
+      const at = [0, 0, 1, 1][Math.floor(tick / 3) % 4]! // back and forth across its room
+      return GLASS.map(row => '0'.repeat(at) + row) // seven dots in a sign's eight: shifted a dot right
+    }
+    case 'web': {
+      const meridian = [3, 4, 5, 1, 2][Math.floor(tick / 3) % 5]! // a meridian goes round, coming back from the far side
+      return GLOBE_OUTLINE.map((row, y) => {
+        const [from, to] = GLOBE_ROWS[y]!
+        return meridian > from && meridian < to ? set(row, meridian) : row
+      })
+    }
+    case 'agent':
+      return [...ROCKET, EXHAUST[Math.floor(tick / 2) % EXHAUST.length]!]
+    case 'gear':
+      return GEARS[Math.floor(tick / 3) % GEARS.length]!
+    case 'o2': {
+      // filled from the bottom: one row at the 70% warning, the whole drop when the context is full
+      const level = 1 + Math.round(Math.max(0, Math.min(1, (status.o2 - WARN_AT) / (100 - WARN_AT))) * 4)
+      return DROP.map((row, y) => {
+        if (y < 6 - level || y > 5) return row
+        const [from, to] = GLOBE_ROWS[y]!
+        let filled = row
+        for (let x = from + 1; x < to; x++) filled = set(filled, x)
+        return filled
+      })
+    }
+    case 'fuel':
+      return FLAMES[Math.floor(noise(Math.floor(tick / 2), 7) * FLAMES.length)]!
+    default:
+      return WARNING
+  }
 }
 const glyphWidth = (ch: string) => FONT[ch]![0]!.length
 const dotsWide = (text: string) => [...text].reduce((n, ch) => n + glyphWidth(ch) + 1, -1)
@@ -321,7 +374,7 @@ export function trainCells(model: TrainModel, run: Run, tick: number, travelled:
   for (const [name, kind, isCritical] of trainSignsOf(status)) {
     at += GAP
     const ink = kind === 'service' ? SERVICE[name]! : isCritical ? (isLitBeat ? INK.red : fade(INK.red, 0.35)) : INK.amber
-    const rows = PICTOGRAMS[name]!
+    const rows = pictogramOf(name, tick, status)
     led(at, SIGN_COLUMNS, ink, (x, y) => rows[y - SIGN_TOP]?.[x] === '1')
     at += SIGN_COLUMNS
   }

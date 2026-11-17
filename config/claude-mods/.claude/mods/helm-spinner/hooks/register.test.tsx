@@ -1,7 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 
 import { closingPills, countEdit, DISPATCH_INK, endingOf, figuresOf, sceneOf } from './register'
-import { boardClockOf, modelOf, runOf, trainSignsOf, trainCells, trainColumnsOf, TRAIN_MODELS, TRAIN_ROWS } from './train'
+import { boardClockOf, modelOf, pictogramOf, runOf, trainSignsOf, trainCells, trainColumnsOf, TRAIN_MODELS, TRAIN_ROWS } from './train'
 import type { Tally } from './register'
 import { ICON_ART } from './icons'
 import { ALARM, clockOf, columnsOf, glowOf, MOTION, pillsOf, rowCells, ROWS, waveAt } from './wave'
@@ -209,4 +209,23 @@ test('the scenery is drawn from how far the train has come, so a change of speed
   const slow = runOf(MOTION.thinking, false)
   const shots = Array.from({ length: 10 }, (_, i) => frame(slow, i * slow.speed))
   expect(new Set(shots).size).toBeGreaterThan(1)
+})
+
+test('each pictogram stays seven dots tall in its eight-dot room, and moves', () => {
+  const lit = (rows: string[]) => rows.join('|')
+  for (const name of ['edit', 'bash', 'read', 'web', 'agent', 'gear', 'fuel']) {
+    const frames = Array.from({ length: 24 }, (_, tick) => pictogramOf(name, tick, CALM))
+    for (const rows of frames) {
+      expect(rows).toHaveLength(7)
+      for (const row of rows) expect(row.length).toBeLessThanOrEqual(8)
+    }
+    expect(new Set(frames.map(lit)).size).toBeGreaterThan(1)
+  }
+})
+
+test('the water drop fills as the context does', () => {
+  const dots = (o2: number) => pictogramOf('o2', 0, { ...CALM, o2 }).join('').split('1').length - 1
+  const levels = [70, 80, 90, 100].map(dots)
+  expect([...levels].sort((a, b) => a - b)).toEqual(levels)
+  expect(levels[3]!).toBeGreaterThan(levels[0]!)
 })
