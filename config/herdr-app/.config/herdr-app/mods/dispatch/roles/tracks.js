@@ -252,13 +252,15 @@ export class Tracks {
   platforms() {
     const space = spaces().find((s) => s.active);
     const tabs = (space?.tabs ?? []).filter((t) => !t.settled);
-    const plate = (id, label, lit, status, onClick) => h_flex().id(id).flex_none().h(26).px(9).gap(6).items_center().rounded(4)
+    const plate = (id, label, lit, status, onClick, tip) => h_flex().id(id).flex_none().h(26).px(9).gap(6).items_center().rounded(4)
       .bg(lit ? INK.plate : INK.flap).border_1().border_color(lit ? INK.plate : INK.steelDim)
       .hover((s) => s.border_color(INK.plate)).on_click(onClick)
+      .when(Boolean(tip), (el) => el.tooltip(tip)) // the full name, which the plate may truncate
       .when(Boolean(status), (el) => el.child(div().flex_none().size(7).rounded_full().bg(LAMP[status])))
       .child(div().max_w(PLATFORM_NAME_W).truncate().text_size(13).text_color(lit ? INK.plateText : INK.creamDim).child(label));
     // every tab shows: the plates wrap onto more rows rather than run off the edge, + at the end of the last one
-    return h_flex().flex_wrap().min_h(PLATFORMS_H).px(12).py(9).gap(6).items_center().border_b(1).border_color(INK.steelDim)
+    // pb one short of pt: the bottom border makes up the difference, so one row is exactly PLATFORMS_H
+    return h_flex().id("platforms").flex_none().flex_wrap().overflow_hidden().min_h(PLATFORMS_H).px(12).pt(9).pb(8).gap(6).items_center().border_b(1).border_color(INK.steelDim)
       .on_size_change((size, cx) => {
         if (Math.round(size.height) === this.platformsH) return;
         this.platformsH = Math.round(size.height);
@@ -266,7 +268,7 @@ export class Tracks {
       })
       .child(div().flex_none().text_size(11).text_color(INK.creamDim).mr(4).child("PLATFORM"))
       .children(tabs.map((t) =>
-        plate(`pf-${t.id}`, t.named ? `${t.index} ${t.name.toUpperCase()}` : String(t.index), t.active, t.status, () => run("tab.select", { id: t.id }))))
+        plate(`pf-${t.id}`, t.named ? `${t.index} ${t.name.toUpperCase()}` : String(t.index), t.active, t.status, () => run("tab.select", { id: t.id }), t.named ? t.name : null)))
       .child(plate("pf-new", "+", false, null, () => run("tab.new", {})));
   }
 
@@ -340,7 +342,7 @@ export class Tracks {
     const { width, height } = this.size;
     // when not every train gets a track, the line saying how many wait in the yard takes its room from the tracks
     const fitIn = (h) => Math.max(1, Math.floor(h / (LANE_MIN + LANE_GAP)));
-    let room = height - this.platformsH - 8;
+    let room = Math.max(0, height - this.platformsH - 8);
     if (list.length > fitIn(room)) room -= MORE_H;
     const fit = fitIn(room);
     const laneH = Math.max(LANE_MIN, Math.min(LANE_H, Math.floor(room / Math.max(1, Math.min(list.length, fit))) - LANE_GAP));
