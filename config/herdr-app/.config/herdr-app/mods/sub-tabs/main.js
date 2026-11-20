@@ -4,7 +4,7 @@
 // double-click to rename, right-click menu, + menu, side panel buttons remembered per space. An unnamed tab goes by its
 // agent's title. Key commands (keys.json): sub-tabs.files, .changes, .log, .radio, .keys, .new, .agent1-9, which goes to contact C1-C9, and .sos, which goes to the next one waiting on the person.
 import { View, div, image, svg } from "gpui-kit";
-import { h_flex, v_flex } from "gpui-base";
+import { h_flex, v_flex, ScrollHandle } from "gpui-base";
 import { battleLight, onAlert } from "./kit/battle-light.js";
 import { byContact } from "./kit/contacts.js";
 import { Alerts } from "./kit/alerts.js";
@@ -33,6 +33,9 @@ export default class Tabs extends View {
   init(_props, cx) {
     this.pressed = null;
     this.open = {};
+    // the tab plates' scroll position, so the shown tab can be brought into view
+    this.scroll = ScrollHandle.new();
+    this.shownTab = null;
     this.panels = JSON.parse(localStorage.getItem("panels") ?? "{}");
     // the sub's 8-bit fanfare and alarm when an agent finishes or needs you (scripts/herdr-sub/sfx.mjs)
     this.alerts = new Alerts({ done: "mods/sub/sounds/done.mp3", blocked: "mods/sub/sounds/blocked.mp3" });
@@ -125,6 +128,13 @@ export default class Tabs extends View {
     const t = theme();
     const space = spaces().find(p => p.active);
     const shown = space?.tabs ?? [];
+    // bring the shown tab into view whenever it changes (a switch, a new tab past the edge, a space change)
+    const active = shown.findIndex((c) => c.active);
+    const activeId = active >= 0 ? shown[active].id : null;
+    if (activeId !== this.shownTab) {
+      this.shownTab = activeId;
+      if (active >= 0) this.scroll.scroll_to_item(active);
+    }
     const stop = (_e, cx) => cx.stop_propagation();
     // small steel plates
     const button = (id, label, action) => div().id(id).flex_none().h(30).text_color(INK.steel).hover(s => s.text_color(INK.steelHi))
@@ -180,7 +190,9 @@ export default class Tabs extends View {
       .on_mouse_up("left", () => { this.pressed = null; })
       .on_scroll_wheel(e => { if (Math.abs(e.delta.y) >= 1) run(e.delta.y > 0 ? "tab.prev" : "tab.next"); })
       // + right behind the last tab, scrolling with the tabs: a scroller always fills its row, so outside it + would sit at the far end
-      .child(h_flex().id("tab-scroll").flex_1().min_w(0).h_full().items_center().overflow_x_scrollbar().gap(8).children(shown.map(item))
+      .child(h_flex().id("tab-scroll").flex_1().min_w(0).h_full().items_center().overflow_x_scrollbar().track_scroll(this.scroll).gap(8)
+        .on_size_change((_size, cx) => { if (active >= 0) { this.scroll.scroll_to_item(active); cx.notify(); } })
+        .children(shown.map(item))
         .child(button("tab-new", "+", () => openOverlay({ mod: "sub-new-menu", kind: "popup", width: 250, frame: "none" }))))
       .when(enabled.includes("files"), el => el.child(panelButton("files", "Files", "mods/files/file.svg")))
       .when(enabled.includes("changes"), el => el.child(panelButton("changes", "Changes", "mods/changes/changes.svg")))
