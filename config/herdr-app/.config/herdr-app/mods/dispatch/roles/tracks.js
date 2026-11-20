@@ -21,6 +21,7 @@ import { sprite } from "../kit/sprite.js";
 
 const ART = "mods/dispatch/assets";
 const PLATFORMS_H = 44;
+const PLATFORM_NAME_W = 100; // a named platform's plate truncates its name past this
 const LANE_H = 96, LANE_MIN = 80;
 const MORE_H = 24; // the "+N MORE IN THE YARD" line under the tracks
 const RAIL_FROM_BOTTOM = 14;
@@ -103,6 +104,8 @@ export class Tracks {
     this.nextPlatform = Math.floor(Math.random() * PLATFORM_STYLES.length);
     this.depotOf = new Map();
     this.nextDepot = Math.floor(Math.random() * DEPOT_STYLES.length);
+    // the platforms wrap onto more rows as the tabs outgrow one; the tracks get what's left (measured)
+    this.platformsH = PLATFORMS_H;
   }
 
   // A train's journey for its status. A transition carries it along each leg and timers start the next; a new status
@@ -248,14 +251,21 @@ export class Tracks {
 
   platforms() {
     const space = spaces().find((s) => s.active);
-    const plate = (id, label, lit, status, onClick) => h_flex().id(id).h(26).px(9).gap(6).items_center().rounded(4)
+    const tabs = (space?.tabs ?? []).filter((t) => !t.settled);
+    const plate = (id, label, lit, status, onClick) => h_flex().id(id).flex_none().h(26).px(9).gap(6).items_center().rounded(4)
       .bg(lit ? INK.plate : INK.flap).border_1().border_color(lit ? INK.plate : INK.steelDim)
       .hover((s) => s.border_color(INK.plate)).on_click(onClick)
-      .when(Boolean(status), (el) => el.child(div().size(7).rounded_full().bg(LAMP[status])))
-      .child(div().text_size(13).text_color(lit ? INK.plateText : INK.creamDim).child(label));
-    return h_flex().h(PLATFORMS_H).px(12).gap(6).items_center().overflow_hidden().border_b(1).border_color(INK.steelDim)
-      .child(div().text_size(11).text_color(INK.creamDim).mr(4).child("PLATFORM"))
-      .children((space?.tabs ?? []).filter((t) => !t.settled).map((t) =>
+      .when(Boolean(status), (el) => el.child(div().flex_none().size(7).rounded_full().bg(LAMP[status])))
+      .child(div().max_w(PLATFORM_NAME_W).truncate().text_size(13).text_color(lit ? INK.plateText : INK.creamDim).child(label));
+    // every tab shows: the plates wrap onto more rows rather than run off the edge, + at the end of the last one
+    return h_flex().flex_wrap().min_h(PLATFORMS_H).px(12).py(9).gap(6).items_center().border_b(1).border_color(INK.steelDim)
+      .on_size_change((size, cx) => {
+        if (Math.round(size.height) === this.platformsH) return;
+        this.platformsH = Math.round(size.height);
+        cx.notify();
+      })
+      .child(div().flex_none().text_size(11).text_color(INK.creamDim).mr(4).child("PLATFORM"))
+      .children(tabs.map((t) =>
         plate(`pf-${t.id}`, t.named ? `${t.index} ${t.name.toUpperCase()}` : String(t.index), t.active, t.status, () => run("tab.select", { id: t.id }))))
       .child(plate("pf-new", "+", false, null, () => run("tab.new", {})));
   }
@@ -330,7 +340,7 @@ export class Tracks {
     const { width, height } = this.size;
     // when not every train gets a track, the line saying how many wait in the yard takes its room from the tracks
     const fitIn = (h) => Math.max(1, Math.floor(h / (LANE_MIN + LANE_GAP)));
-    let room = height - PLATFORMS_H - 8;
+    let room = height - this.platformsH - 8;
     if (list.length > fitIn(room)) room -= MORE_H;
     const fit = fitIn(room);
     const laneH = Math.max(LANE_MIN, Math.min(LANE_H, Math.floor(room / Math.max(1, Math.min(list.length, fit))) - LANE_GAP));
