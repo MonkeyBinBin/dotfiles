@@ -1,6 +1,6 @@
 // What the whole railway is up to, shared by every role: each agent is a train with a code, a destination (its title)
 // and a status word, in the inks of a night dispatch office (amber LED on black, signal lamps).
-import { agents, spaces, panes, focused, terminals, shared, setShared } from "herdr";
+import { agents, spaces, panes, focused, home, terminals, shared, setShared } from "herdr";
 import { byContact } from "./kit/contacts.js";
 import { trainCode } from "./kit/trains.js";
 
@@ -22,19 +22,32 @@ export const STATUS_INK = { working: INK.amber, done: INK.yellow, blocked: INK.r
 // The signal lamp beside each track.
 export const LAMP = { working: INK.green, done: INK.yellow, blocked: INK.red, idle: INK.steelDim };
 
-/** A space's line name: the basename of the folder it's in now. Herdr's own name sticks once someone names the space,
- *  and `folder` is only where new terminals start, so neither follows a `cd`. The shown space reads its focused pane,
+/** A space's line name: the basename of the folder it's in now ("~" at home). Herdr's own name sticks once someone
+ *  names the space, and `folder` is only where new terminals start, so neither follows a `cd`. The shown space reads
+ *  its focused pane (only a real pane of it: a focused layout block or window terminal may belong to another space),
  *  the others the first pane with a folder in their current tab; the name when none has one. */
 export function lineName(s) {
   if (!s) return "";
-  const f = s.active ? focused() : null;
+  const all = panes(), f = s.active ? focused() : null;
+  const ours = (p) => s.tabs.some((tb) => tb.id === p.tab);
+  const mine = f?.pane ? all.find((p) => p.pane === f.pane && ours(p)) : null;
   const tab = s.tabs.find((tb) => tb.active)?.id;
-  const cwd = (f?.space === s.id && f.cwd) || panes().find((p) => p.tab === tab && p.cwd)?.cwd
-    || panes().find((p) => s.tabs.some((tb) => tb.id === p.tab) && p.cwd)?.cwd;
+  const cwd = mine?.cwd || all.find((p) => p.tab === tab && p.cwd)?.cwd || all.find((p) => ours(p) && p.cwd)?.cwd;
   return cwd ? basename(cwd) : s.name ?? "";
 }
 
-const basename = (path) => path.split("/").filter(Boolean).pop() ?? "/";
+/** The platform's hover text: its line, and the name it was given in Herdr when that says something else. */
+export function lineTitle(s) {
+  const line = lineName(s);
+  return s?.named && s.name && s.name !== line ? `${line} (${s.name})` : line;
+}
+
+const trim = (path) => path.replace(/\/+$/, "");
+const basename = (path) => {
+  const h = home();
+  if (h && trim(path) === trim(h)) return "~";
+  return path.split("/").filter(Boolean).pop() ?? "/";
+};
 
 export const tabsById = () => new Map(spaces().flatMap((s) => s.tabs.map((tb) => [tb.id, tb])));
 
