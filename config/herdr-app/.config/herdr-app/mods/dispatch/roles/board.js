@@ -9,7 +9,7 @@
 //   done     ARRIVED      in yellow
 //   blocked  SIGNAL STOP  in red on red flaps, the row and its lamp pulsing
 //   idle     DEPOT        in steel blue
-// A row's click goes to that agent; a platform's click shows that space (hover it for the space's name). A click on the
+// A row's click goes to that agent; a platform's click shows that space (hover it for the space's folder name). A click on the
 // line, or cmd-p (keys.json: dispatch.search), drops the line search from it.
 // The right side keeps to the board's rows: on the column heads' strip FILES and CHANGES keys (small flaps in a key cap with
 // their shortcut, amber while open) and the clock; the line on the first row; the platforms from the second.
@@ -24,7 +24,7 @@ import { h_flex, v_flex } from "gpui-base";
 import { spaces, run, playSound, checking, setAgentOrder, openOverlay, closeOverlay, nextCommand, shared, setShared, layout } from "herdr";
 import { OPEN_KEY, SEARCH, searchHeight } from "./search.js";
 import { Flaps, flapText, pages, tile } from "../flap.js";
-import { ICON, INK, LAMP, STATUS_INK, WORD, boardOrder, since, trains } from "../state.js";
+import { ICON, INK, LAMP, STATUS_INK, WORD, boardOrder, lineName, since, trains } from "../state.js";
 import { PA } from "../kit/pa.js";
 import { Alerts } from "../kit/alerts.js";
 
@@ -182,7 +182,7 @@ export class Board {
 
   // A name longer than the flaps turns over between its parts, like a long station name on a Solari board.
   line(cx, now, drawn) {
-    const name = spaces().find((sp) => sp.active)?.name ?? "";
+    const name = lineName(spaces().find((sp) => sp.active));
     const parts = pages(name, LINE_COLS);
     if (name !== this.lineName) {
       this.lineName = name;
@@ -332,7 +332,7 @@ export class Board {
     const face = tile({ ch: label, seq: null }, { w: PLAT.w, h: PLAT.h, size: PLAT.size, color: lit ? INK.plateText : INK.cream,
       ...(lit ? { bg: INK.plate, bgLo: INK.plateLo } : {}) });
     return v_flex().id(`plat-${space.id}`).flex_none().gap(3).items_center()
-      .tooltip(space.name)
+      .tooltip(lineName(space))
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
       .on_click(() => run("space.select", { id: space.id }))
       .hover((s) => s.opacity(0.85))
@@ -346,7 +346,7 @@ export class Board {
     const shown = all.length > room ? all.slice(0, room - 1) : all;
     const rest = all.slice(shown.length);
     const tiles = shown.map((sp, i) => this.platform(sp, i));
-    if (rest.length) tiles.push(div().w(PLAT.w).h(PLAT.h).flex_none().text_size(13).text_color(INK.creamDim).tooltip(rest.map((sp) => sp.name).join(", ")).child(`+${rest.length}`));
+    if (rest.length) tiles.push(div().w(PLAT.w).h(PLAT.h).flex_none().text_size(13).text_color(INK.creamDim).tooltip(rest.map(lineName).join(", ")).child(`+${rest.length}`));
     const rows = [];
     for (let i = 0; i < tiles.length; i += PLAT.perRow) rows.push(h_flex().gap(PLAT.gap).children(tiles.slice(i, i + PLAT.perRow)));
     return v_flex().gap(6).children(rows);

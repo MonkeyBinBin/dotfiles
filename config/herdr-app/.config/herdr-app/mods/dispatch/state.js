@@ -1,6 +1,6 @@
 // What the whole railway is up to, shared by every role: each agent is a train with a code, a destination (its title)
 // and a status word, in the inks of a night dispatch office (amber LED on black, signal lamps).
-import { agents, spaces, terminals, shared, setShared } from "herdr";
+import { agents, spaces, panes, focused, terminals, shared, setShared } from "herdr";
 import { byContact } from "./kit/contacts.js";
 import { trainCode } from "./kit/trains.js";
 
@@ -22,18 +22,30 @@ export const STATUS_INK = { working: INK.amber, done: INK.yellow, blocked: INK.r
 // The signal lamp beside each track.
 export const LAMP = { working: INK.green, done: INK.yellow, blocked: INK.red, idle: INK.steelDim };
 
+/** A space's line name: the basename of the folder it's in now. Herdr's own name sticks once someone names the space,
+ *  and `folder` is only where new terminals start, so neither follows a `cd`. The shown space reads its focused pane,
+ *  the others the first pane with a folder in their current tab; the name when none has one. */
+export function lineName(s) {
+  if (!s) return "";
+  const f = s.active ? focused() : null;
+  const tab = s.tabs.find((tb) => tb.active)?.id;
+  const cwd = (f?.space === s.id && f.cwd) || panes().find((p) => p.tab === tab && p.cwd)?.cwd
+    || panes().find((p) => s.tabs.some((tb) => tb.id === p.tab) && p.cwd)?.cwd;
+  return cwd ? cwd.split("/").filter(Boolean).pop() ?? "/" : s.name ?? "";
+}
+
 export const tabsById = () => new Map(spaces().flatMap((s) => s.tabs.map((tb) => [tb.id, tb])));
 
 /** Every agent as a train, oldest first: { agent, code, dest, line, remark, status, since }; its line is its space. */
 export function trains() {
-  const tabs = tabsById(), terms = new Map(terminals().map((t) => [t.address, t]));
+  const tabs = tabsById(), lines = new Map(spaces().map((s) => [s.id, lineName(s)])), terms = new Map(terminals().map((t) => [t.address, t]));
   return byContact(agents()).map((a, i) => {
     const tab = tabs.get(a.tab);
     return {
       agent: a,
       code: trainCode(a, i),
       dest: a.title || tab?.name || a.program?.name || a.address,
-      line: a.space_name ?? "",
+      line: lines.get(a.space) ?? a.space_name ?? "",
       remark: remarkOf(a, terms.get(a.address)),
       status: a.status,
       since: (a.status === "working" ? tab?.working_since : null) ?? tab?.changed_at ?? null,

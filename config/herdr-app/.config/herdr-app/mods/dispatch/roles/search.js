@@ -9,7 +9,7 @@ import { div } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { spaces, run, props, closeOverlay, setShared, nextCommand } from "herdr";
 import { Flaps, glyphs, tile } from "../flap.js";
-import { INK, LAMP, RANK, STATUS_INK, WORD } from "../state.js";
+import { INK, LAMP, RANK, STATUS_INK, WORD, lineName } from "../state.js";
 
 const QUERY = { w: 18, h: 28, size: 22, gap: 2, color: INK.cream };
 const NAME = { w: 18, h: 26, size: 22, gap: 2, color: INK.cream };
@@ -70,7 +70,7 @@ export class Search {
   }
 
   results() {
-    return spaces().map((s, idx) => ({ s, idx, m: match(s.name, this.query) })).filter((r) => r.m)
+    return spaces().map((s, idx) => ({ s, idx, m: match(lineName(s), this.query) })).filter((r) => r.m)
       .sort((a, b) => (RANK[a.s.status] ?? 3) - (RANK[b.s.status] ?? 3) || b.m.score - a.m.score || a.idx - b.idx)
       .slice(0, SEARCH.rows);
   }
@@ -107,7 +107,7 @@ export class Search {
         .child(div().size(6).flex_none().rounded_full().bg(r.s.status ? LAMP[st] : INK.steelDim)
           .when(st === "blocked", (el) => el.loop("opacity", { from: 0.25, to: 1, period: 700 })))
         .child(plate))
-      .child(this.name(`n${r.s.id}`, r.s.name, r.m.hits, now, drawn))
+      .child(this.name(`n${r.s.id}`, lineName(r.s), r.m.hits, now, drawn))
       .child(div().w(120).flex_none().text_size(15).text_color(STATUS_INK[st]).child(WORD[st]))
       .child(div().flex_1().text_size(13).text_color(INK.creamDim).text_right().child(String(r.s.tabs.filter((t) => !t.settled).length)));
   }
