@@ -22,18 +22,19 @@ export const STATUS_INK = { working: INK.amber, done: INK.yellow, blocked: INK.r
 // The signal lamp beside each track.
 export const LAMP = { working: INK.green, done: INK.yellow, blocked: INK.red, idle: INK.steelDim };
 
-/** A space's line name: the basename of the folder it's in now ("~" at home). Herdr's own name sticks once someone
- *  names the space, and `folder` is only where new terminals start, so neither follows a `cd`. The shown space reads
- *  its focused pane (only a real pane of it: a focused layout block or window terminal may belong to another space),
- *  the others the first pane with a folder in their current tab; the name when none has one. */
-export function lineName(s) {
+/** A space's line name: the basename of the folder it's in now ("~" at home on this machine). Herdr's own name sticks
+ *  once someone names the space, and `folder` is only where new terminals start, so neither follows a `cd`. The shown
+ *  space reads its focused pane (only a real pane of it: a focused layout block or window terminal may belong to another
+ *  space) unless `follow` is false, then the first pane with a folder in its current tab, then in any of its tabs; the
+ *  name when none has one. */
+export function lineName(s, { follow = true } = {}) {
   if (!s) return "";
-  const all = panes(), f = s.active ? focused() : null;
+  const all = panes(), f = follow && s.active ? focused() : null;
   const ours = (p) => s.tabs.some((tb) => tb.id === p.tab);
   const mine = f?.pane ? all.find((p) => p.pane === f.pane && ours(p)) : null;
   const tab = s.tabs.find((tb) => tb.active)?.id;
   const cwd = mine?.cwd || all.find((p) => p.tab === tab && p.cwd)?.cwd || all.find((p) => ours(p) && p.cwd)?.cwd;
-  return cwd ? basename(cwd) : s.name ?? "";
+  return cwd ? basename(cwd, s.machine) : s.name ?? "";
 }
 
 /** The platform's hover text: its line, and the name it was given in Herdr when that says something else. */
@@ -43,8 +44,9 @@ export function lineTitle(s) {
 }
 
 const trim = (path) => path.replace(/\/+$/, "");
-const basename = (path) => {
-  const h = home();
+// home() is this machine's, so only a local path can be "~"
+const basename = (path, machine = null) => {
+  const h = machine == null ? home() : null;
   if (h && trim(path) === trim(h)) return "~";
   return path.split("/").filter(Boolean).pop() ?? "/";
 };
@@ -52,21 +54,23 @@ const basename = (path) => {
 export const tabsById = () => new Map(spaces().flatMap((s) => s.tabs.map((tb) => [tb.id, tb])));
 
 /** Every agent as a train, oldest first: { agent, code, dest, line, remark, status, since }; its line is the folder its
- *  own pane is in (so moving focus doesn't re-flap the board), else its space's line. */
+ *  own pane is in, else the first folder in its tab, else its space's line without following focus (so moving focus
+ *  never re-flaps the board). */
 export function trains() {
-  const tabs = tabsById(), cwds = new Map(panes().map((p) => [p.pane, p.cwd])), terms = new Map(terminals().map((t) => [t.address, t]));
-  const lines = new Map();
+  const tabs = tabsById(), all = panes(), cwds = new Map(all.map((p) => [p.pane, p.cwd])), terms = new Map(terminals().map((t) => [t.address, t]));
+  const byId = new Map(spaces().map((s) => [s.id, s])), lines = new Map();
   const lineOf = (id) => {
-    if (!lines.has(id)) lines.set(id, lineName(spaces().find((s) => s.id === id)) || null);
+    if (!lines.has(id)) lines.set(id, lineName(byId.get(id), { follow: false }) || null);
     return lines.get(id);
   };
   return byContact(agents()).map((a, i) => {
-    const tab = tabs.get(a.tab), cwd = cwds.get(a.pane);
+    const tab = tabs.get(a.tab), machine = byId.get(a.space)?.machine ?? null;
+    const cwd = cwds.get(a.pane) || all.find((p) => p.tab === a.tab && p.cwd)?.cwd;
     return {
       agent: a,
       code: trainCode(a, i),
       dest: a.title || tab?.name || a.program?.name || a.address,
-      line: (cwd ? basename(cwd) : lineOf(a.space)) ?? a.space_name ?? "",
+      line: (cwd ? basename(cwd, machine) : lineOf(a.space)) ?? a.space_name ?? "",
       remark: remarkOf(a, terms.get(a.address)),
       status: a.status,
       since: (a.status === "working" ? tab?.working_since : null) ?? tab?.changed_at ?? null,
