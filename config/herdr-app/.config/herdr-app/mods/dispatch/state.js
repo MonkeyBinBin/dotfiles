@@ -31,21 +31,29 @@ export function lineName(s) {
   const tab = s.tabs.find((tb) => tb.active)?.id;
   const cwd = (f?.space === s.id && f.cwd) || panes().find((p) => p.tab === tab && p.cwd)?.cwd
     || panes().find((p) => s.tabs.some((tb) => tb.id === p.tab) && p.cwd)?.cwd;
-  return cwd ? cwd.split("/").filter(Boolean).pop() ?? "/" : s.name ?? "";
+  return cwd ? basename(cwd) : s.name ?? "";
 }
+
+const basename = (path) => path.split("/").filter(Boolean).pop() ?? "/";
 
 export const tabsById = () => new Map(spaces().flatMap((s) => s.tabs.map((tb) => [tb.id, tb])));
 
-/** Every agent as a train, oldest first: { agent, code, dest, line, remark, status, since }; its line is its space. */
+/** Every agent as a train, oldest first: { agent, code, dest, line, remark, status, since }; its line is the folder its
+ *  own pane is in (so moving focus doesn't re-flap the board), else its space's line. */
 export function trains() {
-  const tabs = tabsById(), lines = new Map(spaces().map((s) => [s.id, lineName(s)])), terms = new Map(terminals().map((t) => [t.address, t]));
+  const tabs = tabsById(), cwds = new Map(panes().map((p) => [p.pane, p.cwd])), terms = new Map(terminals().map((t) => [t.address, t]));
+  const lines = new Map();
+  const lineOf = (id) => {
+    if (!lines.has(id)) lines.set(id, lineName(spaces().find((s) => s.id === id)) || null);
+    return lines.get(id);
+  };
   return byContact(agents()).map((a, i) => {
-    const tab = tabs.get(a.tab);
+    const tab = tabs.get(a.tab), cwd = cwds.get(a.pane);
     return {
       agent: a,
       code: trainCode(a, i),
       dest: a.title || tab?.name || a.program?.name || a.address,
-      line: lines.get(a.space) ?? a.space_name ?? "",
+      line: (cwd ? basename(cwd) : lineOf(a.space)) ?? a.space_name ?? "",
       remark: remarkOf(a, terms.get(a.address)),
       status: a.status,
       since: (a.status === "working" ? tab?.working_since : null) ?? tab?.changed_at ?? null,

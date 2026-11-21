@@ -70,7 +70,12 @@ export class Search {
   }
 
   results() {
-    return spaces().map((s, idx) => ({ s, idx, m: match(lineName(s), this.query) })).filter((r) => r.m)
+    // the folder it's in now, or the name it was given in Herdr: whichever matches better is the one shown
+    return spaces().map((s, idx) => {
+      const [label, m] = [lineName(s), s.name].map((n) => [n, match(n, this.query)]).filter(([, m]) => m)
+        .sort((x, y) => y[1].score - x[1].score)[0] ?? [];
+      return { s, idx, label, m };
+    }).filter((r) => r.m)
       .sort((a, b) => (RANK[a.s.status] ?? 3) - (RANK[b.s.status] ?? 3) || b.m.score - a.m.score || a.idx - b.idx)
       .slice(0, SEARCH.rows);
   }
@@ -107,7 +112,7 @@ export class Search {
         .child(div().size(6).flex_none().rounded_full().bg(r.s.status ? LAMP[st] : INK.steelDim)
           .when(st === "blocked", (el) => el.loop("opacity", { from: 0.25, to: 1, period: 700 })))
         .child(plate))
-      .child(this.name(`n${r.s.id}`, lineName(r.s), r.m.hits, now, drawn))
+      .child(this.name(`n${r.s.id}`, r.label, r.m.hits, now, drawn))
       .child(div().w(120).flex_none().text_size(15).text_color(STATUS_INK[st]).child(WORD[st]))
       .child(div().flex_1().text_size(13).text_color(INK.creamDim).text_right().child(String(r.s.tabs.filter((t) => !t.settled).length)));
   }
