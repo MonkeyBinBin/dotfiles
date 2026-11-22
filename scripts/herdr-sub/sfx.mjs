@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 
 const OUT = join(dirname(fileURLToPath(import.meta.url)), "../../config/herdr-app/.config/herdr-app/mods/sub/sounds");
 const RATE = 44100;
+const LEVEL = 0.4; // output level (about -8 dB), so the alerts sit under whatever else is playing
 const hz = (note) => 440 * 2 ** ((note - 69) / 12); // MIDI note number
 
 // notes: [midi, beats, duty]; a square wave with a fast attack and a decay per note, plus a quiet octave echo
@@ -23,7 +24,7 @@ function render(notes, bpm, volume = 0.28) {
     for (let i = 0; i < len; i++) {
       const t = i / RATE, env = Math.min(1, i / 120) * Math.exp(-3.2 * (i / len));
       const sq = (fr) => ((t * fr) % 1 < duty ? 1 : -1);
-      out.push(f ? volume * env * (0.8 * sq(f) + 0.2 * sq(f * 2)) : 0);
+      out.push(f ? LEVEL * volume * env * (0.8 * sq(f) + 0.2 * sq(f * 2)) : 0);
     }
   }
   // a short tail so it doesn't click off
