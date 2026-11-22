@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 
 const OUT = join(dirname(fileURLToPath(import.meta.url)), "../../config/herdr-app/.config/herdr-app/mods/dispatch/sounds");
 const RATE = 44100;
+const LEVEL = 0.4; // output level after the limiter (about -8 dB), so the chimes sit under whatever else is playing
 const hz = (note) => 440 * 2 ** ((note - 69) / 12); // MIDI note number
 
 let seed = 7;
@@ -63,7 +64,7 @@ function render(notes, len, volume) {
   const fade = Math.round(RATE * 0.25);
   return Float32Array.from(wet, (x, i) => {
     const tail = i > wet.length - fade ? (wet.length - i) / fade : 1;
-    return Math.tanh(x * volume) * 0.9 * tail;
+    return Math.tanh(x * volume) * 0.9 * tail * LEVEL;
   });
 }
 

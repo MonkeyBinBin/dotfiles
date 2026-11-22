@@ -21,6 +21,7 @@ import { fileURLToPath } from "node:url";
 
 const OUT = join(dirname(fileURLToPath(import.meta.url)), "../../config/herdr-app/.config/herdr-app/mods/dispatch/sounds");
 const RATE = 44100;
+const LEVEL = 0.4; // output level after the limiter (about -8 dB), so the clatter sits under whatever else is playing
 const MODULES = 36, RATE_HZ = 16, MAX_FLAPS = 14;
 
 // a seeded random, so the sound is the same on every run
@@ -98,7 +99,7 @@ for (const v of out) peak = Math.max(peak, Math.abs(v));
 let end = out.length;
 while (end > 0 && Math.abs(out[end - 1]) < peak * 0.002) end--;
 const pcm = new Float32Array(Math.min(out.length, end + Math.round(RATE * 0.03)));
-for (let i = 0; i < pcm.length; i++) pcm[i] = Math.tanh((out[i] / peak) * 1.1) * 0.85;
+for (let i = 0; i < pcm.length; i++) pcm[i] = Math.tanh((out[i] / peak) * 1.1) * 0.85 * LEVEL;
 
 const file = join(OUT, "flap.mp3");
 mkdirSync(OUT, { recursive: true });
