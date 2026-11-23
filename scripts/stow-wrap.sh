@@ -254,6 +254,31 @@ if [[ ${#normal_args[@]} -gt 0 ]]; then
   fi
 fi
 
+# 拆除上次 promote 建的 skill 資料夾 symlink：stow 不認得這種絕對路徑 link，
+# 會判定為衝突而中止。只拆指向 repo 內同名 skill 的 link，stow 後會再 promote。
+if [[ ${#ai_cli_args[@]} -gt 0 ]]; then
+  for arg in "${ai_cli_args[@]}"; do
+    skills_src="$REPO_ROOT/config/$arg/.$arg/skills"
+    skills_dst="$HOME/.$arg/skills"
+    [[ -d "$skills_src" ]] || continue
+    for skill_dir in "$skills_src"/*/; do
+      [[ -d "$skill_dir" ]] || continue
+      live="$skills_dst/$(basename "$skill_dir")"
+      [[ -L "$live" ]] || continue
+      target="$(readlink "$live")"
+      [[ "${target%/}" == "${skill_dir%/}" ]] || continue
+      if [[ $DEBUG -eq 1 ]]; then
+        print_debug "demote skill folder symlink" "$arg/$(basename "$skill_dir")"
+      fi
+      if [[ $DRY_RUN -eq 1 ]]; then
+        echo "rm $live"
+      else
+        rm "$live"
+      fi
+    done
+  done
+fi
+
 # 執行需要 --no-folding 的套件（獨立呼叫以避免影響一般套件）
 if [[ ${#no_folding_args[@]} -gt 0 ]]; then
   nf_cmd=("${base_cmd[@]}" --no-folding ${stow_flags[@]+"${stow_flags[@]}"} "${no_folding_args[@]}")
