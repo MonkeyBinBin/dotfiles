@@ -72,6 +72,7 @@ export function trains() {
       dest: a.title || tab?.name || a.program?.name || a.address,
       line: (cwd ? basename(cwd, machine) : lineOf(a.space)) ?? a.space_name ?? "",
       remark: remarkOf(a, terms.get(a.address)),
+      schedule: scheduleOf(a, terms.get(a.address)),
       status: a.status,
       since: (a.status === "working" ? tab?.working_since : null) ?? tab?.changed_at ?? null,
     };
@@ -114,6 +115,24 @@ const remarkOf = (a, term) => {
 export function gaugesOf(a) {
   const l = labelsOf(a);
   return { water: Number(l["cc.o2"] || 0), coal: Number(l["cc.fuel"] || 0), faults: Number(l["cc.hull"] || 0) };
+}
+
+// A run this long overdue on an agent that isn't working isn't coming (its session is gone, or the job was dropped unseen)
+const OVERDUE_MS = 5 * 60000;
+
+/** What's scheduled on a train (/loop, CronCreate), or null: { next (ms), every ("30M", "LOOP" or ""), jobs, fired
+ *  (this turn was started by one) }. */
+function scheduleOf(a, term, now = Date.now()) {
+  const l = term?.labels ?? {}, next = Number(l["cc.next"] || 0);
+  const fired = a.status === "working" && l["cc.fired"] === "1";
+  if (!next || (a.status !== "working" && a.status !== "blocked" && now - next > OVERDUE_MS)) return null;
+  return { next, every: l["cc.every"] || "", jobs: Number(l["cc.jobs"] || 1), fired };
+}
+
+/** "14:37", or "11/28" for a day or more from now: five characters. */
+export function clockAt(ms, now = Date.now()) {
+  const d = new Date(ms), two = (n) => String(n).padStart(2, "0");
+  return ms - now < 24 * 3600000 ? `${two(d.getHours())}:${two(d.getMinutes())}` : `${two(d.getMonth() + 1)}/${two(d.getDate())}`;
 }
 
 /** The icon for what a stop is about ("Bash: git push", "Question", "linear:save_issue"). */

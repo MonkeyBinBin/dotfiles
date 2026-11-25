@@ -1,5 +1,6 @@
 // The departure board across the top: a Solari split-flap board, one row per agent (TRAIN, DESTINATION, LINE, STATUS,
-// TIME, then REMARKS where there's room: why it stopped, else what it last reported; the line is the agent's space),
+// TIME, NEXT while any agent has a prompt scheduled (/loop, CronCreate): when its next one runs, amber in a turn one
+// started; then REMARKS where there's room: why it stopped, else what it last reported; the line is the agent's space),
 // whoever needs the person first at the top. When a row changes, its cells turn over to the new words with the clatter
 // of the flaps; rows that trade places turn too. On the right a flap clock, then the line (space) you're on as a row of
 // flaps that turns over when you change line (a name too long for it turns over between its parts), and the
@@ -24,7 +25,7 @@ import { h_flex, v_flex } from "gpui-base";
 import { spaces, run, playSound, checking, setAgentOrder, openOverlay, closeOverlay, nextCommand, shared, setShared, layout } from "herdr";
 import { OPEN_KEY, SEARCH, searchHeight } from "./search.js";
 import { Flaps, flapText, pages, tile } from "../flap.js";
-import { ICON, INK, LAMP, STATUS_INK, WORD, boardOrder, lineName, lineTitle, since, trains } from "../state.js";
+import { ICON, INK, LAMP, STATUS_INK, WORD, boardOrder, clockAt, lineName, lineTitle, since, trains } from "../state.js";
 import { PA } from "../kit/pa.js";
 import { Alerts } from "../kit/alerts.js";
 
@@ -46,8 +47,9 @@ const boardPx = (n) => Math.min(BOARD_PX.max, Math.max(BOARD_PX.min, TOP + HEAD_
 const SIDE_W = 372;
 const SIDE_ROW = 34; // the right side's rows, the height of the board's first tier
 // the destination takes what's left, up to DEST_MAX, so the status stays within a glance of the code
-const COLS = { code: 3, line: 16, status: 11, time: 3 };
+const COLS = { code: 3, line: 16, status: 11, time: 3, next: 5 };
 const DEST_MAX = 32, REMARKS_MIN = 8; // the remarks take the rest, shown when at least REMARKS_MIN flaps fit
+const NEXT_DEST_MIN = 16; // NEXT steps aside when it would leave the destination fewer flaps than this
 const ICON_W = 30;
 const GAP = 14; // between the columns
 const SOUND_GAP_MS = 1500;
@@ -119,7 +121,7 @@ export class Board {
   }
 
   // The column names, over the same columns as the rows. The window buttons sit over the TRAIN column's head.
-  head(destCols, lineCols, remarkCols) {
+  head(destCols, lineCols, nextCols, remarkCols) {
     const label = (text, w) => div().w(w).flex_none().text_size(12).text_color(INK.creamDim).child(text);
     return h_flex().h(HEAD_H).px(6).gap(GAP).items_center()
       .child(div().w(ICON_W + GAP + cellsWidth(COLS.code, this.look)).flex_none())
@@ -127,10 +129,11 @@ export class Board {
       .when(lineCols > 0, (el) => el.child(label("LINE", cellsWidth(lineCols, this.look))))
       .child(label("STATUS", cellsWidth(COLS.status, this.look)))
       .child(label("TIME", cellsWidth(COLS.time, this.look)))
+      .when(nextCols > 0, (el) => el.child(label("NEXT", cellsWidth(nextCols, this.look))))
       .when(remarkCols > 0, (el) => el.child(label("REMARKS", cellsWidth(remarkCols, this.look))));
   }
 
-  row(i, train, destCols, lineCols, remarkCols, now, drawn) {
+  row(i, train, destCols, lineCols, nextCols, remarkCols, now, drawn) {
     const st = train?.status;
     const key = `r${i}`;
     const stopped = st === "blocked";
@@ -149,6 +152,8 @@ export class Board {
       .when(lineCols > 0, (el) => el.child(flapText(this.flaps, `${key}l`, train?.line ?? "", lineCols, now, drawn, look, i * 60 + 160)))
       .child(flapText(this.flaps, `${key}s`, train && !train.more ? WORD[st] : "", COLS.status, now, drawn, statusLook, i * 60 + 240))
       .child(flapText(this.flaps, `${key}t`, train ? since(train.since, now) : "", COLS.time, now, drawn, look, i * 60 + 320))
+      .when(nextCols > 0, (el) => el.child(flapText(this.flaps, `${key}n`, train?.schedule ? clockAt(train.schedule.next, now) : "", nextCols, now, drawn,
+        { ...look, color: train?.schedule?.fired ? INK.amber : INK.green }, i * 60 + 360)))
       .when(remarkCols > 0, (el) => el.child(flapText(this.flaps, `${key}r`, train?.remark ?? "", remarkCols, now, drawn,
         { ...look, color: INK.creamDim }, i * 60 + 400)));
   }
@@ -365,7 +370,11 @@ export class Board {
     this.look = TIERS.find((t) => rowsOf(t) >= all.length) ?? TIERS.at(-1);
     const look = this.look;
     const cols = (px) => Math.floor((px + look.gap) / (look.w + look.gap));
-    const base = 12 + ICON_W + cellsWidth(COLS.code, look) + cellsWidth(COLS.status, look) + cellsWidth(COLS.time, look) + GAP * 4 + SIDE_W + 24;
+    const bare = 12 + ICON_W + cellsWidth(COLS.code, look) + cellsWidth(COLS.status, look) + cellsWidth(COLS.time, look) + GAP * 4 + SIDE_W + 24;
+    // NEXT is there while anything is scheduled; on a narrow window it's the first to go after the remarks
+    const nextW = cellsWidth(COLS.next, look) + GAP;
+    const nextCols = all.some((t) => t.schedule) && cols(width - bare - cellsWidth(COLS.line, look) - GAP - nextW) >= NEXT_DEST_MIN ? COLS.next : 0;
+    const base = bare + (nextCols ? nextW : 0);
     // on a narrow window the line steps aside before the status and time would be cut off
     const lineCols = cols(width - base - cellsWidth(COLS.line, look) - GAP) >= 8 ? COLS.line : 0;
     const fixed = base + (lineCols ? cellsWidth(lineCols, look) + GAP : 0), free = Math.max(8, cols(width - fixed));
@@ -378,7 +387,7 @@ export class Board {
     this.listen(shown, now);
     const rows = Array.from({ length: fit }, (_, i) => {
       const t = shown[i];
-      return this.row(i, t?.more ? { ...t, agent: null, since: null, remark: "" } : t, destCols, lineCols, remarkCols, now, drawn);
+      return this.row(i, t?.more ? { ...t, agent: null, since: null, remark: "" } : t, destCols, lineCols, nextCols, remarkCols, now, drawn);
     });
     const view = h_flex().id("board").size_full().bg(INK.board).gap(16).pt(TOP).pr(14).pb(8)
       .on_size_change((size, cx) => {
@@ -387,7 +396,7 @@ export class Board {
         this.measured = true;
         cx.notify();
       })
-      .child(v_flex().flex_1().min_w(0).overflow_hidden().child(this.head(destCols, lineCols, remarkCols)).children(rows))
+      .child(v_flex().flex_1().min_w(0).overflow_hidden().child(this.head(destCols, lineCols, nextCols, remarkCols)).children(rows))
       .child(v_flex().w(SIDE_W).flex_none().self_start()
         .child(h_flex().h(HEAD_H).justify_between().items_center().child(this.panelKeys(root, now, drawn)).child(this.clock(now, drawn)))
         .child(h_flex().h(SIDE_ROW).items_center().child(this.line(cx, now, drawn)))

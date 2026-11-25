@@ -6,11 +6,13 @@
 //   blocked  the same in red: "C01 SIGNAL STOP" on red flaps, the header pulsing red, the reason it stopped on the right
 // Gauges, from what Claude Code reports (helm-bridge): water = context used, coal = rate limit used, both as level bars
 // (amber from 70, red from 90); the wrench's three lamps light red for failed calls in a row.
+// Left of those while a prompt is scheduled (/loop, CronCreate): a clock with when the next one runs and its period, +N for
+// others waiting; green, or amber in a turn one started.
 // Props from the app: { pane, terminal }.
 import { div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { panes, run } from "herdr";
-import { ICON, INK, STATUS_INK, gaugesOf, stopIcon, stopReason, trains, workIcon } from "../state.js";
+import { ICON, INK, STATUS_INK, clockAt, gaugesOf, stopIcon, stopReason, trains, workIcon } from "../state.js";
 import { Flaps, flapText } from "../flap.js";
 
 const WARN_AT = 70, CRITICAL_AT = 90;
@@ -20,15 +22,17 @@ const PAGE_MS = 4000;
 // Header widths in px, from the elements below: the row's padding and gap, the board's chrome around its flaps (padding,
 // lamp, gap), and what can sit right of the board. The reason gets at least REASON_MIN before the board takes the rest.
 const ROW = { pad: 28, gap: 12 }, BOARD_CHROME = 27, CHEVRONS_W = 60, ICON_W = 18, BUTTON_W = 22, GAUGE_W = 64, FAULTS_W = 45;
+const CHAR_W = 8; // at most, at the schedule's 13 px
 const REASON_MIN = 140;
 
 /** The px the header needs besides the board's flaps: its fixed parts, then the wider of what shows on hover (the
  *  buttons) and what shows otherwise, so the board doesn't resize as the pointer comes and goes. */
-function reserveFor({ alert, reason, work, gauges }) {
+function reserveFor({ alert, reason, work, plan, gauges }) {
   const item = (w) => ROW.gap + w;
   const fixed = ROW.pad + BOARD_CHROME + item(0) + (alert ? item(CHEVRONS_W) : 0); // item(0): the spacer's gap
   const buttons = 4 * item(BUTTON_W);
   const status = (reason ? item(ICON_W) + item(REASON_MIN) : 0) + (work ? item(ICON_W) : 0)
+    + (plan ? item(16 + 6 + plan.length * CHAR_W) : 0)
     + (gauges ? 2 * item(GAUGE_W) + item(FAULTS_W) : 0);
   return fixed + Math.max(buttons, status);
 }
@@ -40,6 +44,19 @@ function bar(icon, value) {
     .child(svg(`${ICON}/${icon}.svg`).size(16).text_color(value >= WARN_AT ? levelInk(value) : INK.creamDim))
     .child(h_flex().gap(1).p(2).rounded(2).bg(INK.seam).children(Array.from({ length: 10 }, (_, i) =>
       div().w(3).h(9).bg(i < lit ? levelInk(value) : INK.flapLo))));
+}
+
+/** "14:37 · 30M", "14:37 · LOOP +1"; "" with nothing scheduled. */
+function planOf(schedule) {
+  if (!schedule) return "";
+  const { next, every, jobs } = schedule;
+  return `${clockAt(next)}${every ? ` · ${every}` : ""}${jobs > 1 ? ` +${jobs - 1}` : ""}`;
+}
+
+function clock(plan, ink) {
+  return h_flex().flex_none().gap(6).items_center()
+    .child(svg(`${ICON}/clock.svg`).size(16).text_color(ink))
+    .child(div().flex_none().text_size(13).text_color(ink).child(plan));
 }
 
 function faults(n) {
@@ -127,6 +144,7 @@ export class PaneHeader {
     const reason = stopped && t ? stopReason(t.agent) : "";
     const work = t && st === "working" ? workIcon(t.agent) : "";
     const g = t ? gaugesOf(t.agent) : null;
+    const plan = planOf(t?.schedule);
     const showGauges = g && (g.water > 0 || g.coal > 0 || g.faults > 0);
     // the board turns its pages while the agent is done or blocked
     if (st !== this.status) {
@@ -135,7 +153,7 @@ export class PaneHeader {
       this.status = st;
     }
     const alert = Boolean(t) && (st === "done" || st === "blocked");
-    const reserve = reserveFor({ alert, reason, work, gauges: showGauges });
+    const reserve = reserveFor({ alert, reason, work, plan, gauges: showGauges });
     return h_flex().id(`ph-${pane}`).relative().overflow_hidden().size_full().px(14).gap(12).items_center()
       .bg(INK.board).border_b(1).border_color(stopped ? INK.redDeep : INK.steelDim)
       .when(stopped, (el) => el.child(div().absolute().top(0).left(0).size_full().bg(INK.redDeep).loop("opacity", { from: 0, to: 0.8, period: 1100 })))
@@ -155,6 +173,7 @@ export class PaneHeader {
       .when(!this.hovered && Boolean(reason), (el) => el
         .child(svg(`${ICON}/${stopIcon(reason)}.svg`).size(18).flex_none().text_color(INK.red))
         .child(div().flex_shrink(1).min_w(0).truncate().text_size(13).text_color(INK.red).child(reason)))
+      .when(!this.hovered && Boolean(plan), (el) => el.child(clock(plan, t.schedule.fired ? INK.amber : INK.green)))
       .when(!this.hovered && Boolean(work), (el) => el.child(svg(`${ICON}/${work}.svg`).size(18).flex_none().text_color(INK.amber)
         .loop("opacity", { from: 0.5, to: 1, period: 1400 })))
       .when(!this.hovered && Boolean(showGauges), (el) => el.child(bar("water", g.water)).child(bar("coal", g.coal)).child(faults(Math.min(3, g.faults))))

@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { kindOf, sosReason, stepOf } from './register'
+import { kindOf, periodOf, sosReason, stepOf } from './register'
 
 test('a label carries the shape of a request, never the whole command', () => {
   expect(sosReason('Bash', { command: 'git push origin main --token=abc' })).toBe('Bash: git push')
@@ -214,4 +214,55 @@ test('outside Herdr nothing runs', async ($, on) => {
     tool_input: { command: 'ls' },
   })
   expect(runs).toEqual([])
+})
+
+test('how often a job runs', () => {
+  const period = (cron: string) => periodOf({ cron, prompt: 'x', recurring: true })
+  expect(['* * * * *', '*/30 * * * *', '20,50 9-17 25 11 *', '7 * * * *', '7 */2 * * *', '57 8 * * *'].map(period)).toEqual(['1M', '30M', '30M', '1H', '2H', '1D'])
+  expect(['7,20 * * * *', '*/7 * * * *', '57 8 * * 1-5', '*/30 */2 * * *', '0 9,12 * * *', 'x'].map(period)).toEqual(['', '', '', '', '', ''])
+  expect(periodOf({ cron: '46 9 * * *', prompt: '/loop check' })).toBe('LOOP')
+  expect(periodOf({ cron: '46 9 * * *', prompt: 'remind me' })).toBe('')
+})
+
+test('a schedule shows its soonest run, follows it, and goes when it does', async ($, on) => {
+  const runs: string[][] = []
+  let jobs: object[] = []
+  on('env.get', () => ({ value: 't9' }))
+  on('process.run', (_, e) => {
+    runs.push([...e.argv])
+    return { value: { exitCode: 0, stdout: '', stderr: '' } }
+  })
+  on('tool.call', (_, e) => ({ result: e.tool === 'CronList' ? { jobs } : {} }) as never)
+  on('prompt.submit', (_, e) => ({ text: e.text }) as never)
+  on('turn.complete', () => ({ text: '' }) as never)
+  const words = () => runs.splice(0).flat()
+
+  await $.turn.complete({ turnId: 'a', answer: '' } as never)
+  await drained()
+  words()
+
+  jobs = [
+    { id: 'b', cron: '7 * * * *', prompt: 'secret', recurring: true, nextFireAt: 9000 },
+    { id: 'a', cron: '*/30 * * * *', prompt: 'secret', recurring: true, nextFireAt: 5000.8 },
+  ]
+  await $.tool.call({ tool: 'CronCreate', cron: '*/30 * * * *', prompt: 'secret' })
+  await drained()
+  const made = words()
+  for (const label of ['cc.next=5001', 'cc.every=30M', 'cc.jobs=2']) expect(made).toContain(label)
+  expect(made.join(' ')).not.toContain('secret')
+
+  await $.prompt.submit({ text: 'secret', origin: { kind: 'scheduled-trigger' } } as never)
+  await drained()
+  expect(words()).toContain('cc.fired=1')
+  jobs = [{ id: 'a', cron: '*/30 * * * *', prompt: 'secret', recurring: true, nextFireAt: 7000 }]
+  await $.turn.complete({ turnId: 'b', answer: '' } as never)
+  await drained()
+  const ran = words()
+  for (const label of ['cc.fired=', 'cc.next=7000', 'cc.jobs=1']) expect(ran).toContain(label)
+
+  jobs = []
+  await $.tool.call({ tool: 'CronDelete', id: 'a' })
+  await drained()
+  const gone = words()
+  for (const label of ['cc.next=', 'cc.every=', 'cc.jobs=']) expect(gone).toContain(label)
 })

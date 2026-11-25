@@ -9,12 +9,16 @@ import type { Live, Sos } from '../types'
 //   cc.o2=<percent>               context window used, in steps of five
 //   cc.fuel=<percent>             the fullest rate-limit window, in steps of five
 //   cc.hull=<count>               main loop tool calls failed in a row
+//   cc.next=<epoch ms>            when the soonest scheduled prompt (/loop, CronCreate) runs
+//   cc.every=<30M | 2H | LOOP>    that one's period, LOOP when Claude paces it itself
+//   cc.jobs=<count>               how many are scheduled
+//   cc.fired=1                    this turn was started by one
 // helm-spinner reads the same from this mod's state. Does nothing outside a Herdr app terminal. All of it runs in a queue no
 // tool or prompt waits on, and a failed label is dropped: a display must never get in Claude's way.
 
 const MAX = 48
 const STEP = 5
-const KEYS = ['cc.sos', 'cc.op', 'cc.o2', 'cc.fuel', 'cc.hull'] as const
+const KEYS = ['cc.sos', 'cc.op', 'cc.o2', 'cc.fuel', 'cc.hull', 'cc.next', 'cc.every', 'cc.jobs', 'cc.fired'] as const
 const sos = atom({ plugin: 'helm-bridge', key: 'sos' } as const, null as Sos | null)
 const IDLE: Live = { op: '', hull: 0, o2: 0, fuel: 0 }
 const live = atom({ plugin: 'helm-bridge', key: 'live' } as const, IDLE)
@@ -56,11 +60,41 @@ export function sosReason(tool: string, input: unknown): string {
   return reason.replace(/[\u0000-\u001f\u007f-\u009f=]/g, ' ').slice(0, MAX)
 }
 
+const SCHEDULERS = new Set(['CronCreate', 'CronDelete', 'ScheduleWakeup'])
+
+export type Job = { cron: string; prompt: string; recurring?: boolean; nextFireAt?: number }
+
+const span = (minutes: number) => (minutes < 60 ? `${minutes}M` : minutes < 1440 ? `${minutes / 60}H` : '1D')
+
+// A cron field's even step within its cycle ("*/30", "20,50" of 60): undefined when it's uneven or beyond this reading.
+function stepIn(field: string, cycle: number): number | undefined {
+  if (field === '*') return 1
+  const every = /^\*\/(\d+)$/.exec(field)
+  if (every) return Number(every[1]) > 0 && cycle % Number(every[1]) === 0 ? Number(every[1]) : undefined
+  if (!/^\d+(,\d+)*$/.test(field)) return undefined
+  const at = [...new Set(field.split(',').map(Number))].sort((a, b) => a - b)
+  const gaps = at.map((value, i) => (i + 1 < at.length ? at[i + 1]! : at[0]! + cycle) - value)
+  return gaps.every(gap => gap === gaps[0]) ? gaps[0] : undefined
+}
+
+// How often a job runs, on the days and in the hours it runs at all: '' when that's uneven or it runs once.
+export function periodOf(job: Job): string {
+  if (!job.recurring) return /^(\/loop\b|<<autonomous-loop)/.test(job.prompt) ? 'LOOP' : ''
+  const [minute = '', hour = '', day = '', month = '', weekday = ''] = job.cron.trim().split(/\s+/)
+  const minutes = stepIn(minute, 60)
+  if (minutes === undefined) return ''
+  const hours = /^\d+-\d+$/.test(hour) ? 1 : stepIn(hour, 24)
+  if (minutes < 60) return hours === 1 ? span(minutes) : ''
+  if (hours === undefined) return ''
+  return hours < 24 || [day, month, weekday].every(field => field === '*') ? span(hours * 60) : ''
+}
+
 // undefined until read; null outside Herdr.
 let terminal: string | null | undefined
 // What's waiting on the person, oldest first. `id` is the call's, unless the prompt came with no call under way to pin it on.
 type Wait = { id: string | undefined; tool: string; agent: string | undefined; reason: string; since?: number }
 let waits: Wait[] = []
+let scheduled = 0 // jobs, when last listed
 // Every label's value as it should be, and as Herdr last took it: what a failed write leaves apart is sent again with the next.
 const UNKNOWN = '\0'
 const wanted = new Map<string, string>()
@@ -113,6 +147,22 @@ async function measure($: EngineInterface) {
   await setLive($, state => ({ ...state, o2: usage.context.percent ?? 0, fuel }))
 }
 
+// What's scheduled, as Claude Code lists it: only there is the next run's time the one it will run at. A list that can't be
+// had leaves the labels as they are.
+async function showSchedule($: EngineInterface) {
+  if (!(await terminalOf($))) return
+  const ran = await $.tool.call({ tool: 'CronList' }).catch(() => undefined)
+  const jobs = (ran as { result?: { jobs?: Job[] } } | undefined)?.result?.jobs
+  if (!Array.isArray(jobs)) return
+  scheduled = jobs.length
+  const first = jobs.filter(job => job.nextFireAt).sort((a, b) => a.nextFireAt! - b.nextFireAt!)[0]
+  await publish($, {
+    'cc.next': first ? String(Math.round(first.nextFireAt!)) : '',
+    'cc.every': first ? periodOf(first) : '',
+    'cc.jobs': numeric(jobs.length),
+  })
+}
+
 async function showSos($: EngineInterface) {
   if (!(await terminalOf($))) return
   const first = waits[0]
@@ -150,6 +200,7 @@ function answered($: EngineInterface, id: string, tool: string, agent: string | 
 async function clearAll($: EngineInterface) {
   if (!(await terminalOf($))) return
   waits = []
+  scheduled = 0
   for (const key of KEYS) sent.set(key, UNKNOWN)
   await update($, sos, () => null).catch(() => undefined)
   await update($, live, () => IDLE).catch(() => undefined)
@@ -162,6 +213,7 @@ export const register: Register = on => {
     void show(async () => {
       await clearAll($)
       await measure($)
+      await showSchedule($)
     })
     return result
   })
@@ -205,6 +257,7 @@ export const register: Register = on => {
     } finally {
       calls.delete(e.tool_use_id)
       answered($, e.tool_use_id, e.tool, e.agentId)
+      if (SCHEDULERS.has(e.tool)) void show(() => showSchedule($))
     }
   })
 
@@ -218,6 +271,7 @@ export const register: Register = on => {
   // The person typed, or the turn ended on a refusal or an interrupt: nothing of this turn's is still waiting.
   on('prompt.submit', async ($, e, next) => {
     settle($, () => false)
+    void show(() => publish($, { 'cc.fired': e.origin?.kind === 'scheduled-trigger' ? '1' : '' }))
     return next(e)
   })
 
@@ -230,7 +284,12 @@ export const register: Register = on => {
     const result = await next(e)
     if (e.agentId === undefined) {
       settle($, wait => wait.agent !== undefined)
-      void show(() => setLive($, state => ({ ...state, op: '' })))
+      void show(async () => {
+        await setLive($, state => ({ ...state, op: '' }))
+        await publish($, { 'cc.fired': '' })
+        // one that ran has a new time now, or is gone
+        if (scheduled > 0) await showSchedule($)
+      })
     }
     return result
   })
